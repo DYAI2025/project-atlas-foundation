@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "project_id": "ATLAS",
+  "bootstrap_exception": "BOOTSTRAP_EXCEPTION_ATLAS_13",
+  "source_repository": "DYAI2025/Gbrain-vps",
+  "source_commit": "fad6e83e288202117d58b8b225da5f6de546d063",
+  "import_type": "sanitized_clean_export",
+  "history_migrated": false,
+  "canonical_repository": "DYAI2025/project-atlas-foundation",
+  "legacy_reference": {
+    "repository": "DYAI2025/gbrain-atlas",
+    "pinned_commit": "aea0fb0b934780a205db92066786b265de0de22a",
+    "role": "read-only legacy prototype; no history migrated; no modifications permitted"
+  },
+  "excluded_from_export": [
+    ".git/",
+    ".claude/",
+    ".claude-flow/",
+    "docs/plans/ (unreleased draft plan)",
+    "local caches, temporary files, secrets, user-specific paths"
+  ]
+}

@@ -1,0 +1,7 @@
+node_modules/
+sbom.cdx.json
+*.log
+.DS_Store
+.claude/
+.claude-flow/
+scratch/
