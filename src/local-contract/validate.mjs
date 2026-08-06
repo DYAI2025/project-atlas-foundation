@@ -1,6 +1,9 @@
 // Deterministic validator for contracts/local-adapter/v1/request.schema.json.
 // Mirrors the schema rules explicitly; no dependencies. Errors are sorted by
-// path, then code, so identical input always yields identical output.
+// path, then code, using plain UTF-16 code-unit comparison (never
+// localeCompare — its collation depends on the process locale and would
+// break byte-identical output across environments). Error paths are
+// display strings, not RFC 6901 JSON Pointers: keys are not escaped.
 
 export const CONTRACT_VERSION = '1.0.0'
 export const ALLOWED_OPERATIONS = ['inspect']
@@ -79,9 +82,13 @@ export function validateRequest(data) {
   return buildResponse(errors)
 }
 
+function byCodeUnit(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
 export function buildResponse(errors) {
   const sorted = [...errors].sort(
-    (a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code)
+    (a, b) => byCodeUnit(a.path, b.path) || byCodeUnit(a.code, b.code)
   )
   return { contract_version: CONTRACT_VERSION, valid: sorted.length === 0, errors: sorted }
 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "atlas:contracts/local-adapter/v1/response.schema.json",
   "title": "Local adapter validation response contract (Slice 1)",
-  "description": "Versioned, machine-readable response of the local contract checker. Deterministic: identical input yields byte-identical output; errors are sorted by path, then code.",
+  "description": "Versioned, machine-readable response of the local contract checker. Deterministic: identical input yields byte-identical output regardless of process locale; errors are sorted by path, then code, in UTF-16 code-unit order. Error paths are display strings, not RFC 6901 JSON Pointers (keys are not escaped).",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "valid", "errors"],

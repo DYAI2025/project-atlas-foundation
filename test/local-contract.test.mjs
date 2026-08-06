@@ -11,8 +11,11 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const CLI = join(repoRoot, 'src/local-contract/cli.mjs')
 const fixture = (name) => join(repoRoot, 'fixtures/local-contract', name)
 
-function runCli(args) {
-  const res = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' })
+function runCli(args, envOverrides = {}) {
+  const res = spawnSync(process.execPath, [CLI, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...envOverrides }
+  })
   return { code: res.status, stdout: res.stdout, stderr: res.stderr }
 }
 
@@ -91,13 +94,40 @@ test('missing argument: exit 2 with E_USAGE', () => {
   assert.match(run.stderr, /usage:/)
 })
 
-test('output is deterministic: identical stdout across two runs', () => {
-  for (const f of ['valid-request.json', 'invalid-missing-field.json', 'invalid-wrong-type.json']) {
-    const a = runCli([fixture(f)])
-    const b = runCli([fixture(f)])
-    assert.equal(a.stdout, b.stdout, f)
-    assert.equal(a.code, b.code, f)
+test('output is deterministic: identical stdout across runs AND locales', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'local-contract-'))
+  const nonAscii = join(dir, 'non-ascii-unknown-fields.json')
+  writeFileSync(
+    nonAscii,
+    JSON.stringify({
+      contract_version: '1.0.0',
+      request_id: 'req-003',
+      repository: { owner: 'DYAI2025', name: 'project-atlas-foundation' },
+      operation: 'inspect',
+      'ä': 1,
+      'z': 2
+    })
+  )
+  const inputs = [
+    fixture('valid-request.json'),
+    fixture('invalid-missing-field.json'),
+    fixture('invalid-wrong-type.json'),
+    nonAscii
+  ]
+  const locales = ['C', 'de_DE.UTF-8', 'sv_SE.UTF-8']
+  for (const input of inputs) {
+    const runs = locales.map((lc) => runCli([input], { LC_ALL: lc, LANG: lc }))
+    for (const r of runs.slice(1)) {
+      assert.equal(r.stdout, runs[0].stdout, `${input} stdout differs across locales`)
+      assert.equal(r.code, runs[0].code, `${input} exit code differs across locales`)
+    }
   }
+  const nonAsciiBody = JSON.parse(runCli([nonAscii]).stdout)
+  assert.deepEqual(
+    nonAsciiBody.errors.map((e) => e.path),
+    ['/z', '/ä'],
+    'non-ASCII paths must sort in UTF-16 code-unit order (z < ä)'
+  )
 })
 
 test('multiple violations are reported sorted by path, then code', () => {
