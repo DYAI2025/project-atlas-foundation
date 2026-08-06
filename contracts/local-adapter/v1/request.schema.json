@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:contracts/local-adapter/v1/request.schema.json",
+  "title": "Local adapter request contract (Slice 1)",
+  "description": "Versioned request contract for the local adapter contract checker. Slice 1 supports exactly one operation: inspect. No repository access is performed; only this contract is validated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "request_id", "repository", "operation"],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "name"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["inspect"]
+    }
+  }
+}
