@@ -1,35 +1,44 @@
 # Governance-Blocker
 
-## BLK-ATLAS-13-02 — GitHub Actions erzeugt keine Runs für dieses Repository
+## BLK-ATLAS-13-02 — GitHub Actions: Hosted-Runner akquiriert keine Jobs (Jira: ATLAS-55)
 
-- **Datum:** 2026-08-06
-- **Ticket:** ATLAS-13 (Korrekturschnitt), betrifft auch ATLAS-23
-- **Befund:** Workflow `.github/workflows/foundation-consistency.yml` liegt auf
-  dem PR-Branch (Commits `d7ef3ec`, `689611a`). Actions-Permissions:
-  `{"enabled": true, "allowed_actions": "all"}`. Trotzdem: 0 Workflow-Runs,
-  `gh workflow list` leer, und auf dem Head-Commit existieren 9 Check-Suites
-  von Dritt-Apps (render, railway, fly-io, cursor, vercel, trunk-io, supabase,
-  sourcery-ai, google-cloud-build), aber **keine** `github-actions`-Suite —
-  GitHub Actions verarbeitet die `pull_request`-Events dieses privaten Repos
-  nicht.
+- **Datum:** 2026-08-06 (aktualisiert nach ATLAS-55-Probe-Test)
+- **Ticket:** ATLAS-55 (Bug); blockiert ATLAS-13 und ATLAS-23
+- **Teilbefund 1 — GELÖST (Trigger/Registrierung):** Die ursprünglich
+  beobachtete Run-Losigkeit (0 Runs für `d7ef3ec`/`689611a`/`a1dbfc6`) lag
+  daran, dass noch kein Workflow auf dem Default Branch `main` registriert
+  war. Beweis: Nach dem genehmigten Probe-Commit
+  (`BOOTSTRAP_EXCEPTION_ATLAS_55_ACTIONS_PROBE`, `c5260db`) listet
+  `gh workflow list` beide Workflows als `active` (actions-probe 328876692,
+  foundation-consistency 328873830), und GitHub erzeugte selbständig den
+  ausstehenden `pull_request`-Run 31127753756 für PR #1 (Head `a1dbfc6`)
+  sowie `workflow_dispatch`-Runs. Trigger und Eventverarbeitung
+  funktionieren damit nachweislich. Die frühere Billing-Vermutung war als
+  Ursache hierfür falsch und ist verworfen.
+- **Teilbefund 2 — OFFEN (Runner-Acquisition):** Alle drei erzeugten Runs
+  enden `failure`, Job `cancelled` nach exakt 15m02s, 0 ausgeführte Steps,
+  keine Logs. Konkrete GitHub-Annotation (wörtlich, in allen drei Jobs
+  92705654160, 92706093471, 92707084002 identisch):
+  `The job was not acquired by Runner of type hosted even after multiple attempts`
 - **Versuche (2, materiell unterschiedlich, gemäß Fehlerregel gestoppt):**
-  1. Workflow-Datei per Push auf den PR-Branch (synchronize-Event) — kein Run.
-  2. Frisches synchronize-Event per Empty-Commit `689611a` — kein Run.
-- **Wahrscheinliche Ursache:** Account-/Billing-seitige Actions-Blockade des
-  Free-User-Accounts `DYAI2025` für private Repositories (API meldet
-  `plan: null`); nicht über Repo-Einstellungen behebbar.
-- **Owner-Optionen:**
-  1. GitHub Web-UI → Actions-Tab des Repos öffnen (Aktivierungs-/Billing-Banner
-     bestätigen), Settings → Billing → Spending-Limit/Zahlungsmethode prüfen.
-  2. Nach Merge von PR #1 ist der Workflow auf `main` registriert; prüfen, ob
-     Folge-PRs dann Runs erhalten.
-  3. Einmaliger Owner-genehmigter Direkt-Push des Workflows auf `main`
-     (dokumentierte Ausnahme analog Bootstrap).
+  1. Probe-Run 31127837386 mit `runs-on: ubuntu-latest` (`c5260db`) —
+     cancelled, Annotation wie oben.
+  2. Probe-Run 31128025409 mit explizitem `runs-on: ubuntu-24.04`
+     (`421ac70`) — identisches Ergebnis.
+- **Klassifikation:** Hosted-Runner-Acquisition-Failure gemäß tatsächlicher
+  GitHub-Meldung. Der dahinterliegende Grund wird von GitHub nicht benannt →
+  `UNKNOWN_PLATFORM_OR_POLICY`. Billing/Spending-Limit ist eine mögliche
+  Hypothese unter mehreren (Policy, Aktivierung, Plattformfehler) und darf
+  ohne konkrete GitHub-Meldung nicht als Ursache dokumentiert werden.
+- **Owner-Aktionen (außerhalb der Agent-Reichweite):** GitHub Web-UI →
+  Repo-Actions-Tab und Account Settings → Billing auf konkrete Warnbanner
+  prüfen; ggf. GitHub-Support mit Run-IDs 31127837386/31128025409 und der
+  Annotation kontaktieren.
 - **Interim-Evidenz:** Lokale Ausführung `node scripts/validate-current-repository.mjs`
   → `VALIDATION PASSED` (42 Checks), Log versioniert in
   `reports/current-validation.log`.
-- **Status:** OPEN — verhindert den CI-Ausführungsnachweis für PR #1 und die
-  Required-Checks-Verknüpfung (zusammen mit BLK-ATLAS-13-01).
+- **Status:** OPEN — verhindert weiterhin den CI-Ausführungsnachweis für
+  PR #1 und die Required-Checks-Verknüpfung (zusammen mit BLK-ATLAS-13-01).
 
 ## BLK-ATLAS-13-01 — Branch Protection auf privatem Repo nicht verfügbar
 

@@ -35,7 +35,7 @@ Stand: 2026-08-06 (Setup-Checkpoint + Korrekturschnitt), Repository
 | Jira ATLAS-13 Read-after-write (Status „In Arbeit", Evidence-Kommentar) | ✅ |
 | Confluence Read-after-write (Seiten 15138817, 15040514, 15171611, 15400961 → v2) | ✅ |
 | Repository-Konsistenz (`scripts/validate-current-repository.mjs`) | ✅ lokal, Log: `reports/current-validation.log` |
-| GitHub Actions (`foundation-consistency`) | ⛔ kein Run trotz zweier Trigger-Versuche — BLK-ATLAS-13-02 (Actions erzeugt keine Check-Suite für dieses private Repo) |
+| GitHub Actions (`foundation-consistency`) | ⛔ Trigger funktioniert seit Default-Branch-Registrierung (Run 31127753756 automatisch erzeugt), aber Hosted-Runner akquiriert keine Jobs: „The job was not acquired by Runner of type hosted even after multiple attempts" — BLK-ATLAS-13-02 / ATLAS-55 |
 | Unabhängiges Code Review mit Approval | ❌ noch nicht vorhanden |
 | Branch Protection | ⛔ technisch blockiert (BLK-ATLAS-13-01, Interim per Owner-Entscheidung 06.08.2026) |
 
