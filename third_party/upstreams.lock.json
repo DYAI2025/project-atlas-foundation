@@ -1,0 +1,94 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T16:58:00Z",
+  "upstreams": [
+    {
+      "id": "gbrain",
+      "version": "0.42.73.2",
+      "source_url": "https://github.com/garrytan/gbrain",
+      "source_commit": "15b9863d13635d173562a54f55a1d388bfcf546b",
+      "archive_name": "gbrain-master.zip",
+      "archive_sha256": "369cc24da71ee49b65386863211e25ab5138997bd8e9096eea4f3dc0886adcfa",
+      "license": "MIT",
+      "role": "Pinned retrieval, MCP and graph projection runtime; not the unmodified ATLAS canonical write store.",
+      "integration_status": "required_pinned_source",
+      "enabled": true,
+      "approval_required": false,
+      "notes": [
+        "Use Postgres/pgvector for remote MCP; PGLite remains local-only.",
+        "Existing source_id isolation is useful but does not satisfy ATLAS project_id, RLS, proposal, and publish-role requirements by itself.",
+        "Initialize explicitly with ollama:bge-m3 and 1024 dimensions after ATLAS-16 pins the model digest."
+      ]
+    },
+    {
+      "id": "gbrain-evals",
+      "version": "0.2.0",
+      "source_url": "https://github.com/garrytan/gbrain-evals",
+      "source_commit": "565b80754ffa6abb9afb041026f2fab048aa7553",
+      "archive_name": "gbrain-evals-main.zip",
+      "archive_sha256": "da256de75ee0dcce7f82fd19d471a59f4eb54758d9bf68c32760cd70ab460750",
+      "license": "MIT",
+      "role": "Evaluation harness for the private ATLAS gold corpus and regression adapter.",
+      "integration_status": "required_adapter",
+      "enabled": true,
+      "approval_required": false,
+      "notes": [
+        "The archive depends on github:garrytan/gbrain#master and must be patched to the pinned gbrain commit before use.",
+        "Published benchmark values are not ATLAS acceptance evidence."
+      ]
+    },
+    {
+      "id": "hermes-gbrain-bridge",
+      "version": "0.1.0",
+      "source_url": "https://github.com/howardpen9/hermes-gbrain-bridge",
+      "source_commit": "a057b5864b82c40a4575838689e238b86a622833",
+      "archive_name": "hermes-gbrain-bridge-main.zip",
+      "archive_sha256": "d4bd92d03c55d985c4460d09232a58e6ee0a736cb03884a91afa5a087ab834b9",
+      "license": "MIT",
+      "role": "Reference for adapter discovery, normalization and staging patterns.",
+      "integration_status": "reference_only",
+      "enabled": false,
+      "approval_required": false,
+      "notes": [
+        "Raw agent transcripts are excluded from ATLAS V1.",
+        "Its redaction-first behavior must not replace ATLAS quarantine-and-review rules.",
+        "No bridge source is copied into the foundation."
+      ]
+    },
+    {
+      "id": "obsidian-smart-connections",
+      "version": "4.7.2",
+      "source_url": null,
+      "source_commit": "92e8d56c668f7711054b3a9de16bb73c12e5fa83",
+      "archive_name": "obsidian-smart-connections-main.zip",
+      "archive_sha256": "ecfdcae16769aa2d971641ee84576388a46c5088e3227de52c5f5d0eefe298eb",
+      "license": "Smart Plugins License",
+      "role": "Optional external Obsidian client capability; never the canonical embedding index.",
+      "integration_status": "optional_external",
+      "enabled": false,
+      "approval_required": true,
+      "notes": [
+        "The supplied archive is not standalone and references multiple local file dependencies.",
+        "Using its separate embeddings as canonical data would create index drift.",
+        "License and product-distribution implications require explicit approval."
+      ]
+    },
+    {
+      "id": "obsidian-advanced-canvas",
+      "version": "6.5.0",
+      "source_url": null,
+      "source_commit": "11c822b8494b9d0a7c3b57031b5c30d8ff3cb174",
+      "archive_name": "obsidian-advanced-canvas-main.zip",
+      "archive_sha256": "dd0ee003e99bbfa3223d858c0607fb76fcfa8e2eb865f40fd7f2989edcdf4503",
+      "license": "GPL-3.0",
+      "role": "Optional external Obsidian presentation and canvas enhancement.",
+      "integration_status": "optional_external",
+      "enabled": false,
+      "approval_required": true,
+      "notes": [
+        "Do not vendor or derive core ATLAS code from this plugin without an explicit GPL distribution decision.",
+        "Configuration-only use in a local Obsidian profile may be evaluated separately."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# Project ATLAS — all paths require Owner review (DEC-06)
+# NOTE: CODEOWNERS-based review enforcement requires branch protection /
+# rulesets, which are unavailable on this private repo under the current
+# GitHub Free plan (see docs/governance/blockers.md, BLK-ATLAS-13-01).
+# This file is prepared and becomes enforceable once the blocker is resolved.
+* @DYAI2025

@@ -1,0 +1,382 @@
+{
+  "schema_version": "1.0",
+  "manifest_id": "BM-001",
+  "generated_at": "2026-08-06T16:58:00Z",
+  "repository": "local:/mnt/data/project-atlas-foundation; intended remote decision pending for DYAI2025/gbrain-atlas",
+  "target_branch": "chore/bootstrap-atlas-foundation-20260806",
+  "mode": "BUILD_DRY_RUN",
+  "architecture_decision": "AD-001",
+  "adr_reference": "architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md",
+  "adapter": {
+    "id": "project-local-no-runtime-adapter",
+    "version": "0.1.0",
+    "verification_status": "missing"
+  },
+  "tool_versions": {
+    "git": "2.47.3",
+    "node": "22.16.0",
+    "npm": "10.9.2",
+    "jq": "1.7",
+    "unzip": "6.00",
+    "bun": "missing",
+    "docker": "missing",
+    "psql": "missing",
+    "gitleaks": "missing",
+    "syft": "missing"
+  },
+  "create_files": [
+    ".editorconfig",
+    ".gitattributes",
+    ".github/CODEOWNERS.example",
+    ".github/pull_request_template.md",
+    ".github/workflows/foundation-ci.yml",
+    ".gitignore",
+    ".nvmrc",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "LICENSE-STATUS.md",
+    "README.md",
+    "SECURITY.md",
+    "adapters/README.md",
+    "adapters/confluence/README.md",
+    "adapters/gbrain-evals/README.md",
+    "adapters/gbrain/README.md",
+    "adapters/gbrain/contract.json",
+    "adapters/jira/README.md",
+    "adapters/obsidian/README.md",
+    "architecture-decision.json",
+    "architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md",
+    "architecture/approval-boundary.md",
+    "architecture/c4-container.mmd",
+    "architecture/c4-context.mmd",
+    "architecture/candidates.md",
+    "architecture/component-boundaries.md",
+    "build-manifest.json",
+    "config/project-registry.json",
+    "config/runtime.example.json",
+    "contracts/knowledge-envelope.schema.json",
+    "contracts/knowledge-proposal.schema.json",
+    "contracts/project-registry.schema.json",
+    "contracts/upstreams-lock.schema.json",
+    "db/README.md",
+    "db/draft/0001_atlas_core.sql",
+    "docs/delivery/build-dry-run-report.md",
+    "docs/delivery/github-handoff.md",
+    "docs/evidence/evidence-ledger.json",
+    "docs/evidence/source-map.md",
+    "docs/operations/backup-restore.md",
+    "docs/operations/vps-audit-required.md",
+    "docs/repository-assessment.md",
+    "docs/requirements/quality-scenarios.md",
+    "docs/requirements/traceability.md",
+    "docs/security/data-classification.md",
+    "docs/security/threat-boundaries.md",
+    "docs/testing/gate-ledger.json",
+    "docs/testing/release-gates.md",
+    "infra/README.md",
+    "infra/compose/compose.example.yaml",
+    "infra/systemd/project-atlas.service.example",
+    "package-lock.json",
+    "package.json",
+    "project-intake.json",
+    "reports/architecture-validation.duration",
+    "reports/architecture-validation.json",
+    "reports/archive-path-safety.log",
+    "reports/archive-verification.log",
+    "reports/build-manifest-validation.duration",
+    "reports/build-manifest-validation.json",
+    "reports/diff-summary.md",
+    "reports/file-inventory.txt",
+    "reports/npm-check.log",
+    "reports/npm-ci.log",
+    "reports/project-intake-validation.duration",
+    "reports/project-intake-validation.json",
+    "reports/release-decision.json",
+    "reports/sbom-foundation.cdx.json",
+    "reports/schema-pack-validation.duration",
+    "reports/schema-pack-validation.json",
+    "reports/validation-report.md",
+    "scripts/check-archive-paths.sh",
+    "scripts/check-format.mjs",
+    "scripts/inventory.mjs",
+    "scripts/scan-secrets.mjs",
+    "scripts/validate-foundation.mjs",
+    "scripts/verify-upstream-archives.mjs",
+    "services/graph-api/README.md",
+    "services/graph-ui/README.md",
+    "services/ingest-worker/README.md",
+    "services/projector/README.md",
+    "services/publisher/README.md",
+    "src/policy.mjs",
+    "src/provenance.mjs",
+    "src/registry.mjs",
+    "test/approval-boundary.test.mjs",
+    "test/policy.test.mjs",
+    "test/provenance.test.mjs",
+    "test/registry.test.mjs",
+    "test/upstreams.test.mjs",
+    "third_party/NOTICE.md",
+    "third_party/README.md",
+    "third_party/upstreams.lock.json"
+  ],
+  "change_files": [],
+  "protected_files": [
+    "remote:DYAI2025/gbrain-atlas/main/**",
+    "atlassian:PRODUKTMAN/**",
+    "atlassian:ATLAS/**",
+    "vps:srv1308064.hstgr.cloud/**",
+    "/mnt/data/gbrain-master.zip",
+    "/mnt/data/gbrain-evals-main.zip",
+    "/mnt/data/hermes-gbrain-bridge-main.zip",
+    "/mnt/data/obsidian-smart-connections-main.zip",
+    "/mnt/data/obsidian-advanced-canvas-main.zip"
+  ],
+  "commands": [
+    {
+      "id": "CMD-001",
+      "argv": [
+        "npm",
+        "install",
+        "--package-lock-only",
+        "--ignore-scripts",
+        "--audit=false",
+        "--fund=false"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "purpose": "Generate a deterministic empty-dependency lockfile without lifecycle scripts.",
+      "network_allowed": false,
+      "timeout_seconds": 120
+    },
+    {
+      "id": "CMD-002",
+      "argv": [
+        "npm",
+        "ci",
+        "--ignore-scripts",
+        "--audit=false",
+        "--fund=false"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "purpose": "Verify clean installation from the lockfile.",
+      "network_allowed": false,
+      "timeout_seconds": 120
+    },
+    {
+      "id": "CMD-003",
+      "argv": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "purpose": "Run deterministic format, structure, policy, registry, provenance, and upstream-lock tests.",
+      "network_allowed": false,
+      "timeout_seconds": 300
+    },
+    {
+      "id": "CMD-004",
+      "argv": [
+        "npm",
+        "run",
+        "verify:archives",
+        "--",
+        "--archive-dir",
+        "/mnt/data"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "purpose": "Verify attached archive SHA-256 values without extraction or execution.",
+      "network_allowed": false,
+      "timeout_seconds": 300
+    },
+    {
+      "id": "CMD-005",
+      "argv": [
+        "python3",
+        "/home/oai/skills/adaptive-boilerplate-architecture-builder/scripts/validate_project_intake.py",
+        "project-intake.json",
+        "--json"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "purpose": "Validate project intake against the skill schema.",
+      "network_allowed": false,
+      "timeout_seconds": 120
+    },
+    {
+      "id": "CMD-006",
+      "argv": [
+        "python3",
+        "/home/oai/skills/adaptive-boilerplate-architecture-builder/scripts/validate_architecture_decision.py",
+        "architecture-decision.json",
+        "--json"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "purpose": "Validate architecture decision against the skill schema.",
+      "network_allowed": false,
+      "timeout_seconds": 120
+    },
+    {
+      "id": "CMD-007",
+      "argv": [
+        "python3",
+        "/home/oai/skills/adaptive-boilerplate-architecture-builder/scripts/validate_build_manifest.py",
+        "build-manifest.json",
+        "--json"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "purpose": "Validate build manifest and command safety.",
+      "network_allowed": false,
+      "timeout_seconds": 120
+    },
+    {
+      "id": "CMD-008",
+      "argv": [
+        "scripts/check-archive-paths.sh",
+        "/mnt/data"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "purpose": "Reject absolute, traversal, backslash, or symlink entries in attached ZIP archives without extracting or executing them.",
+      "network_allowed": false,
+      "timeout_seconds": 300
+    }
+  ],
+  "external_downloads": [],
+  "dependency_changes": [
+    "No runtime dependencies added; package-lock contains only the local package metadata."
+  ],
+  "database_migrations": [
+    "No executable migration; db/draft/0001_atlas_core.sql is explicitly blocked and non-applied."
+  ],
+  "ci_changes": [
+    "Local foundation CI workflow template added; remote CI not executed and action SHA pinning remains a supply-chain follow-up."
+  ],
+  "infrastructure_changes": [
+    "Non-applied Compose and systemd templates added; no VPS or Docker mutation."
+  ],
+  "expected_artifacts": [
+    "project-intake.json",
+    "architecture-decision.json",
+    "build-manifest.json",
+    "docs/evidence/evidence-ledger.json",
+    "reports/release-decision.json",
+    "reports/validation-report.md",
+    "reports/file-inventory.txt",
+    "project-atlas-foundation.bundle",
+    "project-atlas-foundation.zip"
+  ],
+  "validation_gates": [
+    {
+      "id": "VG-001",
+      "required": true,
+      "argv": [
+        "npm",
+        "ci",
+        "--ignore-scripts",
+        "--audit=false",
+        "--fund=false"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "timeout_seconds": 120,
+      "report_path": "reports/npm-ci.log"
+    },
+    {
+      "id": "VG-002",
+      "required": true,
+      "argv": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "timeout_seconds": 300,
+      "report_path": "reports/npm-check.log"
+    },
+    {
+      "id": "VG-003",
+      "required": true,
+      "argv": [
+        "npm",
+        "run",
+        "verify:archives",
+        "--",
+        "--archive-dir",
+        "/mnt/data"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "timeout_seconds": 300,
+      "report_path": "reports/archive-verification.log"
+    },
+    {
+      "id": "VG-004",
+      "required": true,
+      "argv": [
+        "python3",
+        "/home/oai/skills/adaptive-boilerplate-architecture-builder/scripts/validate_project_intake.py",
+        "project-intake.json",
+        "--json"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "timeout_seconds": 120,
+      "report_path": "reports/project-intake-validation.json"
+    },
+    {
+      "id": "VG-005",
+      "required": true,
+      "argv": [
+        "python3",
+        "/home/oai/skills/adaptive-boilerplate-architecture-builder/scripts/validate_architecture_decision.py",
+        "architecture-decision.json",
+        "--json"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "timeout_seconds": 120,
+      "report_path": "reports/architecture-validation.json"
+    },
+    {
+      "id": "VG-006",
+      "required": true,
+      "argv": [
+        "python3",
+        "/home/oai/skills/adaptive-boilerplate-architecture-builder/scripts/validate_build_manifest.py",
+        "build-manifest.json",
+        "--json"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "timeout_seconds": 120,
+      "report_path": "reports/build-manifest-validation.json"
+    },
+    {
+      "id": "VG-008",
+      "required": true,
+      "argv": [
+        "scripts/check-archive-paths.sh",
+        "/mnt/data"
+      ],
+      "cwd": "/mnt/data/project-atlas-foundation",
+      "timeout_seconds": 300,
+      "report_path": "reports/archive-path-safety.log"
+    }
+  ],
+  "cleanup": [
+    "Remove node_modules after validation if a minimal archive is required.",
+    "Do not delete attached archives or the existing remote prototype."
+  ],
+  "rollback": [
+    "Delete the isolated local directory /mnt/data/project-atlas-foundation.",
+    "No remote, Atlassian, database, or VPS rollback is required because no such mutation is authorized."
+  ],
+  "known_risks": [
+    "The target remote contains a legacy prototype and needs an explicit migration decision.",
+    "A production runtime adapter is still missing.",
+    "The canonical data model and RLS policies are not complete.",
+    "Bun, Docker, PostgreSQL, gitleaks, SBOM, and VPS runtime gates are not executed.",
+    "GitHub Actions are referenced by major tags and must be commit-pinned before release."
+  ],
+  "stop_conditions": [
+    "Any operation would modify DYAI2025/gbrain-atlas without Owner approval.",
+    "Any source archive hash differs from the lockfile.",
+    "Any requested change enables an approval-bound optional plugin.",
+    "Any implementation requires guessing canonical identifiers, RLS context, secrets, ports, or VPS capacity.",
+    "Any validation would execute code from an attached upstream archive."
+  ],
+  "authorization_evidence": "User authorized a local base boilerplate; changes beyond confirmed requirements require separate approval. Remote apply was not authorized."
+}

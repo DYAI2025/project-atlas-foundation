@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-06T17:18:17Z",
+  "status": "NOT_READY",
+  "subject": "Project ATLAS foundation repository",
+  "maturity": "tested",
+  "required_gate_summary": {
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "not_run": 5
+  },
+  "blocking_issues": [
+    "ATLAS-14 architecture approval",
+    "ATLAS-16 VPS audit",
+    "ATLAS-12 technical writer registry",
+    "Incomplete canonical data model and RLS policies",
+    "Remote repository migration decision",
+    "Production runtime adapter missing"
+  ],
+  "limitations": [
+    "No VPS, Docker, PostgreSQL, Bun, gbrain runtime, remote CI, SBOM, or GitHub push verification."
+  ],
+  "evidence_refs": [
+    "EV-001",
+    "EV-002",
+    "EV-003",
+    "EV-004",
+    "EV-008",
+    "EV-009",
+    "EV-010"
+  ],
+  "decision_reason": "The isolated foundation is structurally valid and its local policy, routing, provenance, upstream-lock, schema, archive, and secret-pattern tests pass. Runtime implementation remains blocked because architecture approval, VPS audit, canonical database/RLS design, production adapter, remote repository migration, and all productive agent-publish gates are not complete.",
+  "next_actions": [
+    "Owner decides whether to create a new clean remote or migrate the existing gbrain-atlas prototype.",
+    "Complete ATLAS-14 and ATLAS-16.",
+    "Complete canonical data and RLS contracts under ATLAS-54.",
+    "Build and test the pinned gbrain projector and gbrain-evals pilot adapter.",
+    "Execute all 14 release gates before productive publish."
+  ]
+}
