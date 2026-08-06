@@ -1,0 +1,42 @@
+VALIDATION PASSED
+ ✓ file exists: README.md
+ ✓ file exists: CODEOWNERS
+ ✓ file exists: import-provenance.json
+ ✓ file exists: build-manifest.json
+ ✓ file exists: architecture-decision.json
+ ✓ file exists: architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md
+ ✓ file exists: architecture/approval-boundary.md
+ ✓ file exists: docs/repository-assessment.md
+ ✓ file exists: docs/governance/repository-roles.md
+ ✓ file exists: docs/governance/blockers.md
+ ✓ file exists: docs/policies/pr-rules.md
+ ✓ file exists: docs/plans/2026-08-06-atlas-sprint-1-foundation.md
+ ✓ file exists: docs/historical-import/README-foundation.md
+ ✓ file exists: reports/release-decision.json
+ ✓ file exists: reports/validation-report.md
+ ✓ file exists: reports/historical-import/project-atlas-foundation-checksums.txt
+ ✓ file exists: reports/historical-import/provenance.json
+ ✓ file exists: third_party/upstreams.lock.json
+ ✓ file exists: .github/workflows/foundation-consistency.yml
+ ✓ build-manifest repository points at canonical repo
+ ✓ build-manifest target_branch is the working branch
+ ✓ build-manifest marks imported origin evidence
+ ✓ build-manifest has no open migration-decision risk
+ ✓ build-manifest authorization reflects the granted Owner order
+ ✓ build-manifest rollback covers remote, Jira and Confluence mutations
+ ✓ import provenance names the canonical repository
+ ✓ repository roles: canonical / read-only legacy / deprecated snapshot
+ ✓ release decision contains no /mnt/data claim
+ ✓ release decision has no open remote-migration blocker
+ ✓ release decision separates foundation maturity from merge readiness
+ ✓ validation report has historical and current sections
+ ✓ old checksums path removed
+ ✓ historical checksums provenance is complete
+ ✓ historical README is marked and free of pending-remote / dead-handoff claims
+ ✓ plan contains exactly the eight sprint tickets
+ ✓ every confluence_space_key in the plan is PRODUKTMAN
+ ✓ plan maps EasyTree/Plumbline roots with PRODUKTMAN
+ ✓ no dead github-handoff reference in README.md
+ ✓ no dead github-handoff reference in docs/governance/repository-roles.md
+ ✓ no dead github-handoff reference in reports/release-decision.json
+ ✓ no dead github-handoff reference in reports/validation-report.md
