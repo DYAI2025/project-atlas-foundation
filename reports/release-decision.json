@@ -18,7 +18,7 @@
   "foundation_maturity": "Origin dry-run primitives were tested in the imported foundation package (see reports/historical-import/ and reports/validation-report.md, historical section). No test suite has been executed inside the canonical repository yet.",
   "merge_readiness": "BLOCKED",
   "merge_blockers": [
-    "No executed GitHub Actions run on PR #1 at generation time (foundation-consistency workflow added in the correction commit; run evidence follows in the PR).",
+    "No executed GitHub Actions run on PR #1: the foundation-consistency workflow was added and two trigger attempts were made, but GitHub Actions creates no check suite for this private repository (BLK-ATLAS-13-02); local validation log committed as interim evidence.",
     "No independent approving review on PR #1.",
     "BLK-ATLAS-13-01: branch protection technically unavailable (GitHub Free plan, private repository); Owner decision 2026-08-06: documented interim until release gate; prevents Done for ATLAS-13 and parts of ATLAS-23."
   ],

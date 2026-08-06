@@ -1,5 +1,36 @@
 # Governance-Blocker
 
+## BLK-ATLAS-13-02 — GitHub Actions erzeugt keine Runs für dieses Repository
+
+- **Datum:** 2026-08-06
+- **Ticket:** ATLAS-13 (Korrekturschnitt), betrifft auch ATLAS-23
+- **Befund:** Workflow `.github/workflows/foundation-consistency.yml` liegt auf
+  dem PR-Branch (Commits `d7ef3ec`, `689611a`). Actions-Permissions:
+  `{"enabled": true, "allowed_actions": "all"}`. Trotzdem: 0 Workflow-Runs,
+  `gh workflow list` leer, und auf dem Head-Commit existieren 9 Check-Suites
+  von Dritt-Apps (render, railway, fly-io, cursor, vercel, trunk-io, supabase,
+  sourcery-ai, google-cloud-build), aber **keine** `github-actions`-Suite —
+  GitHub Actions verarbeitet die `pull_request`-Events dieses privaten Repos
+  nicht.
+- **Versuche (2, materiell unterschiedlich, gemäß Fehlerregel gestoppt):**
+  1. Workflow-Datei per Push auf den PR-Branch (synchronize-Event) — kein Run.
+  2. Frisches synchronize-Event per Empty-Commit `689611a` — kein Run.
+- **Wahrscheinliche Ursache:** Account-/Billing-seitige Actions-Blockade des
+  Free-User-Accounts `DYAI2025` für private Repositories (API meldet
+  `plan: null`); nicht über Repo-Einstellungen behebbar.
+- **Owner-Optionen:**
+  1. GitHub Web-UI → Actions-Tab des Repos öffnen (Aktivierungs-/Billing-Banner
+     bestätigen), Settings → Billing → Spending-Limit/Zahlungsmethode prüfen.
+  2. Nach Merge von PR #1 ist der Workflow auf `main` registriert; prüfen, ob
+     Folge-PRs dann Runs erhalten.
+  3. Einmaliger Owner-genehmigter Direkt-Push des Workflows auf `main`
+     (dokumentierte Ausnahme analog Bootstrap).
+- **Interim-Evidenz:** Lokale Ausführung `node scripts/validate-current-repository.mjs`
+  → `VALIDATION PASSED` (42 Checks), Log versioniert in
+  `reports/current-validation.log`.
+- **Status:** OPEN — verhindert den CI-Ausführungsnachweis für PR #1 und die
+  Required-Checks-Verknüpfung (zusammen mit BLK-ATLAS-13-01).
+
 ## BLK-ATLAS-13-01 — Branch Protection auf privatem Repo nicht verfügbar
 
 - **Datum:** 2026-08-06
