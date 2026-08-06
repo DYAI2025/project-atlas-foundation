@@ -1,0 +1,23 @@
+name: actions-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/actions-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record environment
+        run: |
+          echo "ATLAS-55 GitHub Actions probe"
+          echo "repository=${GITHUB_REPOSITORY}"
+          echo "sha=${GITHUB_SHA}"
+          echo "event=${GITHUB_EVENT_NAME}"
