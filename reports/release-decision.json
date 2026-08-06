@@ -1,41 +1,46 @@
 {
-  "schema_version": "1.0",
-  "generated_at": "2026-08-06T17:18:17Z",
+  "schema_version": "1.1",
+  "generated_at": "2026-08-06T19:57:51Z",
   "status": "NOT_READY",
-  "subject": "Project ATLAS foundation repository",
-  "maturity": "tested",
-  "required_gate_summary": {
-    "passed": 8,
-    "failed": 0,
-    "skipped": 0,
-    "not_run": 5
+  "subject": "Project ATLAS canonical foundation repository DYAI2025/project-atlas-foundation",
+  "repository": {
+    "canonical": "DYAI2025/project-atlas-foundation",
+    "visibility": "private",
+    "default_branch": "main",
+    "bootstrap_commit": "3b60912",
+    "bootstrap_exception": "BOOTSTRAP_EXCEPTION_ATLAS_13",
+    "working_branch": "feat/ATLAS-13-sprint-1-foundation",
+    "pull_request": "https://github.com/DYAI2025/project-atlas-foundation/pull/1",
+    "push_verified": true,
+    "legacy_reference": "DYAI2025/gbrain-atlas pinned at aea0fb0b934780a205db92066786b265de0de22a (read-only)",
+    "deprecated_snapshot": "DYAI2025/Gbrain-vps (private, non-canonical)"
   },
+  "foundation_maturity": "Origin dry-run primitives were tested in the imported foundation package (see reports/historical-import/ and reports/validation-report.md, historical section). No test suite has been executed inside the canonical repository yet.",
+  "merge_readiness": "BLOCKED",
+  "merge_blockers": [
+    "No executed GitHub Actions run on PR #1 at generation time (foundation-consistency workflow added in the correction commit; run evidence follows in the PR).",
+    "No independent approving review on PR #1.",
+    "BLK-ATLAS-13-01: branch protection technically unavailable (GitHub Free plan, private repository); Owner decision 2026-08-06: documented interim until release gate; prevents Done for ATLAS-13 and parts of ATLAS-23."
+  ],
   "blocking_issues": [
     "ATLAS-14 architecture approval",
     "ATLAS-16 VPS audit",
     "ATLAS-12 technical writer registry",
     "Incomplete canonical data model and RLS policies",
-    "Remote repository migration decision",
-    "Production runtime adapter missing"
+    "Production runtime adapter missing",
+    "BLK-ATLAS-13-01 interim: technical branch protection required before productive agent write (DEC-10)"
   ],
   "limitations": [
-    "No VPS, Docker, PostgreSQL, Bun, gbrain runtime, remote CI, SBOM, or GitHub push verification."
+    "No VPS, Docker, PostgreSQL, Bun, or gbrain runtime verification.",
+    "No SBOM or vulnerability scan in the canonical repository yet (ATLAS-23/ATLAS-24).",
+    "Historical dry-run validation results are imported evidence and make no claim about the current repository state."
   ],
-  "evidence_refs": [
-    "EV-001",
-    "EV-002",
-    "EV-003",
-    "EV-004",
-    "EV-008",
-    "EV-009",
-    "EV-010"
-  ],
-  "decision_reason": "The isolated foundation is structurally valid and its local policy, routing, provenance, upstream-lock, schema, archive, and secret-pattern tests pass. Runtime implementation remains blocked because architecture approval, VPS audit, canonical database/RLS design, production adapter, remote repository migration, and all productive agent-publish gates are not complete.",
+  "decision_reason": "The canonical repository exists, is private, push-verified, and carries the sanitized clean export plus governance documentation via PR #1. Merge readiness is blocked on executed CI, an independent approving review, and the documented branch-protection interim. Runtime implementation remains blocked on the architecture, audit, data-model, and adapter issues listed above.",
   "next_actions": [
-    "Owner decides whether to create a new clean remote or migrate the existing gbrain-atlas prototype.",
-    "Complete ATLAS-14 and ATLAS-16.",
-    "Complete canonical data and RLS contracts under ATLAS-54.",
-    "Build and test the pinned gbrain projector and gbrain-evals pilot adapter.",
-    "Execute all 14 release gates before productive publish."
+    "Run and pass the foundation-consistency workflow on PR #1.",
+    "Obtain independent Owner review and resolve findings.",
+    "Execute the Sprint 1 plan (Rev. 2) ticket by ticket after Owner clearance.",
+    "Resolve BLK-ATLAS-13-01 (Pro upgrade or org move) before the release gate.",
+    "Complete ATLAS-14, ATLAS-16, and the canonical data/RLS contracts before any runtime implementation."
   ]
 }

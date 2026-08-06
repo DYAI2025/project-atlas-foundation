@@ -1,0 +1,180 @@
+// Current-state consistency validation for DYAI2025/project-atlas-foundation.
+// Zero dependencies; run with: node scripts/validate-current-repository.mjs
+// Exit 0 + "VALIDATION PASSED" when consistent, exit 1 with findings otherwise.
+import { readFile, access } from 'node:fs/promises'
+
+const failures = []
+const ok = []
+
+async function exists(path) {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function check(name, condition, detail = '') {
+  if (condition) ok.push(name)
+  else failures.push(`${name}${detail ? ` — ${detail}` : ''}`)
+}
+
+const REQUIRED_FILES = [
+  'README.md',
+  'CODEOWNERS',
+  'import-provenance.json',
+  'build-manifest.json',
+  'architecture-decision.json',
+  'architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md',
+  'architecture/approval-boundary.md',
+  'docs/repository-assessment.md',
+  'docs/governance/repository-roles.md',
+  'docs/governance/blockers.md',
+  'docs/policies/pr-rules.md',
+  'docs/plans/2026-08-06-atlas-sprint-1-foundation.md',
+  'docs/historical-import/README-foundation.md',
+  'reports/release-decision.json',
+  'reports/validation-report.md',
+  'reports/historical-import/project-atlas-foundation-checksums.txt',
+  'reports/historical-import/provenance.json',
+  'third_party/upstreams.lock.json',
+  '.github/workflows/foundation-consistency.yml'
+]
+
+for (const f of REQUIRED_FILES) {
+  check(`file exists: ${f}`, await exists(f))
+}
+
+// 1) build-manifest: no stale open repository decision, current repo/branch, marked import
+const manifest = JSON.parse(await readFile('build-manifest.json', 'utf8'))
+check(
+  'build-manifest repository points at canonical repo',
+  manifest.repository.includes('DYAI2025/project-atlas-foundation') &&
+    !manifest.repository.includes('/mnt/data') &&
+    !manifest.repository.includes('gbrain-atlas')
+)
+check(
+  'build-manifest target_branch is the working branch',
+  manifest.target_branch === 'feat/ATLAS-13-sprint-1-foundation'
+)
+check(
+  'build-manifest marks imported origin evidence',
+  manifest.historical_import?.status === 'historical_import_evidence'
+)
+check(
+  'build-manifest has no open migration-decision risk',
+  !(manifest.known_risks ?? []).some((r) => /migration decision/i.test(r))
+)
+check(
+  'build-manifest authorization reflects the granted Owner order',
+  !/not authorized/i.test(manifest.authorization_evidence) &&
+    /Owner decision 2026-08-06/.test(manifest.authorization_evidence)
+)
+check(
+  'build-manifest rollback covers remote, Jira and Confluence mutations',
+  /PR #1/.test(manifest.rollback.join(' ')) &&
+    /Jira/.test(manifest.rollback.join(' ')) &&
+    /Confluence/.test(manifest.rollback.join(' '))
+)
+
+// 2) no canonical reference to gbrain-atlas as target remote
+const roles = await readFile('docs/governance/repository-roles.md', 'utf8')
+const provenance = JSON.parse(await readFile('import-provenance.json', 'utf8'))
+check(
+  'import provenance names the canonical repository',
+  provenance.canonical_repository === 'DYAI2025/project-atlas-foundation' &&
+    provenance.history_migrated === false
+)
+check(
+  'repository roles: canonical / read-only legacy / deprecated snapshot',
+  /project-atlas-foundation/.test(roles) &&
+    /kanonisch/i.test(roles) &&
+    /gbrain-atlas/.test(roles) &&
+    /read-only/i.test(roles) &&
+    /Gbrain-vps/.test(roles) &&
+    /deprecated/i.test(roles) &&
+    roles.includes('aea0fb0b934780a205db92066786b265de0de22a')
+)
+
+// 3) no /mnt/data claims presented as current state
+const release = await readFile('reports/release-decision.json', 'utf8')
+check('release decision contains no /mnt/data claim', !release.includes('/mnt/data'))
+check(
+  'release decision has no open remote-migration blocker',
+  !/migration decision/i.test(release)
+)
+const releaseJson = JSON.parse(release)
+check(
+  'release decision separates foundation maturity from merge readiness',
+  typeof releaseJson.foundation_maturity === 'string' &&
+    typeof releaseJson.merge_readiness === 'string' &&
+    releaseJson.repository?.canonical === 'DYAI2025/project-atlas-foundation' &&
+    releaseJson.repository?.push_verified === true &&
+    release.includes('BLK-ATLAS-13-01')
+)
+
+// 4) validation report split into historical vs current
+const valReport = await readFile('reports/validation-report.md', 'utf8')
+check(
+  'validation report has historical and current sections',
+  valReport.includes('## Historical imported validation') &&
+    valReport.includes('## Current canonical repository validation')
+)
+
+// 5) historical evidence marked as historical
+check(
+  'old checksums path removed',
+  !(await exists('reports/project-atlas-foundation-checksums.txt'))
+)
+const histProv = JSON.parse(
+  await readFile('reports/historical-import/provenance.json', 'utf8')
+)
+check(
+  'historical checksums provenance is complete',
+  histProv.status === 'historical_import_evidence' &&
+    histProv.source_commit === '004787b179835eb359efcade393a65b3c8f62203'
+)
+const histReadme = await readFile('docs/historical-import/README-foundation.md', 'utf8')
+check(
+  'historical README is marked and free of pending-remote / dead-handoff claims',
+  histReadme.includes('historical_import_evidence') &&
+    !histReadme.includes('](docs/delivery/github-handoff.md)') &&
+    !/remote decision pending/i.test(histReadme)
+)
+
+// 6) plan covers exactly the eight sprint tickets
+const plan = await readFile('docs/plans/2026-08-06-atlas-sprint-1-foundation.md', 'utf8')
+const ticketSections = [...plan.matchAll(/^## ATLAS-(\d+) /gm)].map((m) => m[1]).sort()
+check(
+  'plan contains exactly the eight sprint tickets',
+  JSON.stringify(ticketSections) ===
+    JSON.stringify(['11', '12', '13', '15', '21', '22', '23', '24']),
+  `found: ${ticketSections.join(',')}`
+)
+
+// 7) PRODUKTMAN mappings are correct (EYT/PLUM are Jira keys, never space keys)
+const spaceKeys = [...plan.matchAll(/"confluence_space_key":\s*"([^"]+)"/g)].map((m) => m[1])
+check(
+  'every confluence_space_key in the plan is PRODUKTMAN',
+  spaceKeys.length >= 3 && spaceKeys.every((k) => k === 'PRODUKTMAN'),
+  `found: ${spaceKeys.join(',') || 'none'}`
+)
+check(
+  'plan maps EasyTree/Plumbline roots with PRODUKTMAN',
+  plan.includes('5505026') && plan.includes('7503873')
+)
+
+// 8) dead github-handoff reference only allowed inside the marked import manifest
+for (const f of ['README.md', 'docs/governance/repository-roles.md', 'reports/release-decision.json', 'reports/validation-report.md']) {
+  const content = await readFile(f, 'utf8')
+  check(`no dead github-handoff reference in ${f}`, !content.includes('github-handoff'))
+}
+
+if (failures.length > 0) {
+  console.error('VALIDATION FAILED')
+  for (const f of failures) console.error(' ✗', f)
+  process.exit(1)
+}
+console.log('VALIDATION PASSED')
+for (const o of ok) console.log(' ✓', o)

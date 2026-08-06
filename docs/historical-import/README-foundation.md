@@ -1,4 +1,12 @@
-# Project ATLAS Foundation
+# Project ATLAS Foundation (historisches Importdokument)
+
+> **Status: historical_import_evidence.** Original-README des Dry-Run-Pakets vom
+> 2026-08-06 (importiert über `DYAI2025/Gbrain-vps@fad6e83e`). Beschreibt den
+> damaligen Paketzustand, nicht das heutige kanonische Repository — dessen
+> aktuelle README liegt im Repository-Root. Die Remote-Entscheidung ist
+> inzwischen getroffen (Option A, 06.08.2026): kanonisch ist
+> `DYAI2025/project-atlas-foundation`; `DYAI2025/gbrain-atlas` bleibt
+> unveränderte read-only Legacy-Referenz.
 
 This repository is the **clean implementation foundation** for Project ATLAS. It is not a continuation of the legacy PGLite brain and it does not silently replace the existing `DYAI2025/gbrain-atlas` prototype.
 
@@ -59,6 +67,6 @@ No production service, database migration, container, or VPS change is executed 
 
 See [Approval Boundary](architecture/approval-boundary.md).
 
-## GitHub handoff
+## GitHub handoff (historisch — Entscheidung inzwischen getroffen)
 
-A remote repository already exists at `DYAI2025/gbrain-atlas`, but it contains a legacy prototype with foreign history. This dry run does not overwrite or push to it. The safe choices and required approval are documented in [GitHub Handoff](docs/delivery/github-handoff.md).
+Zum Zeitpunkt des Dry Runs existierte `DYAI2025/gbrain-atlas` als Legacy-Prototyp mit fremder Historie; der Dry Run hat ihn weder überschrieben noch dorthin gepusht. Das damals referenzierte Dokument `docs/delivery/github-handoff.md` wurde **nicht** in dieses Repository importiert. Die Handoff-Frage ist durch die Owner-Entscheidung vom 06.08.2026 (Option A: neues kanonisches Repository `DYAI2025/project-atlas-foundation`, keine History-Migration) abgeschlossen — siehe `docs/governance/repository-roles.md`.
