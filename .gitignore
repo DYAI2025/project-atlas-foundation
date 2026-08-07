@@ -3,6 +3,7 @@ sbom.cdx.json
 *.log
 !reports/current-validation.log
 .DS_Store
-.claude/
+.claude/*
+!.claude/skills/
 .claude-flow/
 scratch/
