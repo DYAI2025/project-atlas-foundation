@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0",
+  "decision_id": "AD-001",
+  "generated_at": "2026-08-06T16:58:00Z",
+  "status": "conditional",
+  "context": "Project ATLAS needs a clean, project-isolated canonical governance layer while reusing the pinned gbrain runtime for retrieval, MCP, and graph projection without coupling ATLAS policy to upstream internals.",
+  "hard_constraints": [
+    "Confluence remains canonical fachliche Source of Truth.",
+    "Project scope is deterministic and never inferred from titles or model semantics.",
+    "Canonical data uses project_id, PostgreSQL RLS, separate service roles, proposals, approval evidence, and audit.",
+    "Core operation does not require paid model API credits.",
+    "Obsidian is read-only in V1.",
+    "Legacy embeddings, facts, links, and timelines are not migrated as canonical data.",
+    "Upstream source versions and licenses are pinned.",
+    "Productive agent publish remains blocked until all release gates pass."
+  ],
+  "quality_scenarios": ["QS-001", "QS-002", "QS-003", "QS-004", "QS-005", "QS-006", "QS-007", "QS-008", "QS-009", "QS-010"],
+  "candidates": [
+    {
+      "id": "CAND-001",
+      "name": "Direct gbrain fork as canonical store",
+      "kind": "minimum-change fork",
+      "summary": "Modify gbrain until its schema and permission model become the complete ATLAS canonical platform.",
+      "feasibility": "infeasible",
+      "hard_constraint_results": [
+        {"constraint_id": "HC-PROJECT-ID", "status": "violated", "notes": "Pinned source has source_id scoping but not the full ATLAS canonical project_id/composite-FK contract.", "evidence_refs": ["EV-003"]},
+        {"constraint_id": "HC-ROLE-SEPARATION", "status": "violated", "notes": "Unmodified scopes do not implement the required proposal/approve/publish separation.", "evidence_refs": ["EV-003"]},
+        {"constraint_id": "HC-UPGRADEABILITY", "status": "unknown", "notes": "A deep fork would materially increase upstream merge cost.", "evidence_refs": ["EV-003", "EV-008"]}
+      ],
+      "scores": {"security": 1, "delivery": 2, "operability": 3, "modifiability": 1, "reversibility": 2},
+      "risks": ["Deep upstream fork", "Policy bypass through unwrapped operations", "Expensive upgrades"],
+      "non_risks": ["gbrain already provides useful retrieval and graph primitives"],
+      "sensitivity_points": ["Extent of required schema changes", "Upstream change rate"],
+      "tradeoff_points": ["Less duplication versus much stronger coupling"],
+      "reversibility": "low",
+      "migration_cost": "high",
+      "evidence_strength": 4
+    },
+    {
+      "id": "CAND-002",
+      "name": "ATLAS canonical core plus pinned gbrain projection",
+      "kind": "balanced overlay",
+      "summary": "Own registry, proposals, evidence, audit, and isolation in ATLAS; project approved revisions into gbrain for retrieval and graph capabilities.",
+      "feasibility": "conditional",
+      "hard_constraint_results": [
+        {"constraint_id": "HC-PROJECT-ID", "status": "satisfied", "notes": "The canonical core can implement project_id and composite keys independently of gbrain.", "evidence_refs": ["EV-001", "EV-002"]},
+        {"constraint_id": "HC-ROLE-SEPARATION", "status": "satisfied", "notes": "Proposal, approval, and publisher roles are ATLAS-owned.", "evidence_refs": ["EV-001"]},
+        {"constraint_id": "HC-UPGRADEABILITY", "status": "satisfied", "notes": "Pinned adapter boundary limits upstream coupling.", "evidence_refs": ["EV-003", "EV-004"]},
+        {"constraint_id": "HC-RUNTIME", "status": "unknown", "notes": "VPS capacity and projection behavior require audit and pilot proof.", "evidence_refs": ["EV-002"]}
+      ],
+      "scores": {"security": 5, "delivery": 4, "operability": 4, "modifiability": 4, "reversibility": 5},
+      "risks": ["Canonical/projection drift", "Additional projector and reconciliation responsibilities"],
+      "non_risks": ["Does not require a separate graph database", "Does not require paid embedding APIs"],
+      "sensitivity_points": ["Projection lag", "Reconciliation failure rate", "Canonical schema size"],
+      "tradeoff_points": ["More explicit components in exchange for lower upstream coupling"],
+      "reversibility": "high",
+      "migration_cost": "medium",
+      "evidence_strength": 4
+    },
+    {
+      "id": "CAND-003",
+      "name": "Separate full stack per project",
+      "kind": "maximum-isolation topology",
+      "summary": "Run independent canonical and gbrain service/database sets for ATLAS, EasyTree, and Plumbline.",
+      "feasibility": "conditional",
+      "hard_constraint_results": [
+        {"constraint_id": "HC-PROJECT-ISOLATION", "status": "satisfied", "notes": "Process and database boundaries provide strong separation.", "evidence_refs": ["EV-001"]},
+        {"constraint_id": "HC-SINGLE-VPS-OPERABILITY", "status": "unknown", "notes": "Resource and operational cost may be excessive on the target VPS.", "evidence_refs": ["EV-002"]}
+      ],
+      "scores": {"security": 5, "delivery": 2, "operability": 1, "modifiability": 3, "reversibility": 3},
+      "risks": ["Tripled deployment and backup burden", "Resource pressure on one VPS", "More upgrade paths"],
+      "non_risks": ["Cross-project database joins are structurally absent"],
+      "sensitivity_points": ["VPS memory and disk", "Number of future projects"],
+      "tradeoff_points": ["Maximum isolation versus operational complexity"],
+      "reversibility": "medium",
+      "migration_cost": "high",
+      "evidence_strength": 3
+    }
+  ],
+  "preferred_candidate_id": "CAND-002",
+  "strongest_counterargument": "The overlay duplicates data and creates projection drift. A clean upstream-compatible gbrain extension could be simpler if it can natively satisfy project_id, RLS, proposal, approval, and publish separation with lower total upgrade cost.",
+  "decision_rationale": [
+    "It satisfies the canonical governance requirements without a deep gbrain fork.",
+    "It preserves gbrain as a replaceable and rebuildable derived capability.",
+    "It supports the clean-rebuild and evidence policies.",
+    "It defers optional UI and Obsidian plugin choices rather than locking them into the backend."
+  ],
+  "rejected_alternatives": ["CAND-001 violates current canonical policy requirements without a deep fork.", "CAND-003 is operationally disproportionate for three projects on one unaudited VPS."],
+  "consequences": ["A projector and checkpoint/reconciliation process are required.", "gbrain write operations must be wrapped and project-scoped.", "Canonical data definitions remain an ATLAS responsibility.", "The graph UI can evolve independently from storage."],
+  "risks": [
+    {"id": "RISK-001", "statement": "Canonical and gbrain projection state can drift.", "likelihood": "medium", "impact": "high", "mitigation": "Revision hashes, idempotent projection, checkpoints, reconciliation, and rebuild tests."},
+    {"id": "RISK-002", "statement": "The target VPS may not sustain BGE-M3 and the full Compose topology.", "likelihood": "unknown", "impact": "high", "mitigation": "ATLAS-16 audit and benchmark before runtime implementation."},
+    {"id": "RISK-003", "statement": "Existing prototype history may be overwritten during repository migration.", "likelihood": "medium", "impact": "high", "mitigation": "No remote apply; require an explicit repository migration decision and PR-based change."}
+  ],
+  "assumptions": [
+    {"id": "ASM-001", "statement": "gbrain remains maintainable behind a narrow pinned adapter.", "confidence": 3, "review_trigger": "First upstream upgrade or adapter contract break."},
+    {"id": "ASM-002", "statement": "Projection latency acceptable for daily knowledge work can be achieved on the target VPS.", "confidence": 2, "review_trigger": "Pilot load and reconciliation measurements."}
+  ],
+  "review_triggers": [
+    "gbrain upstream provides native project_id/RLS/proposal semantics",
+    "Projection reconciliation fails a release gate",
+    "VPS audit shows the topology is not viable",
+    "A fourth production project materially changes isolation or capacity needs",
+    "Graph UI or Obsidian feedback requires canonical write semantics"
+  ],
+  "migration_signals": ["Projection drift rate", "Rebuild duration", "Adapter diff per gbrain upgrade", "Per-project resource consumption", "Cross-project negative-test results"],
+  "diagram_paths": ["architecture/c4-context.mmd", "architecture/c4-container.mmd"],
+  "adr_paths": ["architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md"],
+  "evidence_refs": ["EV-001", "EV-002", "EV-003", "EV-004", "EV-008", "EV-009", "EV-010"]
+}
