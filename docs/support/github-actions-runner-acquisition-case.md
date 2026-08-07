@@ -1,5 +1,11 @@
 # GitHub Support Case — Hosted Runner Acquisition Failure
 
+> **Status: RESOLVED (operational) — 2026-08-07.** Hosted-Runner-Akquisition
+> funktioniert seit 2026-08-07 wieder (erfolgreiche Runs auf allen Sprint-PR-Heads
+> und `main`, final Run 31175543815). Der ursprüngliche Grund wurde von GitHub nie
+> benannt und bleibt `UNKNOWN_PLATFORM_OR_POLICY`. Der Support-Case wurde nicht
+> mehr eröffnet. Alles Folgende ist historische Evidenz vom 2026-08-06/07.
+
 Jira: ATLAS-55 · Interne Kennung: BLK-ATLAS-13-02 · Stand: 2026-08-06/07
 
 Alle Angaben unten sind API-belegt (GitHub CLI/REST); keine Vermutungen.

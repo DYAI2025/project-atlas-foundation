@@ -23,25 +23,46 @@
 Damals nicht ausgeführt: Bun/gbrain build, PostgreSQL/RLS, Compose/systemd,
 VPS/BGE-M3, SBOM, GitHub branch/PR/CI/readback, produktive Release-Gates.
 
-## Current canonical repository validation
+### Historischer Setup-Checkpoint 2026-08-06 (Repository-Validierung)
 
-Stand: 2026-08-06 (Setup-Checkpoint + Korrekturschnitt), Repository
-`DYAI2025/project-atlas-foundation`.
+> **Status: historisch.** Snapshot der Repository-Validierung vom 2026-08-06
+> (Setup-Checkpoint + Korrekturschnitt), vor der ATLAS-55-Recovery und der
+> Sprint-1 Integration Wave vom 2026-08-07. Diese Sektion trifft **keine
+> Aussage über den heutigen Zustand**; der aktuelle Stand steht unter
+> „Current canonical repository validation".
 
-| Prüfung | Ergebnis |
+| Prüfung (Stand 2026-08-06) | Ergebnis damals |
 |---|---|
 | Privates Repository verifiziert (`gh repo view`: PRIVATE, default `main`) | ✅ |
 | Branch `feat/ATLAS-13-sprint-1-foundation` + PR #1 verifiziert (push + `gh pr view`) | ✅ |
 | Jira ATLAS-13 Read-after-write (Status „In Arbeit", Evidence-Kommentar) | ✅ |
 | Confluence Read-after-write (Seiten 15138817, 15040514, 15171611, 15400961 → v2) | ✅ |
 | Repository-Konsistenz (`scripts/validate-current-repository.mjs`) | ✅ lokal, Log: `reports/current-validation.log` |
-| GitHub Actions (`foundation-consistency`) | ⛔ Trigger funktioniert seit Default-Branch-Registrierung (Run 31127753756 automatisch erzeugt), aber Hosted-Runner akquiriert keine Jobs: „The job was not acquired by Runner of type hosted even after multiple attempts" — BLK-ATLAS-13-02 / ATLAS-55 |
+| GitHub Actions (`foundation-consistency`) | ⛔ Trigger funktioniert seit Default-Branch-Registrierung (Run 31127753756 automatisch erzeugt), aber Hosted-Runner akquiriert keine Jobs: „The job was not acquired by Runner of type hosted even after multiple attempts" — BLK-ATLAS-13-02 / ATLAS-55 (seit 2026-08-07 gelöst, siehe unten) |
 | Unabhängiges Code Review mit Approval | ❌ noch nicht vorhanden |
 | Branch Protection | ⛔ technisch blockiert (BLK-ATLAS-13-01, Interim per Owner-Entscheidung 06.08.2026) |
 
+## Current canonical repository validation
+
+Stand: 2026-08-07 (nach Sprint-1 Integration Wave), Repository
+`DYAI2025/project-atlas-foundation`, `main` =
+`e1a532a9626704a07a27b2891d8db29b2a615da4`.
+
+| Prüfung | Ergebnis |
+|---|---|
+| Privates Repository (`gh repo view`: PRIVATE, default `main`) | ✅ |
+| Integration: PR #1/#3/#2 per Merge-Commit auf `main` (`32610ac`, `02a9727`, `e1a532a`), 0 offene PRs | ✅ |
+| G2-Solo-Owner-Exception je PR dokumentiert (Audit-Kommentare 5216362872, 5216433381, 5216663238) | ✅ |
+| Hosted CI operational: `foundation-consistency` `success` auf allen drei PR-Heads und auf `main` (final Run 31175543815) — BLK-ATLAS-13-02 geschlossen 2026-08-07, Root Cause der historischen Fehlläufe `UNKNOWN_PLATFORM_OR_POLICY` | ✅ |
+| Vollständige Node-Test-Suite (`npm test`, `node --test`): 57 pass / 0 fail — lokal und im Fresh Checkout (2026-08-07). Hosted CI führt die Test-Suite noch NICHT aus (nur Validator) → offen unter ATLAS-23 | ✅ lokal |
+| Repository-Konsistenz (`scripts/validate-current-repository.mjs`, 42 Checks): `VALIDATION PASSED` — lokal UND auf Hosted CI | ✅ |
+| Unabhängiges menschliches Review | ❌ nicht vorhanden — je PR durch die PO-autorisierte G2-Solo-Owner-Exception ersetzt (ersetzt ausschließlich das unabhängige menschliche Approval, nicht CI/Tests/Findings/DoD) |
+| Branch Protection | ⛔ BLK-ATLAS-13-01 OFFEN (GitHub Free, privates Repo; Interim per Owner-Entscheidung 06.08.2026) |
+
 ## Honest maturity
 
-Ursprungspaket: `tested` für isolierte Foundation-Primitives (historisch).
-Kanonisches Repository: `bootstrapped + consistency-validated`; nicht
-`runtime_verified`, kein Release-Kandidat, Merge-Readiness `BLOCKED`
-(siehe `reports/release-decision.json`).
+Ursprungspaket: `tested` für isolierte Foundation-Primitives (historisch,
+siehe oben). Kanonisches Repository: `integrated + consistency-validated`
+auf `main`; Test-Suite-Evidenz lokal/Fresh-Checkout, Validator-Evidenz
+lokal + Hosted CI. Nicht `runtime_verified`. Kein Release-Kandidat —
+offene Gates siehe `reports/release-decision.json` (`NOT_READY`).

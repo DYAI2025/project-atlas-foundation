@@ -1,6 +1,6 @@
 {
   "schema_version": "1.1",
-  "generated_at": "2026-08-06T19:57:51Z",
+  "generated_at": "2026-08-07T13:51:55Z",
   "status": "NOT_READY",
   "subject": "Project ATLAS canonical foundation repository DYAI2025/project-atlas-foundation",
   "repository": {
@@ -9,37 +9,47 @@
     "default_branch": "main",
     "bootstrap_commit": "3b60912",
     "bootstrap_exception": "BOOTSTRAP_EXCEPTION_ATLAS_13",
-    "working_branch": "feat/ATLAS-13-sprint-1-foundation",
-    "pull_request": "https://github.com/DYAI2025/project-atlas-foundation/pull/1",
+    "integrated_main": "e1a532a9626704a07a27b2891d8db29b2a615da4",
+    "merged_pull_requests": [
+      {
+        "pr": "PR #1 (ATLAS-13 Sprint-1-Foundation)",
+        "merge_commit": "32610ac26f1eac91fdee358a0e5fc49a1dc2ec7a"
+      },
+      {
+        "pr": "PR #3 (ATLAS-12 writer registry, Slice 1)",
+        "merge_commit": "02a9727fada57b59fb7917d000231df0956e7bf7"
+      },
+      {
+        "pr": "PR #2 (ATLAS-22 local adapter contract, Slice 1)",
+        "merge_commit": "e1a532a9626704a07a27b2891d8db29b2a615da4"
+      }
+    ],
+    "open_pull_requests": 0,
     "push_verified": true,
     "legacy_reference": "DYAI2025/gbrain-atlas pinned at aea0fb0b934780a205db92066786b265de0de22a (read-only)",
     "deprecated_snapshot": "DYAI2025/Gbrain-vps (private, non-canonical)"
   },
-  "foundation_maturity": "Origin dry-run primitives were tested in the imported foundation package (see reports/historical-import/ and reports/validation-report.md, historical section). No test suite has been executed inside the canonical repository yet.",
-  "merge_readiness": "BLOCKED",
-  "merge_blockers": [
-    "No successfully executed GitHub Actions run on PR #1: triggering works since the default-branch registration (run 31127753756 was created automatically), but every job is cancelled un-started with the GitHub annotation 'The job was not acquired by Runner of type hosted even after multiple attempts' (BLK-ATLAS-13-02 / ATLAS-55, cause UNKNOWN_PLATFORM_OR_POLICY); local validation log committed as interim evidence.",
-    "No independent approving review on PR #1.",
-    "BLK-ATLAS-13-01: branch protection technically unavailable (GitHub Free plan, private repository); Owner decision 2026-08-06: documented interim until release gate; prevents Done for ATLAS-13 and parts of ATLAS-23."
-  ],
+  "foundation_maturity": "Sprint-1 foundation slices are integrated on main. The full Node test suite (node --test) passes locally and in fresh checkouts; the repository-consistency validator passes locally AND on GitHub-hosted CI (workflow foundation-consistency, latest main run 31175543815, success). Hosted CI does not yet execute the test suite itself (validator only) — closing that gap is ATLAS-23. Not runtime_verified: no VPS/PostgreSQL/gbrain runtime verification has happened.",
+  "merge_readiness": "INTEGRATED — all three Sprint-1 PRs (#1, #3, #2) were merged to main via merge commits on 2026-08-07 under the PO-authorized G2 solo-owner exception (per-PR audit comments 5216362872, 5216433381, 5216663238). 0 open PRs. Hosted-runner acquisition is operational again (BLK-ATLAS-13-02 closed 2026-08-07; original root cause UNKNOWN_PLATFORM_OR_POLICY). Future PRs still merge under documented PR policy without technical branch protection (BLK-ATLAS-13-01, open).",
   "blocking_issues": [
     "ATLAS-14 architecture approval",
     "ATLAS-16 VPS audit",
-    "ATLAS-12 technical writer registry",
-    "Incomplete canonical data model and RLS policies",
+    "Canonical data model and RLS contracts (ATLAS-54) incomplete",
     "Production runtime adapter missing",
-    "BLK-ATLAS-13-01 interim: technical branch protection required before productive agent write (DEC-10)"
+    "BLK-ATLAS-13-01: technical branch protection unavailable on the current plan (open; documented interim per Owner decision 2026-08-06); required before productive agent write (DEC-10); still prevents Done for ATLAS-13 and parts of ATLAS-23",
+    "ATLAS-23 CI/security gates incomplete: hosted CI runs the consistency validator only; full test suite in CI, secret scanning, vulnerability scanning, license compliance, and required-checks wiring are missing",
+    "ATLAS-12 / ATLAS-13 / ATLAS-22 tickets remain In Arbeit: Sprint-1 slices integrated; ATLAS-13 Done blocked by BLK-ATLAS-13-01; ATLAS-12/22 remaining ticket scope open"
   ],
   "limitations": [
     "No VPS, Docker, PostgreSQL, Bun, or gbrain runtime verification.",
     "No SBOM or vulnerability scan in the canonical repository yet (ATLAS-23/ATLAS-24).",
-    "Historical dry-run validation results are imported evidence and make no claim about the current repository state."
+    "Historical dry-run validation results are imported evidence and make no claim about the current repository state.",
+    "Test-suite execution evidence on hosted CI does not exist yet (local + fresh-checkout evidence only); the hosted CI evidence to date covers the consistency validator."
   ],
-  "decision_reason": "The canonical repository exists, is private, push-verified, and carries the sanitized clean export plus governance documentation via PR #1. Merge readiness is blocked on executed CI, an independent approving review, and the documented branch-protection interim. Runtime implementation remains blocked on the architecture, audit, data-model, and adapter issues listed above.",
+  "decision_reason": "The canonical repository is integrated on main with green hosted CI (consistency validator) and a locally green full test suite. It is NOT a release candidate: architecture approval, VPS audit, data-model/RLS contracts, runtime adapter, technical branch protection, and the ATLAS-23/24 CI+security gates are outstanding. All 14 release gates must be evidenced before any productive agent publish.",
   "next_actions": [
-    "Run and pass the foundation-consistency workflow on PR #1.",
-    "Obtain independent Owner review and resolve findings.",
-    "Execute the Sprint 1 plan (Rev. 2) ticket by ticket after Owner clearance.",
+    "ATLAS-23 Slice 1: canonical ci.yml with check context (clean install + full test suite + consistency validator) on every PR and main.",
+    "Later ATLAS-23 slices: secret scanning, vulnerability scanning, license compliance, required-checks wiring (needs BLK-ATLAS-13-01 resolution).",
     "Resolve BLK-ATLAS-13-01 (Pro upgrade or org move) before the release gate.",
     "Complete ATLAS-14, ATLAS-16, and the canonical data/RLS contracts before any runtime implementation."
   ]

@@ -1,6 +1,6 @@
 # Governance-Blocker
 
-## BLK-ATLAS-13-02 — GitHub Actions: Hosted-Runner akquiriert keine Jobs (Jira: ATLAS-55)
+## BLK-ATLAS-13-02 — GitHub Actions: Hosted-Runner akquiriert keine Jobs (Jira: ATLAS-55) — RESOLVED 2026-08-07
 
 - **Datum:** 2026-08-06 (aktualisiert nach ATLAS-55-Probe-Test)
 - **Ticket:** ATLAS-55 (Bug); blockiert ATLAS-13 und ATLAS-23
@@ -15,7 +15,7 @@
   sowie `workflow_dispatch`-Runs. Trigger und Eventverarbeitung
   funktionieren damit nachweislich. Die frühere Billing-Vermutung war als
   Ursache hierfür falsch und ist verworfen.
-- **Teilbefund 2 — OFFEN (Runner-Acquisition):** Alle drei erzeugten Runs
+- **Teilbefund 2 — GELÖST 2026-08-07 (Runner-Acquisition, historischer Befund vom 2026-08-06):** Alle drei erzeugten Runs
   enden `failure`, Job `cancelled` nach exakt 15m02s, 0 ausgeführte Steps,
   keine Logs. Konkrete GitHub-Annotation (wörtlich, in allen drei Jobs
   92705654160, 92706093471, 92707084002 identisch):
@@ -41,8 +41,22 @@
   lieferte damals 41 Checks. Mit der Aufteilung der Sprint-Ticket-Prüfung in
   „exactly the eight delivery tickets" + „exactly one sprint enabler: ATLAS-55"
   (Aufnahme von ATLAS-55 in Sprint 370 als Enabler) sind es jetzt tatsächlich 42.
-- **Status:** OPEN — verhindert weiterhin den CI-Ausführungsnachweis für
-  PR #1 und die Required-Checks-Verknüpfung (zusammen mit BLK-ATLAS-13-01).
+- **Recovery (2026-08-07):** Seit 2026-08-07 akquirieren GitHub-hosted Runner
+  wieder Jobs für dieses Repository. Erfolgreiche `foundation-consistency`-Runs
+  liegen auf allen drei Sprint-PR-Heads und auf `main` vor: 31163903654
+  (PR #1, Head `2c6cd52`), 31173659312 (Head `cb6c78b`), 31174985999
+  (Head `420d586`) sowie die `main`-Push-Runs 31173609873 (`32610ac`),
+  31173984511 (`02a9727`) und final 31175543815 (`e1a532a`, `success`).
+  Vollständige Evidenz in Jira ATLAS-55, Kommentar 12347. ATLAS-55 wurde über
+  den im Sprintplan definierten Erfolgsweg auf `Fertig` gesetzt. Die
+  historischen Fehlläufe vom 2026-08-06 (oben) bleiben unverändert
+  dokumentierte Fakten.
+- **Root Cause:** `UNKNOWN_PLATFORM_OR_POLICY` — der Grund der ursprünglichen
+  Akquisitionsfehler wurde von GitHub nie benannt und bleibt unbekannt. Es wird
+  ausdrücklich KEIN kausaler Claim (Billing/Policy/Plattform) erhoben.
+- **Status:** CLOSED / RESOLVED (operational) — 2026-08-07. Kein offener
+  Runner-Blocker mehr. Unabhängig davon bleibt BLK-ATLAS-13-01 (Branch
+  Protection) OFFEN und ist ein separater Blocker.
 
 ## BLK-ATLAS-13-01 — Branch Protection auf privatem Repo nicht verfügbar
 

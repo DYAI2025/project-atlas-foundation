@@ -205,14 +205,14 @@
 
 **Einordnung:** ATLAS-55 ist ein Bug und ein **Sprint Enabler / Impediment**, kein neuntes Sprintziel. Der Sprint liefert weiterhin genau die 8 oben geplanten Delivery-Outcomes. ATLAS-55 wird im Sprint Backlog geführt, weil er ATLAS-13 und ATLAS-23 auf dem kritischen Delivery-Pfad blockiert und der Blocker im Sprintzustand sichtbar sein muss. Er zählt nicht in die Delivery-Velocity und erzeugt kein eigenes Produktinkrement.
 
-**Befund:** GitHub-hosted Runner akquiriert für dieses Repository keine Jobs. Alle drei existierenden Runs (31127753756, 31127837386, 31128025409) enden `failure`; die Jobs werden vor dem ersten Step abgebrochen (0 Steps, keine Logs). Wörtliche GitHub-Annotation:
+**Befund (Stand 2026-08-06, historisch):** GitHub-hosted Runner akquiriert für dieses Repository keine Jobs. Alle drei existierenden Runs (31127753756, 31127837386, 31128025409) enden `failure`; die Jobs werden vor dem ersten Step abgebrochen (0 Steps, keine Logs). Wörtliche GitHub-Annotation:
 `The job was not acquired by Runner of type hosted even after multiple attempts`
 
 **Klassifikation:** `HOSTED_RUNNER_ACQUISITION_FAILURE` · Root Cause: `UNKNOWN_PLATFORM_OR_POLICY`. Billing ist eine unbestätigte Hypothese und darf ohne konkrete GitHub-Meldung nicht als Ursache dokumentiert werden.
 
 **Abgrenzung:** ATLAS-55 (`BLK-ATLAS-13-02`, Hosted-Runner-Acquisition) und `BLK-ATLAS-13-01` (Branch Protection auf privatem Repo unter dem aktuellen Accountplan nicht verfügbar) sind **zwei verschiedene Blocker** und dürfen nicht vermischt werden. Details je Blocker: `docs/governance/blockers.md`.
 
-**Wirkung auf Delivery:** Ohne Runner-Akquisition entsteht keine CI-Evidenz an einem PR-Head. Das blockiert das CI-Gate für PR #1/#2/#3 und damit den Merge; lokale, reproduzierbare Testevidenz bleibt Interim.
+**Wirkung auf Delivery (Stand 2026-08-06, historisch):** Ohne Runner-Akquisition entsteht keine CI-Evidenz an einem PR-Head. Das blockiert das CI-Gate für PR #1/#2/#3 und damit den Merge; lokale, reproduzierbare Testevidenz bleibt Interim.
 
 **Keine weiteren technischen Versuche** ohne neue externe Evidenz — die zwei materiell unterschiedlichen Versuche (`ubuntu-latest`, `ubuntu-24.04`) sind gemäß Fehlerregel ausgeschöpft. Kein `workflow_dispatch`, kein Rerun, kein Probecommit, kein neuer Workflow.
 
@@ -221,6 +221,16 @@
 **Abschlusswege (einer von zwei):** Erfolgsweg — ein hosted Job wird akquiriert, mindestens ein Step läuft, `foundation-consistency` läuft am aktuellen PR-Head erfolgreich. Externer Blockerweg — GitHub liefert einen konkreten Billing-, Policy- oder Plattformfehler; dieser wird dokumentiert und die Sprintsteuerung entscheidet über Auslagerung oder Planänderung.
 
 **Out-of-Scope:** Feature-Arbeit jeder Art; Vermischung mit BLK-ATLAS-13-01; Umgehung des CI-Gates durch Selbstbestätigung.
+
+**Abschluss (2026-08-07):** Der Erfolgsweg ist eingetreten. Hosted Runner
+akquirieren seit 2026-08-07 Jobs; `foundation-consistency` lief erfolgreich auf
+den PR-Heads von PR #1/#3/#2 und auf `main` (final: Run 31175543815 auf
+`e1a532a`). ATLAS-55 steht auf `Fertig` (Evidenz: Jira-Kommentar 12347).
+Root Cause der ursprünglichen Fehlläufe bleibt `UNKNOWN_PLATFORM_OR_POLICY`
+(unbekannt, kein kausaler Claim). Die PRs #1/#3/#2 sind per Merge-Commit auf
+`main` integriert (Integration Wave 2026-08-07); die oben beschriebene
+Merge-Blockade besteht nicht mehr. BLK-ATLAS-13-01 (Branch Protection) bleibt
+davon unberührt OFFEN.
 
 ---
 
