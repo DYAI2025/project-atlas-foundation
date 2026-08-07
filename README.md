@@ -20,6 +20,7 @@ validation of the response contract — setup is `git clone`, `npm ci`
 ```bash
 npm ci            # dev dependency for tests only (ajv)
 npm test          # canonical: node --test — runs the full current test suite
+npm run check     # canonical local gate: full test suite + repository-consistency validator (same checks as CI job `check`)
 node src/local-contract/cli.mjs fixtures/local-contract/valid-request.json           # exit 0
 node src/local-contract/cli.mjs fixtures/local-contract/invalid-missing-field.json   # exit 1
 ```
