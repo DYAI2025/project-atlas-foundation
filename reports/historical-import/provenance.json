@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0",
+  "status": "historical_import_evidence",
+  "artifact": "project-atlas-foundation-checksums.txt",
+  "source_package": "project-atlas-foundation dry-run deliverable (project-atlas-foundation.zip / .bundle), imported via DYAI2025/Gbrain-vps@fad6e83e288202117d58b8b225da5f6de546d063",
+  "source_commit": "004787b179835eb359efcade393a65b3c8f62203",
+  "note": "The SHA-256 values and the commit in the checksums file describe the ORIGINAL dry-run ZIP/bundle artifacts. They are NOT hashes of the current canonical repository DYAI2025/project-atlas-foundation and must not be read as current integrity evidence. The referenced ZIP and bundle files were not imported into this repository."
+}
