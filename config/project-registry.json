@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "project_id": "ATLAS",
+  "description": "Writer registry: deterministic project routing per DEC-05/DEC-09. Never inferred from titles or semantics.",
+  "projects": [
+    {
+      "project_id": "ATLAS",
+      "jira_key": "ATLAS",
+      "confluence_space_key": "PRODUKTMAN",
+      "root_page_id": "14778372",
+      "allowed_writers": ["benjamin.poersch"],
+      "approval_workflow": "proposal->owner-approval->publish",
+      "status": "active"
+    },
+    {
+      "project_id": "EASYTREE",
+      "jira_key": "EYT",
+      "confluence_space_key": "PRODUKTMAN",
+      "root_page_id": "5505026",
+      "allowed_writers": ["benjamin.poersch"],
+      "approval_workflow": "proposal->owner-approval->publish",
+      "status": "active"
+    },
+    {
+      "project_id": "PLUMBLINE",
+      "jira_key": "PLUM",
+      "confluence_space_key": "PRODUKTMAN",
+      "root_page_id": "7503873",
+      "allowed_writers": ["benjamin.poersch"],
+      "approval_workflow": "proposal->owner-approval->publish",
+      "status": "active"
+    }
+  ]
+}
