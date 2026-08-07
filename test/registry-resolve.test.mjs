@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -94,7 +95,10 @@ const USAGE_CASES = [
   { name: 'no argument', args: [] },
   { name: 'multiple selectors', args: ['--jira-key', 'EYT', '--project-id', 'ATLAS'] },
   { name: 'selector without value', args: ['--jira-key'] },
-  { name: 'unknown option', args: ['--fuzzy', 'EYT'] }
+  { name: 'unknown option', args: ['--fuzzy', 'EYT'] },
+  { name: 'empty selector value', args: ['--jira-key', ''] },
+  { name: 'prototype-chain option name', args: ['--__proto__', 'ATLAS'] },
+  { name: 'hasOwnProperty as option name', args: ['hasOwnProperty', 'ATLAS'] }
 ]
 
 for (const { name, args } of USAGE_CASES) {
@@ -108,6 +112,46 @@ for (const { name, args } of USAGE_CASES) {
     assert.match(run.stderr, /registry:/)
   })
 }
+
+// Prototype-chain method names must be treated as ordinary (unknown) selector
+// values — deny with exit 1, never a usage error or option-map confusion.
+for (const value of ['toString', 'constructor', 'hasOwnProperty']) {
+  test(`prototype-chain value "${value}" is an ordinary unknown selector (exit 1)`, () => {
+    const run = runCli(['--jira-key', value])
+    assert.equal(run.code, 1, run.stderr)
+    const response = body(run)
+    assert.deepEqual(response.errors.map((e) => e.code), ['E_UNKNOWN_PROJECT'])
+  })
+}
+
+// --- registry error paths, end-to-end at CLI level ---------------------------
+
+function runCliWithRegistry(registryContent) {
+  const dir = mkdtempSync(join(tmpdir(), 'registry-'))
+  const path = join(dir, 'registry.json')
+  if (registryContent !== null) writeFileSync(path, registryContent)
+  return runCli(['--jira-key', 'EYT'], { env: { ...process.env, ATLAS_REGISTRY_PATH: path } })
+}
+
+test('CLI: unreadable registry fails closed with E_REGISTRY_UNREADABLE exit 2', () => {
+  const run = runCliWithRegistry(null)
+  assert.equal(run.code, 2)
+  assert.deepEqual(body(run).errors.map((e) => e.code), ['E_REGISTRY_UNREADABLE'])
+})
+
+test('CLI: syntactically invalid registry fails closed with E_REGISTRY_INVALID exit 2', () => {
+  const run = runCliWithRegistry('{ not json')
+  assert.equal(run.code, 2)
+  assert.deepEqual(body(run).errors.map((e) => e.code), ['E_REGISTRY_INVALID'])
+})
+
+test('CLI: registry with duplicate jira_key fails closed with E_REGISTRY_AMBIGUOUS exit 2', () => {
+  const rigged = freshRegistry()
+  rigged.projects[1].jira_key = rigged.projects[0].jira_key
+  const run = runCliWithRegistry(JSON.stringify(rigged))
+  assert.equal(run.code, 2)
+  assert.deepEqual(body(run).errors.map((e) => e.code), ['E_REGISTRY_AMBIGUOUS'])
+})
 
 // --- registry integrity (fail closed) ---------------------------------------
 

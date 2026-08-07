@@ -19,8 +19,11 @@ function emit(response) {
 }
 
 function fail(exitCode, code, message) {
-  emit(buildResponse(null, [{ code, message }]))
-  process.stderr.write(`registry: ${message}\n`)
+  // Defensive normalization: a non-RegistryError must never drop the "code"
+  // key from the machine-readable error (E_INTERNAL is not part of the slice
+  // contract, only a guard against unexpected runtime errors).
+  emit(buildResponse(null, [{ code: code ?? 'E_INTERNAL', message: message ?? 'unexpected internal error' }]))
+  process.stderr.write(`registry: ${message ?? 'unexpected internal error'}\n`)
   process.exitCode = exitCode
 }
 
@@ -28,11 +31,13 @@ function parseSelector(args) {
   const selectors = []
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]
-    if (!(arg in OPTION_TO_SELECTOR)) {
+    // Object.hasOwn, never `in`: values like "toString" or "__proto__" must
+    // not walk the prototype chain into option handling.
+    if (!Object.hasOwn(OPTION_TO_SELECTOR, arg)) {
       throw new RegistryError('E_USAGE', `unknown option "${arg}"`)
     }
     const value = args[i + 1]
-    if (value === undefined || value in OPTION_TO_SELECTOR) {
+    if (value === undefined || value === '' || Object.hasOwn(OPTION_TO_SELECTOR, value)) {
       throw new RegistryError('E_USAGE', `option "${arg}" requires a value`)
     }
     selectors.push({ kind: OPTION_TO_SELECTOR[arg], value })
@@ -60,7 +65,10 @@ function main() {
 
   let registry
   try {
-    registry = loadRegistry()
+    // ATLAS_REGISTRY_PATH exists solely so tests can exercise the fail-closed
+    // registry error paths end-to-end; the default stays the canonical file.
+    const override = process.env.ATLAS_REGISTRY_PATH
+    registry = override ? loadRegistry(override) : loadRegistry()
   } catch (error) {
     return fail(2, error.code, error.message)
   }
