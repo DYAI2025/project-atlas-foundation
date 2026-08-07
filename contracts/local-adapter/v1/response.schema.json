@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:contracts/local-adapter/v1/response.schema.json",
+  "title": "Local adapter validation response contract (Slice 1)",
+  "description": "Versioned, machine-readable response of the local contract checker. Deterministic: identical input yields byte-identical output regardless of process locale; errors are sorted by path, then code, in UTF-16 code-unit order. Error paths are display strings, not RFC 6901 JSON Pointers (keys are not escaped).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "valid", "errors"],
+  "if": {
+    "properties": { "valid": { "const": true } },
+    "required": ["valid"]
+  },
+  "then": {
+    "properties": { "errors": { "maxItems": 0 } }
+  },
+  "else": {
+    "properties": { "errors": { "minItems": 1 } }
+  },
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "valid": { "type": "boolean" },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "code", "message"],
+        "properties": {
+          "path": { "type": "string" },
+          "code": {
+            "type": "string",
+            "enum": [
+              "E_MISSING",
+              "E_TYPE",
+              "E_EMPTY",
+              "E_CONST",
+              "E_ENUM",
+              "E_UNKNOWN_FIELD",
+              "E_ROOT_TYPE",
+              "E_USAGE",
+              "E_UNREADABLE",
+              "E_INVALID_JSON"
+            ]
+          },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}
