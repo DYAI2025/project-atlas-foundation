@@ -23,6 +23,25 @@
 Damals nicht ausgeführt: Bun/gbrain build, PostgreSQL/RLS, Compose/systemd,
 VPS/BGE-M3, SBOM, GitHub branch/PR/CI/readback, produktive Release-Gates.
 
+### Historischer Setup-Checkpoint 2026-08-06 (Repository-Validierung)
+
+> **Status: historisch.** Snapshot der Repository-Validierung vom 2026-08-06
+> (Setup-Checkpoint + Korrekturschnitt), vor der ATLAS-55-Recovery und der
+> Sprint-1 Integration Wave vom 2026-08-07. Diese Sektion trifft **keine
+> Aussage über den heutigen Zustand**; der aktuelle Stand steht unter
+> „Current canonical repository validation".
+
+| Prüfung (Stand 2026-08-06) | Ergebnis damals |
+|---|---|
+| Privates Repository verifiziert (`gh repo view`: PRIVATE, default `main`) | ✅ |
+| Branch `feat/ATLAS-13-sprint-1-foundation` + PR #1 verifiziert (push + `gh pr view`) | ✅ |
+| Jira ATLAS-13 Read-after-write (Status „In Arbeit", Evidence-Kommentar) | ✅ |
+| Confluence Read-after-write (Seiten 15138817, 15040514, 15171611, 15400961 → v2) | ✅ |
+| Repository-Konsistenz (`scripts/validate-current-repository.mjs`) | ✅ lokal, Log: `reports/current-validation.log` |
+| GitHub Actions (`foundation-consistency`) | ⛔ Trigger funktioniert seit Default-Branch-Registrierung (Run 31127753756 automatisch erzeugt), aber Hosted-Runner akquiriert keine Jobs: „The job was not acquired by Runner of type hosted even after multiple attempts" — BLK-ATLAS-13-02 / ATLAS-55 (seit 2026-08-07 gelöst, siehe unten) |
+| Unabhängiges Code Review mit Approval | ❌ noch nicht vorhanden |
+| Branch Protection | ⛔ technisch blockiert (BLK-ATLAS-13-01, Interim per Owner-Entscheidung 06.08.2026) |
+
 ## Current canonical repository validation
 
 Stand: 2026-08-07 (nach Sprint-1 Integration Wave), Repository

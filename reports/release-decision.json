@@ -11,9 +11,18 @@
     "bootstrap_exception": "BOOTSTRAP_EXCEPTION_ATLAS_13",
     "integrated_main": "e1a532a9626704a07a27b2891d8db29b2a615da4",
     "merged_pull_requests": [
-      { "pr": "PR #1 (ATLAS-13 Sprint-1-Foundation)", "merge_commit": "32610ac26f1eac91fdee358a0e5fc49a1dc2ec7a" },
-      { "pr": "PR #3 (ATLAS-12 writer registry, Slice 1)", "merge_commit": "02a9727fada57b59fb7917d000231df0956e7bf7" },
-      { "pr": "PR #2 (ATLAS-22 local adapter contract, Slice 1)", "merge_commit": "e1a532a9626704a07a27b2891d8db29b2a615da4" }
+      {
+        "pr": "PR #1 (ATLAS-13 Sprint-1-Foundation)",
+        "merge_commit": "32610ac26f1eac91fdee358a0e5fc49a1dc2ec7a"
+      },
+      {
+        "pr": "PR #3 (ATLAS-12 writer registry, Slice 1)",
+        "merge_commit": "02a9727fada57b59fb7917d000231df0956e7bf7"
+      },
+      {
+        "pr": "PR #2 (ATLAS-22 local adapter contract, Slice 1)",
+        "merge_commit": "e1a532a9626704a07a27b2891d8db29b2a615da4"
+      }
     ],
     "open_pull_requests": 0,
     "push_verified": true,
@@ -27,9 +36,9 @@
     "ATLAS-16 VPS audit",
     "Canonical data model and RLS contracts (ATLAS-54) incomplete",
     "Production runtime adapter missing",
-    "BLK-ATLAS-13-01: technical branch protection unavailable on the current plan (open; documented interim per Owner decision 2026-08-06); required before productive agent write (DEC-10)",
+    "BLK-ATLAS-13-01: technical branch protection unavailable on the current plan (open; documented interim per Owner decision 2026-08-06); required before productive agent write (DEC-10); still prevents Done for ATLAS-13 and parts of ATLAS-23",
     "ATLAS-23 CI/security gates incomplete: hosted CI runs the consistency validator only; full test suite in CI, secret scanning, vulnerability scanning, license compliance, and required-checks wiring are missing",
-    "ATLAS-12 / ATLAS-22 tickets remain In Arbeit: Slice 1 integrated, remaining ticket scope open"
+    "ATLAS-12 / ATLAS-13 / ATLAS-22 tickets remain In Arbeit: Sprint-1 slices integrated; ATLAS-13 Done blocked by BLK-ATLAS-13-01; ATLAS-12/22 remaining ticket scope open"
   ],
   "limitations": [
     "No VPS, Docker, PostgreSQL, Bun, or gbrain runtime verification.",
