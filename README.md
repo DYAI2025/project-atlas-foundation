@@ -11,11 +11,15 @@ Bootstrap commit under `BOOTSTRAP_EXCEPTION_ATLAS_13`: minimal README, `.gitigno
 ## Local contract checker (ATLAS-22, Slice 1)
 
 Deterministic validator for the versioned local adapter contract
-(`contracts/local-adapter/v1/`). No dependencies, no network, no secrets —
-setup is `git clone` plus Node.js ≥ 22.
+(`contracts/local-adapter/v1/`). The CLI itself has zero dependencies, no
+network access, no secrets. The test suite uses exactly one pinned dev
+dependency (`ajv@8.20.0`, MIT) for real JSON Schema Draft 2020-12
+validation of the response contract — setup is `git clone`, `npm ci`
+(tests only), Node.js ≥ 22.
 
 ```bash
-npm test          # canonical: node --test  (10 tests)
+npm ci            # dev dependency for tests only (ajv)
+npm test          # canonical: node --test  (16 tests)
 node src/local-contract/cli.mjs fixtures/local-contract/valid-request.json           # exit 0
 node src/local-contract/cli.mjs fixtures/local-contract/invalid-missing-field.json   # exit 1
 ```

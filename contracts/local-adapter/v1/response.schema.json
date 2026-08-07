@@ -6,6 +6,16 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "valid", "errors"],
+  "if": {
+    "properties": { "valid": { "const": true } },
+    "required": ["valid"]
+  },
+  "then": {
+    "properties": { "errors": { "maxItems": 0 } }
+  },
+  "else": {
+    "properties": { "errors": { "minItems": 1 } }
+  },
   "properties": {
     "contract_version": {
       "type": "string",

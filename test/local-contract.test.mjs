@@ -5,7 +5,14 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CONTRACT_VERSION, validateRequest } from '../src/local-contract/validate.mjs'
+import AjvModule from 'ajv/dist/2020.js'
+import {
+  CONTRACT_VERSION,
+  VALIDATION_ERROR_CODES,
+  validateRequest
+} from '../src/local-contract/validate.mjs'
+
+const Ajv2020 = AjvModule.default ?? AjvModule
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const CLI = join(repoRoot, 'src/local-contract/cli.mjs')
@@ -159,14 +166,101 @@ test('non-object root: single E_ROOT_TYPE error', () => {
   }
 })
 
-test('contract files agree with the implementation version', () => {
-  const req = JSON.parse(
-    readFileSync(join(repoRoot, 'contracts/local-adapter/v1/request.schema.json'), 'utf8')
-  )
-  const res = JSON.parse(
-    readFileSync(join(repoRoot, 'contracts/local-adapter/v1/response.schema.json'), 'utf8')
-  )
-  assert.equal(req.properties.contract_version.const, CONTRACT_VERSION)
-  assert.equal(res.properties.contract_version.const, CONTRACT_VERSION)
-  assert.deepEqual(req.properties.operation.enum, ['inspect'])
+const requestSchema = JSON.parse(
+  readFileSync(join(repoRoot, 'contracts/local-adapter/v1/request.schema.json'), 'utf8')
+)
+const responseSchema = JSON.parse(
+  readFileSync(join(repoRoot, 'contracts/local-adapter/v1/response.schema.json'), 'utf8')
+)
+const validateResponseAgainstSchema = new Ajv2020().compile(responseSchema)
+
+const successResponse = { contract_version: '1.0.0', valid: true, errors: [] }
+const failureResponse = {
+  contract_version: '1.0.0',
+  valid: false,
+  errors: [{ path: '/operation', code: 'E_MISSING', message: 'required field missing' }]
+}
+
+test('response schema rejects valid:true with non-empty errors', () => {
+  const contradictory = {
+    contract_version: '1.0.0',
+    valid: true,
+    errors: [{ path: '/x', code: 'E_TYPE', message: 'x' }]
+  }
+  assert.equal(validateResponseAgainstSchema(contradictory), false)
+})
+
+test('response schema rejects valid:false with empty errors', () => {
+  const contradictory = { contract_version: '1.0.0', valid: false, errors: [] }
+  assert.equal(validateResponseAgainstSchema(contradictory), false)
+})
+
+test('response schema accepts a canonical success response', () => {
+  assert.equal(validateResponseAgainstSchema(successResponse), true)
+})
+
+test('response schema accepts a canonical failure response', () => {
+  assert.equal(validateResponseAgainstSchema(failureResponse), true)
+})
+
+test('real CLI outputs conform to the response schema', () => {
+  const runs = [
+    runCli([fixture('valid-request.json')]),
+    runCli([fixture('invalid-missing-field.json')]),
+    runCli([fixture('invalid-wrong-type.json')]),
+    runCli([])
+  ]
+  for (const run of runs) {
+    const body = parsedStdout(run)
+    assert.equal(validateResponseAgainstSchema(body), true, JSON.stringify(body))
+  }
+})
+
+test('request schema parity with the implementation', () => {
+  assert.equal(requestSchema.properties.contract_version.const, CONTRACT_VERSION)
+  assert.deepEqual(requestSchema.required.toSorted(), [
+    'contract_version',
+    'operation',
+    'repository',
+    'request_id'
+  ])
+  assert.equal(requestSchema.additionalProperties, false)
+  const repo = requestSchema.properties.repository
+  assert.equal(repo.additionalProperties, false)
+  assert.deepEqual(repo.required.toSorted(), ['name', 'owner'])
+  assert.equal(requestSchema.properties.request_id.minLength, 1)
+  assert.equal(repo.properties.owner.minLength, 1)
+  assert.equal(repo.properties.name.minLength, 1)
+  assert.deepEqual(requestSchema.properties.operation.enum, ['inspect'])
+})
+
+test('response schema parity with the implementation', () => {
+  assert.equal(responseSchema.properties.contract_version.const, CONTRACT_VERSION)
+  assert.deepEqual(responseSchema.required.toSorted(), [
+    'contract_version',
+    'errors',
+    'valid'
+  ])
+  assert.equal(responseSchema.additionalProperties, false)
+  const errorItem = responseSchema.properties.errors.items
+  assert.equal(errorItem.additionalProperties, false)
+  assert.deepEqual(errorItem.required.toSorted(), ['code', 'message', 'path'])
+
+  // validity invariant is present in the published schema
+  assert.deepEqual(responseSchema.if, {
+    properties: { valid: { const: true } },
+    required: ['valid']
+  })
+  assert.equal(responseSchema.then.properties.errors.maxItems, 0)
+  assert.equal(responseSchema.else.properties.errors.minItems, 1)
+
+  // published error-code enum covers every code the runtime can emit:
+  // validator codes from the exported constant, CLI technical codes
+  // extracted from cli.mjs source so they cannot drift silently.
+  const cliSource = readFileSync(join(repoRoot, 'src/local-contract/cli.mjs'), 'utf8')
+  const cliCodes = [...cliSource.matchAll(/technicalFailure\('([A-Z_]+)'/g)].map((m) => m[1])
+  assert.ok(cliCodes.length >= 3, 'expected CLI technical codes in cli.mjs')
+  const emittable = [...new Set([...VALIDATION_ERROR_CODES, ...cliCodes])].toSorted()
+  const published = errorItem.properties.code.enum.toSorted()
+  assert.deepEqual(published, emittable)
 })

@@ -8,6 +8,19 @@
 export const CONTRACT_VERSION = '1.0.0'
 export const ALLOWED_OPERATIONS = ['inspect']
 
+// Every code validateRequest can emit. The CLI adds its technical codes
+// (E_USAGE, E_UNREADABLE, E_INVALID_JSON); the parity test derives those
+// from cli.mjs source so the response schema enum can never drift.
+export const VALIDATION_ERROR_CODES = [
+  'E_MISSING',
+  'E_TYPE',
+  'E_EMPTY',
+  'E_CONST',
+  'E_ENUM',
+  'E_UNKNOWN_FIELD',
+  'E_ROOT_TYPE'
+]
+
 const KNOWN_ROOT_FIELDS = ['contract_version', 'request_id', 'repository', 'operation']
 const KNOWN_REPO_FIELDS = ['owner', 'name']
 
