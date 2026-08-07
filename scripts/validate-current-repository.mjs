@@ -39,7 +39,7 @@ const REQUIRED_FILES = [
   'reports/historical-import/project-atlas-foundation-checksums.txt',
   'reports/historical-import/provenance.json',
   'third_party/upstreams.lock.json',
-  '.github/workflows/foundation-consistency.yml'
+  '.github/workflows/ci.yml'
 ]
 
 for (const f of REQUIRED_FILES) {
