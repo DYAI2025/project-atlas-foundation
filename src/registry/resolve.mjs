@@ -10,6 +10,9 @@ export const SCHEMA_VERSION = '1.0'
 export const SELECTOR_KINDS = ['project_id', 'jira_key', 'root_page_id']
 
 const REGISTRY_URL = new URL('../../config/project-registry.json', import.meta.url)
+// The V1 registry contract is closed: exactly these root and project fields,
+// nothing more. Unknown keys are drift, not extensibility.
+const ALLOWED_ROOT_FIELDS = ['schema_version', 'project_id', 'description', 'projects']
 const REQUIRED_PROJECT_FIELDS = [
   'project_id',
   'jira_key',
@@ -19,8 +22,19 @@ const REQUIRED_PROJECT_FIELDS = [
   'approval_workflow',
   'status'
 ]
-// Slice 1 covers exactly the three decided V1 projects (DEC-05).
-const EXPECTED_PROJECT_IDS = ['ATLAS', 'EASYTREE', 'PLUMBLINE']
+// Slice 1 covers exactly the three decided V1 projects (DEC-05), and each one
+// keeps its decided jira_key/root_page_id tuple. Uniqueness alone is not
+// enough: swapped-but-unique values would route deterministically to the WRONG
+// project. Keyed by project_id, never by array position — the order of
+// `projects` carries no meaning.
+const EXPECTED_PROJECTS = {
+  ATLAS: { jira_key: 'ATLAS', root_page_id: '14778372' },
+  EASYTREE: { jira_key: 'EYT', root_page_id: '5505026' },
+  PLUMBLINE: { jira_key: 'PLUM', root_page_id: '7503873' }
+}
+const EXPECTED_PROJECT_IDS = Object.keys(EXPECTED_PROJECTS)
+const EXPECTED_DESCRIPTION =
+  'Writer registry: deterministic project routing per DEC-05/DEC-09. Never inferred from titles or semantics.'
 const EXPECTED_SPACE_KEY = 'PRODUKTMAN'
 const EXPECTED_WORKFLOW = 'proposal->owner-approval->publish'
 const EXPECTED_WRITERS = ['benjamin.poersch']
@@ -47,6 +61,14 @@ export function validateRegistry(data) {
   if (data.project_id !== 'ATLAS') {
     throw new RegistryError('E_REGISTRY_INVALID', 'registry project_id must be "ATLAS"')
   }
+  for (const field of Object.keys(data)) {
+    if (!ALLOWED_ROOT_FIELDS.includes(field)) {
+      throw new RegistryError('E_REGISTRY_INVALID', `unknown registry root field "${field}"`)
+    }
+  }
+  if (data.description !== EXPECTED_DESCRIPTION) {
+    throw new RegistryError('E_REGISTRY_INVALID', 'registry description must be exactly the decided V1 wording')
+  }
   if (!Array.isArray(data.projects)) {
     throw new RegistryError('E_REGISTRY_INVALID', 'registry projects must be an array')
   }
@@ -58,6 +80,11 @@ export function validateRegistry(data) {
     for (const field of REQUIRED_PROJECT_FIELDS) {
       if (!(field in project)) {
         throw new RegistryError('E_REGISTRY_INVALID', `project is missing required field "${field}"`)
+      }
+    }
+    for (const field of Object.keys(project)) {
+      if (!REQUIRED_PROJECT_FIELDS.includes(field)) {
+        throw new RegistryError('E_REGISTRY_INVALID', `unknown registry project field "${field}"`)
       }
     }
     for (const field of ['project_id', 'jira_key', 'confluence_space_key', 'root_page_id', 'approval_workflow', 'status']) {
@@ -98,6 +125,20 @@ export function validateRegistry(data) {
     const values = data.projects.map((p) => p[field])
     if (new Set(values).size !== values.length) {
       throw new RegistryError('E_REGISTRY_AMBIGUOUS', `duplicate ${field} in registry`)
+    }
+  }
+
+  // Runs last, after uniqueness: values that are unique but attached to the
+  // wrong project are a routing defect, not an ambiguity.
+  for (const project of data.projects) {
+    const expected = EXPECTED_PROJECTS[project.project_id]
+    for (const field of ['jira_key', 'root_page_id']) {
+      if (project[field] !== expected[field]) {
+        throw new RegistryError(
+          'E_REGISTRY_INVALID',
+          `project "${project.project_id}" must keep the decided ${field} "${expected[field]}"`
+        )
+      }
     }
   }
 

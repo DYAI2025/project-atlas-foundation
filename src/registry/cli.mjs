@@ -37,7 +37,12 @@ function parseSelector(args) {
       throw new RegistryError('E_USAGE', `unknown option "${arg}"`)
     }
     const value = args[i + 1]
-    if (value === undefined || value === '' || Object.hasOwn(OPTION_TO_SELECTOR, value)) {
+    // A token starting with "--" is syntactically an option, never an
+    // identifier. Swallowing it as a selector value would turn a usage error
+    // ("--jira-key --fuzzy") into a fachlicher deny, which is the wrong
+    // contract: unknown option / missing value is technical (E_USAGE, exit 2).
+    // Subsumes the known selector options, which all start with "--".
+    if (value === undefined || value === '' || value.startsWith('--')) {
       throw new RegistryError('E_USAGE', `option "${arg}" requires a value`)
     }
     selectors.push({ kind: OPTION_TO_SELECTOR[arg], value })

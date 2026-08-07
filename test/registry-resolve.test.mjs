@@ -98,7 +98,12 @@ const USAGE_CASES = [
   { name: 'unknown option', args: ['--fuzzy', 'EYT'] },
   { name: 'empty selector value', args: ['--jira-key', ''] },
   { name: 'prototype-chain option name', args: ['--__proto__', 'ATLAS'] },
-  { name: 'hasOwnProperty as option name', args: ['hasOwnProperty', 'ATLAS'] }
+  { name: 'hasOwnProperty as option name', args: ['hasOwnProperty', 'ATLAS'] },
+  // An option-shaped token at the value position is a missing selector value,
+  // never an identifier — so it must NOT degrade into E_UNKNOWN_PROJECT/exit 1.
+  { name: 'option-shaped value after --jira-key', args: ['--jira-key', '--fuzzy'] },
+  { name: 'option-shaped value after --root-page-id', args: ['--root-page-id', '--whatever'] },
+  { name: 'option-shaped value after --project-id', args: ['--project-id', '--unknown'] }
 ]
 
 for (const { name, args } of USAGE_CASES) {
@@ -206,6 +211,80 @@ test('extra or missing V1 project is rejected as E_REGISTRY_INVALID', () => {
   const extra = freshRegistry()
   extra.projects.push({ ...structuredClone(extra.projects[0]), project_id: 'ROGUE', jira_key: 'RGE', root_page_id: '1' })
   assert.throws(() => validateRegistry(extra), (e) => e instanceof RegistryError && e.code === 'E_REGISTRY_INVALID')
+})
+
+// --- canonical mapping invariant (anti-drift) --------------------------------
+// Uniqueness is not enough: unique-but-swapped values would route deterministically
+// to the WRONG project. The decided tuples must hold per project_id.
+
+function swapField(registry, field, idA, idB) {
+  const a = registry.projects.find((p) => p.project_id === idA)
+  const b = registry.projects.find((p) => p.project_id === idB)
+  ;[a[field], b[field]] = [b[field], a[field]]
+  return registry
+}
+
+for (const field of ['jira_key', 'root_page_id']) {
+  test(`swapped ${field} between EASYTREE and PLUMBLINE is rejected as E_REGISTRY_INVALID`, () => {
+    const registry = swapField(freshRegistry(), field, 'EASYTREE', 'PLUMBLINE')
+    assert.throws(
+      () => validateRegistry(registry),
+      (e) => e instanceof RegistryError && e.code === 'E_REGISTRY_INVALID'
+    )
+  })
+}
+
+test('swapped mappings stay unique yet remain invalid (uniqueness is not the invariant)', () => {
+  const registry = swapField(swapField(freshRegistry(), 'jira_key', 'EASYTREE', 'PLUMBLINE'), 'root_page_id', 'EASYTREE', 'PLUMBLINE')
+  for (const field of ['project_id', 'jira_key', 'root_page_id']) {
+    const values = registry.projects.map((p) => p[field])
+    assert.equal(new Set(values).size, values.length, `${field} must still be unique for this test to be meaningful`)
+  }
+  assert.throws(
+    () => validateRegistry(registry),
+    (e) => e instanceof RegistryError && e.code === 'E_REGISTRY_INVALID'
+  )
+})
+
+test('project array order is not semantic — reordering stays valid', () => {
+  const reversed = freshRegistry()
+  reversed.projects.reverse()
+  assert.equal(validateRegistry(reversed), reversed)
+  assert.equal(resolveProject(reversed, 'jira_key', 'EYT').project_id, 'EASYTREE')
+})
+
+test('CLI: swapped mapping fails closed with E_REGISTRY_INVALID exit 2 instead of routing to the wrong project', () => {
+  const rigged = swapField(freshRegistry(), 'jira_key', 'EASYTREE', 'PLUMBLINE')
+  const run = runCliWithRegistry(JSON.stringify(rigged))
+  assert.equal(run.code, 2)
+  assert.equal(body(run).resolved, false)
+  assert.deepEqual(body(run).errors.map((e) => e.code), ['E_REGISTRY_INVALID'])
+})
+
+// --- closed structural contract ----------------------------------------------
+
+test('unknown root field is rejected as E_REGISTRY_INVALID', () => {
+  const registry = freshRegistry()
+  registry.rogue_root = 'x'
+  assert.throws(() => validateRegistry(registry), (e) => e instanceof RegistryError && e.code === 'E_REGISTRY_INVALID')
+})
+
+test('unknown project field is rejected as E_REGISTRY_INVALID', () => {
+  const registry = freshRegistry()
+  registry.projects[0].rogue_field = 'x'
+  assert.throws(() => validateRegistry(registry), (e) => e instanceof RegistryError && e.code === 'E_REGISTRY_INVALID')
+})
+
+test('missing root description is rejected as E_REGISTRY_INVALID', () => {
+  const registry = freshRegistry()
+  delete registry.description
+  assert.throws(() => validateRegistry(registry), (e) => e instanceof RegistryError && e.code === 'E_REGISTRY_INVALID')
+})
+
+test('altered root description is rejected as E_REGISTRY_INVALID', () => {
+  const registry = freshRegistry()
+  registry.description = 'Writer registry: deterministic project routing.'
+  assert.throws(() => validateRegistry(registry), (e) => e instanceof RegistryError && e.code === 'E_REGISTRY_INVALID')
 })
 
 test('resolveProject rejects unknown selector kinds and duplicate matches', () => {
