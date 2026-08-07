@@ -143,14 +143,32 @@ check(
     !/remote decision pending/i.test(histReadme)
 )
 
-// 6) plan covers exactly the eight sprint tickets
+// 6) plan covers exactly the eight delivery tickets plus exactly one sprint enabler.
+// Sprint 370 carries ATLAS-55 as an enabler/impediment, not as a ninth delivery outcome.
+// The two sets are kept strictly separate; neither check is a loosened ticket check.
 const plan = await readFile('docs/plans/2026-08-06-atlas-sprint-1-foundation.md', 'utf8')
-const ticketSections = [...plan.matchAll(/^## ATLAS-(\d+) /gm)].map((m) => m[1]).sort()
+const ticketSections = [...plan.matchAll(/^## ATLAS-(\d+) — (.*)$/gm)].map((m) => ({
+  id: m[1],
+  isEnabler: /Sprint Enabler/.test(m[2]),
+}))
+const deliveryTickets = ticketSections
+  .filter((t) => !t.isEnabler)
+  .map((t) => t.id)
+  .sort()
+const enablerTickets = ticketSections
+  .filter((t) => t.isEnabler)
+  .map((t) => t.id)
+  .sort()
 check(
-  'plan contains exactly the eight sprint tickets',
-  JSON.stringify(ticketSections) ===
+  'plan contains exactly the eight delivery tickets',
+  JSON.stringify(deliveryTickets) ===
     JSON.stringify(['11', '12', '13', '15', '21', '22', '23', '24']),
-  `found: ${ticketSections.join(',')}`
+  `found: ${deliveryTickets.join(',') || 'none'}`
+)
+check(
+  'plan contains exactly one sprint enabler: ATLAS-55',
+  JSON.stringify(enablerTickets) === JSON.stringify(['55']),
+  `found: ${enablerTickets.join(',') || 'none'}`
 )
 
 // 7) PRODUKTMAN mappings are correct (EYT/PLUM are Jira keys, never space keys)

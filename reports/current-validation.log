@@ -33,7 +33,8 @@ VALIDATION PASSED
  ✓ old checksums path removed
  ✓ historical checksums provenance is complete
  ✓ historical README is marked and free of pending-remote / dead-handoff claims
- ✓ plan contains exactly the eight sprint tickets
+ ✓ plan contains exactly the eight delivery tickets
+ ✓ plan contains exactly one sprint enabler: ATLAS-55
  ✓ every confluence_space_key in the plan is PRODUKTMAN
  ✓ plan maps EasyTree/Plumbline roots with PRODUKTMAN
  ✓ no dead github-handoff reference in README.md

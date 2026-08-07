@@ -35,8 +35,12 @@
   prüfen; ggf. GitHub-Support mit Run-IDs 31127837386/31128025409 und der
   Annotation kontaktieren.
 - **Interim-Evidenz:** Lokale Ausführung `node scripts/validate-current-repository.mjs`
-  → `VALIDATION PASSED` (42 Checks), Log versioniert in
-  `reports/current-validation.log`.
+  → `VALIDATION PASSED` (42 Checks, frisch gemessen 2026-08-07), Log versioniert in
+  `reports/current-validation.log`. Historie der Zahl, damit sie prüfbar bleibt: Die
+  frühere Angabe „42" war zum Zeitpunkt ihrer Niederschrift falsch — der Validator
+  lieferte damals 41 Checks. Mit der Aufteilung der Sprint-Ticket-Prüfung in
+  „exactly the eight delivery tickets" + „exactly one sprint enabler: ATLAS-55"
+  (Aufnahme von ATLAS-55 in Sprint 370 als Enabler) sind es jetzt tatsächlich 42.
 - **Status:** OPEN — verhindert weiterhin den CI-Ausführungsnachweis für
   PR #1 und die Required-Checks-Verknüpfung (zusammen mit BLK-ATLAS-13-01).
 

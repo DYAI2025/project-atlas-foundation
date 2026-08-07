@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (oder subagent-driven-development) to implement this plan task-by-task. Arbeitsverzeichnis: `/Users/benjaminpoersch/Projects/project-atlas-foundation`.
 
-**Goal:** Alle 8 ATLAS-Sprint-1-Tickets (ATLAS-11, -12, -13, -15, -21, -22, -23, -24) mit nachlesbarer Evidenz abschließen — im kanonischen Repository `DYAI2025/project-atlas-foundation`.
+**Goal:** Alle 8 ATLAS-Sprint-1-Tickets (ATLAS-11, -12, -13, -15, -21, -22, -23, -24) mit nachlesbarer Evidenz abschließen — im kanonischen Repository `DYAI2025/project-atlas-foundation`. Das Sprintziel besteht aus genau diesen 8 Delivery-Outcomes. Zusätzlich wird **ATLAS-55 als notwendiger Sprint Enabler / Impediment** im Sprint Backlog geführt, weil der Bug ATLAS-13 und ATLAS-23 auf dem kritischen Delivery-Pfad blockiert; ATLAS-55 ist ausdrücklich **kein neuntes Delivery-Outcome** (siehe Abschnitt „ATLAS-55 — Sprint Enabler / Delivery Blocker").
 
 **Architecture:** ATLAS-eigener Control Plane als kanonische Governance-Schicht (ADR-0001); gbrain (gepinnt) als abgeleitete Projektion. Confluence-Inhalte werden direkt aktualisiert, wo der Owner es explizit angeordnet hat (Setup-Checkpoint-Seiten 00/13/14/16); alle übrigen Confluence-Inhalte entstehen als Proposals unter `proposals/confluence/` und werden erst nach Owner-Freigabe publiziert (DEC-06). Maschinenlesbare Governance-Artefakte (Registry, Klassifikation, Adapterverträge, Upstream-Pins) werden durch Zero-Dependency-Node-Tests validiert.
 
@@ -131,7 +131,7 @@
 **Out-of-Scope:** Jede Operation auf `gbrain-atlas`/`Gbrain-vps`; Public-Visibility.
 **Jira-Evidence:** Bereits: Repo-URL, Default Branch, Bootstrap-Exception, Policy, Blocker, Legacy-Abgrenzung (Setup-Checkpoint-Kommentar). Nachzuliefern: Protection-Verifikation nach Blocker-Auflösung.
 **Confluence:** Seite 15040514 direkt aktualisiert (Setup-Checkpoint) ✅; bei Blocker-Auflösung Folge-Update.
-**DoD-Gate:** Globales Gate + technische Protection aktiv ODER dokumentierte Owner-Akzeptanz des Interims bis Release-Gate (DEC-10 verlangt Erzwingung vor produktivem Agent-Write).
+**DoD-Gate:** Globales Gate + **technische Branch Protection aktiv**. Das dokumentierte Owner-Interim zu BLK-ATLAS-13-01 ist **kein DoD-Waiver**: Es erlaubt ausschließlich, die Sprintarbeit fortzusetzen (Repository bleibt privat, disziplinarische PR-Policy gilt, technische Erzwingung wird bis zum Release-/produktiven-Agent-Write-Gate verschoben). Solange das Protection-AC technisch unerfüllt ist, darf ATLAS-13 **nicht** auf `Fertig` gesetzt werden (DEC-10; Semantik gemäß `docs/governance/blockers.md`, Status BLK-ATLAS-13-01 = OPEN).
 
 ---
 
@@ -181,7 +181,7 @@
 
 **Jira-Evidence:** Kommentar auf ATLAS-23: CI-Run-Link, Clean-Checkout-Output, Gate-Liste; bei offenem Blocker expliziter Hinweis „Wiring pending BLK-ATLAS-13-01".
 **Confluence:** CI-Baseline-Abschnitt als Folge-Update auf Seite 15040514 (direkt zulässig, da Owner Seite 13 für Repo-Doku freigegeben hat — Read-after-write).
-**DoD-Gate:** Globales Gate + grüner Clean-Checkout-Nachweis; Wiring-AC gilt als erfüllt mit dokumentierter Blocker-Ausnahme ODER nach Blocker-Auflösung technisch.
+**DoD-Gate:** Globales Gate + grüner Clean-Checkout-Nachweis + **technisch verknüpfte Required Checks**. Das Branch-Protection-AC darf **nicht** unter Verweis auf die dokumentierte Blocker-Ausnahme als erfüllt markiert werden; die Ausnahme erlaubt nur die Weiterarbeit, nicht den AC-Abschluss. Solange BLK-ATLAS-13-01 `OPEN` ist, bleibt das Wiring-AC unerfüllt und ATLAS-23 darf insoweit nicht auf `Fertig` (Semantik gemäß `docs/governance/blockers.md`).
 
 ---
 
@@ -198,6 +198,29 @@
 **Jira-Evidence:** Kommentar auf ATLAS-24: NOTICE-Pfad, SBOM-Erzeugungsnachweis, CI-Job, Commit.
 **Confluence:** Kein Pflicht-Update; Lizenzregister-Verweis im ATLAS-22-Proposal bzw. Seite 13-Folge-Update.
 **DoD-Gate:** Globales Gate.
+
+---
+
+## ATLAS-55 — Sprint Enabler / Delivery Blocker (kein Delivery-Outcome)
+
+**Einordnung:** ATLAS-55 ist ein Bug und ein **Sprint Enabler / Impediment**, kein neuntes Sprintziel. Der Sprint liefert weiterhin genau die 8 oben geplanten Delivery-Outcomes. ATLAS-55 wird im Sprint Backlog geführt, weil er ATLAS-13 und ATLAS-23 auf dem kritischen Delivery-Pfad blockiert und der Blocker im Sprintzustand sichtbar sein muss. Er zählt nicht in die Delivery-Velocity und erzeugt kein eigenes Produktinkrement.
+
+**Befund:** GitHub-hosted Runner akquiriert für dieses Repository keine Jobs. Alle drei existierenden Runs (31127753756, 31127837386, 31128025409) enden `failure`; die Jobs werden vor dem ersten Step abgebrochen (0 Steps, keine Logs). Wörtliche GitHub-Annotation:
+`The job was not acquired by Runner of type hosted even after multiple attempts`
+
+**Klassifikation:** `HOSTED_RUNNER_ACQUISITION_FAILURE` · Root Cause: `UNKNOWN_PLATFORM_OR_POLICY`. Billing ist eine unbestätigte Hypothese und darf ohne konkrete GitHub-Meldung nicht als Ursache dokumentiert werden.
+
+**Abgrenzung:** ATLAS-55 (`BLK-ATLAS-13-02`, Hosted-Runner-Acquisition) und `BLK-ATLAS-13-01` (Branch Protection auf privatem Repo unter dem aktuellen Accountplan nicht verfügbar) sind **zwei verschiedene Blocker** und dürfen nicht vermischt werden. Details je Blocker: `docs/governance/blockers.md`.
+
+**Wirkung auf Delivery:** Ohne Runner-Akquisition entsteht keine CI-Evidenz an einem PR-Head. Das blockiert das CI-Gate für PR #1/#2/#3 und damit den Merge; lokale, reproduzierbare Testevidenz bleibt Interim.
+
+**Keine weiteren technischen Versuche** ohne neue externe Evidenz — die zwei materiell unterschiedlichen Versuche (`ubuntu-latest`, `ubuntu-24.04`) sind gemäß Fehlerregel ausgeschöpft. Kein `workflow_dispatch`, kein Rerun, kein Probecommit, kein neuer Workflow.
+
+**Owner-/Support-Paket:** `docs/support/github-actions-runner-acquisition-case.md`.
+
+**Abschlusswege (einer von zwei):** Erfolgsweg — ein hosted Job wird akquiriert, mindestens ein Step läuft, `foundation-consistency` läuft am aktuellen PR-Head erfolgreich. Externer Blockerweg — GitHub liefert einen konkreten Billing-, Policy- oder Plattformfehler; dieser wird dokumentiert und die Sprintsteuerung entscheidet über Auslagerung oder Planänderung.
+
+**Out-of-Scope:** Feature-Arbeit jeder Art; Vermischung mit BLK-ATLAS-13-01; Umgehung des CI-Gates durch Selbstbestätigung.
 
 ---
 
