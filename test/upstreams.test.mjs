@@ -55,6 +55,14 @@ test('approval_required upstreams are never enabled', () => {
   }
 })
 
+test('no rendered lock field contains a pipe or newline (table integrity)', () => {
+  for (const u of lock.upstreams) {
+    for (const v of [u.id, u.version, u.source_commit, u.license, u.archive_sha256, u.integration_status]) {
+      assert.doesNotMatch(String(v), /[|\n]/, u.id)
+    }
+  }
+})
+
 // --- lock → document parity ---------------------------------------------------
 
 test('committed DEPENDENCIES.md is exactly the rendered lock (no drift, no invented data)', () => {
