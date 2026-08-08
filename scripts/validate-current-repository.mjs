@@ -210,6 +210,25 @@ check(
   gateSrc.includes('G2 AUTHORIZATION MISSING')
 )
 
+// 10) Reflect 2026-08-09 process hardening is bound into skill and policy
+check(
+  'skill contains the idempotency pre-check guardrail',
+  skill.includes('Idempotency pre-check')
+)
+check(
+  'skill forbids silently skipped reconciliation pages',
+  skill.includes('never silently skipped')
+)
+check(
+  'skill binds plan-file hygiene',
+  skill.includes('Plan-file hygiene')
+)
+check(
+  'pr-rules require decision provenance with citable artifacts',
+  prRules.includes('Entscheidungs-Provenienz') &&
+    prRules.includes('niemals aus Plan-Entwürfen')
+)
+
 if (failures.length > 0) {
   console.error('VALIDATION FAILED')
   for (const f of failures) console.error(' ✗', f)

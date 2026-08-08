@@ -57,3 +57,17 @@ Required Checks (BLK-ATLAS-13-01) die Gate-Ausführung vor einem Merge technisch
 nicht erzwingen. Bis dahin ist die Ausführung disziplinarische Pflicht des
 Delivery-Loops; das Gate macht die Autorisierung maschinenprüfbar, es
 verhindert Merges nicht technisch.
+
+## Entscheidungs-Provenienz (Reflect 2026-08-09)
+
+Jede Aussage der Form „der PO/Owner hat X entschieden“ in Confluence, Jira oder
+Repo-Dokumenten muss das referenzierbare Entscheidungsartefakt zitieren
+(GitHub-Kommentar-ID, Jira-Kommentar-ID, Confluence-Decision-Eintrag oder
+Decision-Record im Repo). Entscheidungen werden niemals aus Plan-Entwürfen,
+Review-Ständen, `READY`-Zuständen oder Chatkontext inferiert — dieselbe Regel
+wie beim G2-Autorisierungsartefakt, angewandt auf Dokumentation. Ohne
+zitierbares Artefakt wird der Punkt als „OFFEN — PO-Entscheidung ausstehend“
+dokumentiert, nicht als entschieden behauptet (Realfall 2026-08-08: eine
+Runway-Priorisierung wurde auf zwei Statusseiten als entschieden dokumentiert,
+während die maßgebliche dritte Seite sie ausdrücklich als „bewusst NICHT
+entschieden“ führte — die Diskrepanz ging zur Auflösung an den PO).
