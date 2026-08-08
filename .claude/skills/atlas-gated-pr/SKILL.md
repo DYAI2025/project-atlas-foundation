@@ -36,11 +36,17 @@ time. Any material deviation is a hard STOP (report, don't improvise).
 10. **Fresh checkout:** clone at the exact head; `npm ci --ignore-scripts && npm run check`
     green, exit 0.
 11. **G2 solo-owner gate (see guardrails):** verify fresh
-    `gh api repos/<owner>/<repo>/collaborators --jq 'length'` == 1; post the audit comment
-    BEFORE merging:
+    `gh api repos/<owner>/<repo>/collaborators --jq 'length'` == 1; then verify the PO
+    authorization artifact — `node scripts/g2-authorization-gate.mjs <pr> <exact-head-sha>`
+    MUST exit 0 (fail closed: any other outcome keeps the PR open in
+    `READY FOR PO AUTHORIZATION`; ask the PO for the `G2-AUTHORIZATION` artifact per
+    `docs/policies/pr-rules.md`, never proceed without it). Only then post the audit
+    comment BEFORE merging:
     `PO INTEGRATION AUTHORIZATION — G2 SOLO-OWNER EXCEPTION` naming: precondition result,
     exact head SHA, CI run ID, fresh-checkout result, review findings closed, mergeability
-    (`MERGEABLE`/`CLEAN`), and the per-PR scope of the authorization.
+    (`MERGEABLE`/`CLEAN`), the per-PR scope of the authorization, and
+    `Authorization artifact: comment <id>` — the audit comment may only claim what the
+    gate-verified artifact actually shows.
 12. **Merge commit** (`gh pr merge --merge`), then **read-after-write:** PR state MERGED,
     merge-commit SHA captured, local `main` fast-forwarded to it.
 13. **Main-CI verify:** `check` success on the merge commit (gh-ci-wait exit 0).
@@ -52,9 +58,20 @@ time. Any material deviation is a hard STOP (report, don't improvise).
 ## Guardrails (binding)
 
 - **G2 is NOT standing permission.** The solo-owner exception replaces ONLY the independent
-  human approval and requires an explicit PO authorization for the specific PR (in the
-  session order or a direct user instruction). It never replaces CI, tests, review findings,
-  or DoD. No authorization → the PR stays open.
+  human approval and requires a verifiable per-PR PO authorization artifact: a GitHub
+  comment on the PR by the PO account matching the `G2-AUTHORIZATION` schema in
+  `docs/policies/pr-rules.md`, verified via `scripts/g2-authorization-gate.mjs` (exit 0).
+  Authorization is NEVER inferred — not from `READY FOR MERGE`, not from
+  `READY FOR PO AUTHORIZATION`, not from an expected next step, chat context, or
+  anticipated consent. It never replaces CI, tests, review findings, or DoD.
+  No artifact → the PR stays open.
+- **The executing agent NEVER creates or edits the authorization artifact itself** —
+  artifact creation is exclusively a human PO action. Residual risk (documented): under
+  the solo-owner account model the gate cannot technically distinguish the PO-human from
+  an agent using the same account; this remains a process obligation until account
+  separation or technical enforcement exists. The gate makes authorization
+  machine-checkable; it does not technically prevent merges (no branch protection —
+  BLK-ATLAS-13-01).
 - **No ticket transitions to `Fertig`** without explicit PO order; slices integrated ≠ ticket done.
 - **BLK-ATLAS-13-01** (branch protection) is OPEN until an Owner decision closes it — merges
   happen under documented PR policy; never claim technical protection exists.
