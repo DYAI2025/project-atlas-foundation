@@ -38,6 +38,22 @@ Regeln:
   oder erwarteter Zustimmung. Audit-Kommentare sind selbst nie Artefakte.
 - Prüfung (fail closed, Exit 0 nur bei gültigem Artefakt):
   `node scripts/g2-authorization-gate.mjs <pr> <head-sha>`
+  Das Gate prüft zusätzlich den live-PR-Zustand: PR offen, nicht gemerged,
+  Live-Head identisch mit dem übergebenen Head — ein bereits vollzogener Merge
+  wird niemals rückwirkend validiert.
 - Der G2-Audit-Kommentar MUSS das verifizierte Artefakt referenzieren
   (`Authorization artifact: comment <id>`) und darf ausschließlich tatsächlich
   beobachtete Freigaben behaupten.
+- Der ausführende Agent darf das Autorisierungsartefakt niemals selbst erzeugen
+  oder editieren — die Artefakt-Erstellung ist ausschließlich eine menschliche
+  PO-Handlung. Dokumentiertes Restrisiko: Im Solo-Owner-Account-Modell kann das
+  Gate PO-Mensch und Agent unter demselben Account technisch nicht
+  unterscheiden; bis zu einer Account-Trennung oder technischer Erzwingung
+  (BLK-ATLAS-13-01) bleibt dies eine Prozesspflicht.
+
+**Grenze der Erzwingung:** Das Repository kann Präsenz und Prozessbindung des
+Gates nachweisen (Validator-Invarianten), aber ohne Branch Protection /
+Required Checks (BLK-ATLAS-13-01) die Gate-Ausführung vor einem Merge technisch
+nicht erzwingen. Bis dahin ist die Ausführung disziplinarische Pflicht des
+Delivery-Loops; das Gate macht die Autorisierung maschinenprüfbar, es
+verhindert Merges nicht technisch.

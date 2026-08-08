@@ -65,6 +65,13 @@ time. Any material deviation is a hard STOP (report, don't improvise).
   `READY FOR PO AUTHORIZATION`, not from an expected next step, chat context, or
   anticipated consent. It never replaces CI, tests, review findings, or DoD.
   No artifact → the PR stays open.
+- **The executing agent NEVER creates or edits the authorization artifact itself** —
+  artifact creation is exclusively a human PO action. Residual risk (documented): under
+  the solo-owner account model the gate cannot technically distinguish the PO-human from
+  an agent using the same account; this remains a process obligation until account
+  separation or technical enforcement exists. The gate makes authorization
+  machine-checkable; it does not technically prevent merges (no branch protection —
+  BLK-ATLAS-13-01).
 - **No ticket transitions to `Fertig`** without explicit PO order; slices integrated ≠ ticket done.
 - **BLK-ATLAS-13-01** (branch protection) is OPEN until an Owner decision closes it — merges
   happen under documented PR policy; never claim technical protection exists.

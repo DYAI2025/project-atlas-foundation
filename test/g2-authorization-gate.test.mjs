@@ -1,6 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, symlinkSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
+  crossCheckPullRequest,
   evaluateAuthorization,
   parseAuthorizationArtifact,
   PO_LOGIN,
@@ -165,4 +171,116 @@ test('parseAuthorizationArtifact rejects incomplete or malformed blocks', () => 
     null
   )
   assert.equal(parseAuthorizationArtifact(42), null)
+})
+
+// --- artifact block must be one contiguous, visible block (ATLAS-56 G2-02/F4) --
+
+test('artifact block inside a fenced code block does not count', () => {
+  const body =
+    'So würde das Artefakt aussehen:\n```\n' +
+    artifactBody({ prefix: '' }) +
+    '```\nAber ich autorisiere noch NICHT.\n'
+  const result = evaluate([comment({ body })])
+  assert.equal(result.authorized, false)
+})
+
+test('artifact block inside an unterminated fence does not count', () => {
+  const body = 'Beispiel:\n```\n' + artifactBody({ prefix: '' })
+  const result = evaluate([comment({ body })])
+  assert.equal(result.authorized, false)
+})
+
+test('artifact block inside an HTML comment does not count', () => {
+  const body = `<!--\n${artifactBody({ prefix: '' })}-->\nNoch keine Freigabe.\n`
+  const result = evaluate([comment({ body })])
+  assert.equal(result.authorized, false)
+})
+
+test('scattered or reordered artifact lines do not count', () => {
+  const body = `HEAD: ${HEAD}\netwas Prosa\nPR: #${PR}\nmehr Prosa\nG2-AUTHORIZATION\n`
+  const result = evaluate([comment({ body })])
+  assert.equal(result.authorized, false)
+})
+
+test('contiguous block with CRLF line endings authorizes', () => {
+  const body = `Freigabe.\r\n\r\nG2-AUTHORIZATION\r\nPR: #${PR}\r\nHEAD: ${HEAD}\r\n`
+  const result = evaluate([comment({ body })])
+  assert.equal(result.authorized, true)
+})
+
+test('contiguous block with prose before and after (outside fences) authorizes', () => {
+  const body = `Begründung vorab.\n\n${artifactBody({ prefix: '' })}\nDanke.\n`
+  const result = evaluate([comment({ body })])
+  assert.equal(result.authorized, true)
+})
+
+// --- live PR cross-check, no retroactive validation (ATLAS-56 G2-03/F1/F2) ----
+
+function livePr(overrides = {}) {
+  return {
+    number: PR,
+    state: 'open',
+    merged: false,
+    merged_at: null,
+    head: { sha: HEAD },
+    ...overrides,
+  }
+}
+
+test('crossCheckPullRequest accepts a matching open PR', () => {
+  assert.deepEqual(crossCheckPullRequest(livePr(), { prNumber: PR, headSha: HEAD }), [])
+})
+
+test('crossCheckPullRequest rejects a merged PR (no retroactive validation)', () => {
+  const reasons = crossCheckPullRequest(
+    livePr({ state: 'closed', merged: true, merged_at: '2026-08-08T11:00:00Z' }),
+    { prNumber: PR, headSha: HEAD }
+  )
+  assert.ok(reasons.some((r) => /retroactive/i.test(r)))
+})
+
+test('crossCheckPullRequest rejects a closed PR', () => {
+  const reasons = crossCheckPullRequest(livePr({ state: 'closed' }), { prNumber: PR, headSha: HEAD })
+  assert.ok(reasons.length > 0)
+})
+
+test('crossCheckPullRequest rejects when the live head differs from the supplied head', () => {
+  const reasons = crossCheckPullRequest(livePr({ head: { sha: OTHER_HEAD } }), {
+    prNumber: PR,
+    headSha: HEAD,
+  })
+  assert.ok(reasons.some((r) => /head/i.test(r)))
+})
+
+test('crossCheckPullRequest rejects a different PR number', () => {
+  const reasons = crossCheckPullRequest(livePr({ number: 8 }), { prNumber: PR, headSha: HEAD })
+  assert.ok(reasons.length > 0)
+})
+
+test('crossCheckPullRequest fails closed on missing PR data', () => {
+  assert.ok(crossCheckPullRequest(null, { prNumber: PR, headSha: HEAD }).length > 0)
+  assert.ok(crossCheckPullRequest('nope', { prNumber: PR, headSha: HEAD }).length > 0)
+})
+
+// --- CLI entry robustness, fail closed on every path (ATLAS-56 G2-01) ---------
+
+const SCRIPT = fileURLToPath(new URL('../scripts/g2-authorization-gate.mjs', import.meta.url))
+
+test('CLI without args exits 1 with the fail-closed verdict (plain path)', () => {
+  const res = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' })
+  assert.equal(res.status, 1)
+  assert.ok(res.stderr.includes('G2 AUTHORIZATION MISSING'))
+})
+
+test('CLI invoked via a symlinked path still runs and fails closed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'g2-gate-'))
+  try {
+    const link = join(dir, 'gate-link.mjs')
+    symlinkSync(SCRIPT, link)
+    const res = spawnSync(process.execPath, [link], { encoding: 'utf8' })
+    assert.equal(res.status, 1)
+    assert.ok((res.stderr + res.stdout).includes('G2 AUTHORIZATION MISSING'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

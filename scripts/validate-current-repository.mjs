@@ -195,11 +195,15 @@ for (const f of ['README.md', 'docs/governance/repository-roles.md', 'reports/re
 // 9) G2 authorization gate is present, fail-closed and process-bound (ATLAS-56)
 const skill = await readFile('.claude/skills/atlas-gated-pr/SKILL.md', 'utf8')
 check(
-  'skill runs the G2 authorization gate before the audit comment',
+  'skill references the G2 authorization gate and artifact marker (textual invariant)',
   skill.includes('g2-authorization-gate.mjs') && skill.includes('G2-AUTHORIZATION')
 )
 const prRules = await readFile('docs/policies/pr-rules.md', 'utf8')
 check('pr-rules define the G2-AUTHORIZATION artifact schema', prRules.includes('G2-AUTHORIZATION'))
+check(
+  'pr-rules prohibit agent-created authorization artifacts',
+  prRules.includes('niemals selbst erzeugen')
+)
 const gateSrc = await readFile('scripts/g2-authorization-gate.mjs', 'utf8')
 check(
   'gate fails closed with an explicit MISSING verdict',
