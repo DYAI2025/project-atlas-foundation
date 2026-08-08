@@ -4,11 +4,14 @@
 > NICHT ausgeführt. Die Selbstbeschreibung „lokal, uncommitted, untracked; darf
 > NIEMALS Bestandteil von PR #9 werden“ beschrieb die Planungssession (PR #9 ist
 > inzwischen gemerged); diese Archivierung ersetzt sie, autorisiert über das
-> G2-Artefakt des archivierenden PRs. Die Entscheidungen D1–D9 zitieren kein
-> referenzierbares PO-Entscheidungsartefakt; gemäß `docs/policies/pr-rules.md`
-> (Entscheidungs-Provenienz) gelten sie bis zum Vorliegen eines Artefakts als
-> „OFFEN — PO-Entscheidung ausstehend“. Die Diskrepanz zur Confluence-Seite 14
-> („Nächster Sprint-Slice bewusst NICHT entschieden“) liegt zur Auflösung beim PO.
+> G2-Artefakt des archivierenden PRs. Die Entscheidung D1 ist belegt und ausgeführt:
+> G2-Autorisierungsartefakt = PR-#9-Kommentar 5226700791, PO-Audit 5227041045. Die
+> Entscheidungen D2–D9 zitieren kein referenzierbares PO-Entscheidungsartefakt; gemäß
+> `docs/policies/pr-rules.md` (Entscheidungs-Provenienz) gelten sie bis zum Vorliegen
+> eines Artefakts als „OFFEN — PO-Entscheidung ausstehend“. Die Diskrepanz zur
+> Confluence-Seite 14 („Ein nächster Sprint-Slice ist bewusst NICHT entschieden —
+> Entscheidung erst nach abgeschlossener Reconciliation und PO-Priorisierung“) liegt
+> zur Auflösung beim PO.
 > Ursprünglicher Inhalt darunter unverändert.
 
 # Sprint 1 Runway Scope Sharpening — Implementation Plan (Rev. 2, nach PO-Review)

@@ -1,9 +1,10 @@
 > **ARCHIVAL NOTE (2026-08-09):** Historical record of the executed 2026-08-08 closeout
-> session (verdict: ATLAS-56 CLOSED + VERIFIED). Statements of current state — including
-> the "untracked, must survive, must NOT be committed" file descriptions and the
-> out-of-scope entry "Commit the runway plan (or this plan)" — described the execution
-> session; this archival supersedes them, authorized via the G2 artifact of the
-> archiving PR. Known correction: the Task 8 CQL `space = ATLAS` silently returns
+> session (verdict: ATLAS-56 CLOSED + VERIFIED). Statements of current state — the
+> "untracked, must survive, must NOT be committed" constants comment, the architecture
+> line "Zero commits, zero pushes, zero code edits", and the out-of-scope entries
+> "Commit the runway plan (or this plan)" and "Any git commit/push, any code or config
+> change in the repo" — described the execution session; this archival supersedes them,
+> authorized via the G2 artifact of the archiving PR. Known correction: the Task 8 CQL `space = ATLAS` silently returns
 > 0 hits — the Confluence space key is `PRODUKTMAN` (see
 > `.claude/skills/atlas-gated-pr/SKILL.md`, step 14). Original content unchanged below.
 

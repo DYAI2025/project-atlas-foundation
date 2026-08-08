@@ -1,3 +1,10 @@
+> **ARCHIVAL NOTE (2026-08-09, retroactive):** Historical plan of the executed
+> 2026-08-07 truth-reconciliation and CI-slice-1 session (PRs #4 and #5 merged). The
+> self-description "stays untracked unless the PO asks to commit it" and the
+> do-not-commit scope entries described the execution session; archival happened via
+> the PO-merged PR #6, this note was added retroactively in PR #10. Original content
+> unchanged below.
+
 # Truth Reconciliation (ATLAS-55) + ATLAS-23 CI Slice 1 — Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.

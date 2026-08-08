@@ -85,7 +85,8 @@ time. Any material deviation is a hard STOP (report, don't improvise).
   BLK-ATLAS-13-01).
 - **Idempotency pre-check — orders can run twice.** The same PO order may execute in a
   parallel session (real case 2026-08-08: the ATLAS-56 closeout order ran twice; the
-  second run found the ticket already `Fertig` and Confluence already reconciled).
+  second run found the ticket already `Fertig` and two of three status pages already
+  reconciled — it verified those and applied only the missing third-page edit).
   Before EVERY external mutation (Jira comment/transition, Confluence edit, PR
   create/merge), fresh-read the target's current state. If the intended end state
   already exists in full, do NOT re-apply: switch to verify-only mode — independently
@@ -97,7 +98,7 @@ time. Any material deviation is a hard STOP (report, don't improvise).
   explicitly.
 - **Plan-file hygiene.** Executed implementation/session plans are committed under
   `docs/plans/` — as part of the slice PR or an immediate follow-up docs PR (precedent
-  PR #6). Partially executed or superseded plans may be archived the same way ONLY with
+  PR #6; its plans received their archival notes retroactively in PR #10). Partially executed or superseded plans may be archived the same way ONLY with
   a prepended archival note stating their execution status and marking any decision
   claims that lack a citable artifact (see `docs/policies/pr-rules.md`,
   Entscheidungs-Provenienz). Active working drafts live in the session scratchpad,
