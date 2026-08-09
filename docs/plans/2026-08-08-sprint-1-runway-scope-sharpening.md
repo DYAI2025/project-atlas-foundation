@@ -12,7 +12,12 @@
 > `37d05148687fb96fd034e197070341460a991f3b`. D2–D9 sind seit dem 09.08.2026
 > materialisiert und belegt: Confluence-Seite 15171611 („14 – Delivery Model,
 > Program Increment and Sprint Plan“, Space PRODUKTMAN), Abschnitt
-> „PO-Entscheidungen D1–D9 im Wortlaut (materialisiert 09.08.2026)“, Version 12.
+> „PO-Entscheidungen D1–D9 im Wortlaut (materialisiert 09.08.2026)“, ursprünglich
+> materialisiert in Version 12. Version 13 (09.08.2026) ergänzt an genau diesem Block
+> die Agenten-Provenienzkennzeichnung nach Bedingung 8 und fügt den Abschnitt
+> „PO-Review-Entscheidungen zu PR #10 (materialisiert 09.08.2026)“ hinzu. Beide
+> Confluence-Abschnitte sind durch den ausführenden Agenten auf ausdrücklichen
+> PO-Auftrag materialisiert, nicht vom PO selbst verfasst.
 > Die frühere Diskrepanz zur Seite 14 („Ein nächster Sprint-Slice ist bewusst NICHT
 > entschieden“) ist damit aufgelöst; die Seite führt diese Formulierung seit dem
 > 09.08.2026 selbst als SUPERSEDED.
