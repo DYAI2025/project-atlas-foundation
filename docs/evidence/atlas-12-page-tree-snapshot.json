@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "evidence_id": "ATLAS-12-page-tree-2026-08-09",
+  "jira_issue": "ATLAS-12",
+  "evidence_type": "historical_acceptance_snapshot",
+  "canonical": false,
+  "not_runtime_input": true,
+  "source_of_truth": "Confluence",
+  "notice": "This file is evidence, not the canonical page tree. It records the Confluence page tree as observed at the ATLAS-12 acceptance moment. Confluence remains the source of truth. This file must never be used as runtime input, as routing input, as canonical page-tree configuration, or as an automatically current representation of Confluence. Its only consumer is test/atlas-12-page-tree-evidence.test.mjs.",
+  "space_key": "PRODUKTMAN",
+  "root_page_id": "14778372",
+  "root_title": "ATLAS Single Source of Truth",
+  "observed_at": "2026-08-09T17:50:48Z",
+  "capture_method": "Atlassian MCP getConfluencePageDescendants(cloudId=4504291c-8bc0-48f8-ab9e-9ad5d376ca04, pageId=14778372, depth=1) executed read-only during the ATLAS-12 closeout-evidence session on 2026-08-09; observation recorded at observed_at. No generator, no adapter and no automated refresh exists or is intended.",
+  "source_references": [
+    "Confluence space PRODUKTMAN, root page 14778372 (live read, depth 1)",
+    "Jira ATLAS-12 comment 12137 (2026-08-06 historical page-tree evidence; page IDs identical to this observation)",
+    "Confluence page 15171611 version 15, section 'PO-Entscheidung 09.08.2026 (Nachtrag) — Seite-09-gbrain-Prerequisite fuer ATLAS-12 SUPERSEDED' (decision artifact)"
+  ],
+  "numbered_children": [
+    { "number": "00", "title": "00 – Project Home and Executive Brief", "page_id": "15138817" },
+    { "number": "01", "title": "01 – Product Vision, Users, Outcomes and Scope", "page_id": "15171585" },
+    { "number": "02", "title": "02 – Source of Truth, Governance and Decision Rights", "page_id": "14680066" },
+    { "number": "03", "title": "03 – Current State, Legacy Findings and Problem Statement", "page_id": "15204353" },
+    { "number": "04", "title": "04 – Target Architecture and System Context", "page_id": "15073290" },
+    { "number": "05", "title": "05 – Canonical Data Model and Semantics", "page_id": "14614530" },
+    { "number": "06", "title": "06 – Ingestion, Normalization and Provenance Pipeline", "page_id": "15237121" },
+    { "number": "07", "title": "07 – Embeddings, Retrieval and Search Quality", "page_id": "15269889" },
+    { "number": "08", "title": "08 – Knowledge Graph, Temporal Semantics and Evidence", "page_id": "15302657" },
+    { "number": "09", "title": "09 – MCP Access, Routing and Project Isolation", "page_id": "15237147" },
+    { "number": "10", "title": "10 – Obsidian Projection and Knowledge UX", "page_id": "14385164" },
+    { "number": "11", "title": "11 – Premium Graph UI Specification", "page_id": "15335425" },
+    { "number": "12", "title": "12 – Security, Data Classification and Compliance Guardrails", "page_id": "15368193" },
+    { "number": "13", "title": "13 – Repository Assessment and Technical Reuse Strategy", "page_id": "15040514" },
+    { "number": "14", "title": "14 – Delivery Model, Program Increment and Sprint Plan", "page_id": "15171611" },
+    { "number": "15", "title": "15 – Backlog Structure, Epics and Jira Mapping", "page_id": "14778401" },
+    { "number": "16", "title": "16 – Migration, Archive, Backup and Recovery", "page_id": "15400961" },
+    { "number": "17", "title": "17 – Test Strategy, Release Gates and Evidence Ledger", "page_id": "14548994" },
+    { "number": "18", "title": "18 – Change Log and Session Handoffs", "page_id": "14581771" }
+  ],
+  "blueprint": {
+    "page_id": "14647297",
+    "title": "ATLAS Seitenbaum 00–18",
+    "note": "Direct child of the root that is not one of the 19 numbered pages; kept separate on purpose."
+  }
+}
