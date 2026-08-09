@@ -1,3 +1,10 @@
+> **ARCHIVIERUNGSVERMERK (2026-08-09, nachträglich):** Historischer Plan der am
+> 2026-08-07 ausgeführten Integration Wave (PRs #1/#3/#2 gemerged). Die
+> Selbstbeschreibung „Diese Plandatei bleibt UNTRACKED. Nicht committen …“ beschrieb
+> die Execution-Session; die Archivierung erfolgte durch den PO-gemergten PR #6,
+> dieser Vermerk wurde in PR #10 nachgetragen. Ursprünglicher Inhalt darunter
+> unverändert.
+
 # Sprint-1 Integration Wave — Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.

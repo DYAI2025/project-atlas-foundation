@@ -199,6 +199,7 @@ check(
   skill.includes('g2-authorization-gate.mjs') && skill.includes('G2-AUTHORIZATION')
 )
 const prRules = await readFile('docs/policies/pr-rules.md', 'utf8')
+const prRulesFlat = prRules.replace(/\s+/g, ' ')
 check('pr-rules define the G2-AUTHORIZATION artifact schema', prRules.includes('G2-AUTHORIZATION'))
 check(
   'pr-rules prohibit agent-created authorization artifacts',
@@ -208,6 +209,53 @@ const gateSrc = await readFile('scripts/g2-authorization-gate.mjs', 'utf8')
 check(
   'gate fails closed with an explicit MISSING verdict',
   gateSrc.includes('G2 AUTHORIZATION MISSING')
+)
+
+// 10) Reflect 2026-08-09 process hardening is bound into skill and policy
+check(
+  'skill contains the idempotency pre-check guardrail',
+  skill.includes('Idempotency pre-check')
+)
+check(
+  'skill forbids silently skipped reconciliation pages',
+  skill.includes('never silently skipped')
+)
+check(
+  'skill binds plan-file hygiene',
+  skill.includes('Plan-file hygiene')
+)
+check(
+  'pr-rules require decision provenance with citable artifacts',
+  prRules.includes('Entscheidungs-Provenienz') &&
+    prRules.includes('niemals aus Plan-Entwürfen')
+)
+
+// 11) Reflect 2026-08-09 §3 correction: an explicit PO order is materializable,
+//     under conditions, without weakening the anti-inference core
+check(
+  'pr-rules allow controlled materialization of an explicit PO order',
+  prRules.includes('Kontrollierte Materialisierung') &&
+    prRulesFlat.includes('die Erstellung des Artefakts ist dort ausdrücklich autorisiert')
+)
+check(
+  'controlled materialization requires read-after-write before citation',
+  prRules.includes('Read-after-Write') &&
+    prRulesFlat.includes('Erst das erfolgreich zurückgelesene Artefakt darf anschließend')
+)
+check(
+  'G2 authorization artifact stays carved out of controlled materialization',
+  prRulesFlat.includes('jede Aussage über eine bereits erteilte Merge- oder Integrationsfreigabe') &&
+    prRulesFlat.includes('ausschließlich vom menschlichen PO selbst erzeugt') &&
+    prRulesFlat.includes('auch nicht auf ausdrückliche Anweisung im Auftrag')
+)
+check(
+  'anti-inference core sentences still present',
+  prRules.includes('niemals aus Plan-Entwürfen') &&
+    prRules.includes('OFFEN — PO-Entscheidung ausstehend')
+)
+check(
+  'materialized artifacts must be self-marked as agent-materialized',
+  prRulesFlat.includes('nicht vom PO selbst verfasst')
 )
 
 if (failures.length > 0) {
