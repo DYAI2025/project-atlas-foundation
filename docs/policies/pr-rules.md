@@ -72,15 +72,17 @@ Runway-Priorisierung wurde auf zwei Statusseiten als entschieden dokumentiert,
 während die maßgebliche dritte Seite sie ausdrücklich als „bewusst NICHT
 entschieden“ führte — die Diskrepanz ging zur Auflösung an den PO).
 
-**Kontrollierte Materialisierung (eng gefasste Ausnahme, Reflect 2026-08-09 §3).**
+**Kontrollierte Materialisierung (eng gefasste Ausnahme, Reflect 2026-08-09).**
 Chat- bzw. Session-Kontext ist niemals selbst das dauerhafte
 Entscheidungsartefakt. Erteilt der menschliche Product Owner eine Entscheidung
 im aktuellen Auftrag jedoch ausdrücklich UND autorisiert dort ausdrücklich die
 Erstellung eines kanonischen Entscheidungsartefakts, darf der ausführende Agent
 diese Entscheidung kontrolliert materialisieren. Bedingungen, kumulativ:
 
-1. Die Entscheidung ist im aktuellen Auftrag explizit formuliert.
-2. Das Zielartefakt (System, Seite/Ticket, ID) ist vor der Mutation benannt.
+1. Die Entscheidung ist im aktuellen Auftrag explizit formuliert UND die
+   Erstellung des Artefakts ist dort ausdrücklich autorisiert.
+2. Zielsystem und Zielobjekt sind vor der Mutation benannt (bei bestehenden
+   Objekten mit ID); bei Neuanlage wird die ID im Read-after-Write festgehalten.
 3. Der Agent ergänzt, interpretiert und inferiert nichts — materialisiert wird
    ausschließlich der erteilte Inhalt.
 4. Nach dem Write ist Read-after-Write Pflicht.
@@ -89,10 +91,25 @@ diese Entscheidung kontrolliert materialisieren. Bedingungen, kumulativ:
    Artefakt, nie der Auftrag.
 6. Ohne erfolgreich materialisiertes Artefakt bleibt der Punkt „OFFEN —
    PO-Entscheidung ausstehend“.
-7. Die Materialisierung folgt der Idempotenz-Vorprüfung: existiert der
-   Zielinhalt bereits, wird verifiziert statt dupliziert.
+7. Die Materialisierung folgt der Idempotenz-Vorprüfung (Guardrail „Idempotency
+   pre-check“ in `.claude/skills/atlas-gated-pr/SKILL.md`): der Zielzustand wird
+   unmittelbar vorher frisch gelesen; existiert der Zielinhalt bereits, wird
+   verifiziert statt dupliziert und die Doppelausführung als Abweichung
+   berichtet. Weicht vorhandener Zielinhalt inhaltlich ab, wird nicht
+   überschrieben — der Punkt bleibt OFFEN und die Diskrepanz geht an den PO.
+8. Das materialisierte Artefakt kennzeichnet sich selbst als solches
+   („materialisiert durch den ausführenden Agenten auf ausdrücklichen PO-Auftrag
+   vom <Datum>; nicht vom PO selbst verfasst“) — ein Leser muss PO-verfasste und
+   agentenmaterialisierte Artefakte unterscheiden können.
 
-**Ausnahme von der Ausnahme (G2):** Das G2-AUTHORIZATION-Artefakt ist von dieser
-Regel ausgenommen. Es wird ausschließlich vom menschlichen PO selbst erzeugt;
-der ausführende Agent erzeugt oder editiert es niemals — auch nicht auf
-ausdrückliche Anweisung im Auftrag.
+Dokumentiertes Restrisiko: Bedingung 1 ist nachträglich nicht extern prüfbar —
+der Auftrag ist flüchtig, das Artefakt ist agentenverfasst. Bedingung 8 macht
+die Urheberschaft im Artefakt sichtbar, ersetzt aber keine Account-Trennung; bis
+dahin bleibt die Unterscheidung zwischen ausdrücklichem Auftrag und Inferenz
+eine Prozesspflicht des ausführenden Agenten.
+
+**Ausnahme von der Ausnahme (G2):** Das G2-AUTHORIZATION-Artefakt sowie jede
+Aussage über eine bereits erteilte Merge- oder Integrationsfreigabe sind von
+dieser Regel ausgenommen. Das Artefakt wird ausschließlich vom menschlichen PO
+selbst erzeugt; der ausführende Agent erzeugt oder editiert es niemals — auch
+nicht auf ausdrückliche Anweisung im Auftrag.
