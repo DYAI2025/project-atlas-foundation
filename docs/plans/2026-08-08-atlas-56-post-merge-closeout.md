@@ -3,9 +3,11 @@
 > "untracked, must survive, must NOT be committed" constants comment, the architecture
 > line "Zero commits, zero pushes, zero code edits", and the out-of-scope entries
 > "Commit the runway plan (or this plan)" and "Any git commit/push, any code or config
-> change in the repo" — described the execution session; this archival supersedes them,
-> authorized via the G2 artifact of the archiving PR. Known correction: the Task 8 CQL `space = ATLAS` silently returns
-> 0 hits — the Confluence space key is `PRODUKTMAN` (see
+> change in the repo" — described the execution session; this archival supersedes them.
+> Integrating this archival state requires a valid PR-#10- and head-specific G2
+> authorization artifact from the human PO before merge; no such artifact exists as of
+> this note. Known correction: the Task 8 CQL `space = ATLAS` silently returns 0 hits —
+> the Confluence space key is `PRODUKTMAN` (see
 > `.claude/skills/atlas-gated-pr/SKILL.md`, step 14). Original content unchanged below.
 
 # ATLAS-56 Post-Merge Closeout Plan

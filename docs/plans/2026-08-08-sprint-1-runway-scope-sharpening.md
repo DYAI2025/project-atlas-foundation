@@ -3,15 +3,19 @@
 > `37d05148…`); die Tasks 1–5 (ATLAS-12/15/22/23/11) sind zum Archivierungszeitpunkt
 > NICHT ausgeführt. Die Selbstbeschreibung „lokal, uncommitted, untracked; darf
 > NIEMALS Bestandteil von PR #9 werden“ beschrieb die Planungssession (PR #9 ist
-> inzwischen gemerged); diese Archivierung ersetzt sie, autorisiert über das
-> G2-Artefakt des archivierenden PRs. Die Entscheidung D1 ist belegt und ausgeführt:
-> G2-Autorisierungsartefakt = PR-#9-Kommentar 5226700791, PO-Audit 5227041045. Die
-> Entscheidungen D2–D9 zitieren kein referenzierbares PO-Entscheidungsartefakt; gemäß
-> `docs/policies/pr-rules.md` (Entscheidungs-Provenienz) gelten sie bis zum Vorliegen
-> eines Artefakts als „OFFEN — PO-Entscheidung ausstehend“. Die Diskrepanz zur
-> Confluence-Seite 14 („Ein nächster Sprint-Slice ist bewusst NICHT entschieden —
-> Entscheidung erst nach abgeschlossener Reconciliation und PO-Priorisierung“) liegt
-> zur Auflösung beim PO.
+> inzwischen gemerged); diese Archivierung ersetzt sie. Die Integration dieses
+> Archivierungsstands erfordert vor dem Merge ein gültiges, PR-#10- und
+> Head-spezifisches G2-Autorisierungsartefakt des menschlichen PO; zum Zeitpunkt
+> dieses Vermerks existiert kein solches Artefakt.
+> **Entscheidungsstand:** D1 ist belegt und ausgeführt — G2-Autorisierungsartefakt
+> = PR-#9-Kommentar 5226700791, PO-Integrations-Audit 5227041045, Merge
+> `37d05148687fb96fd034e197070341460a991f3b`. D2–D9 sind seit dem 09.08.2026
+> materialisiert und belegt: Confluence-Seite 15171611 („14 – Delivery Model,
+> Program Increment and Sprint Plan“, Space PRODUKTMAN), Abschnitt
+> „PO-Entscheidungen D1–D9 im Wortlaut (materialisiert 09.08.2026)“, Version 12.
+> Die frühere Diskrepanz zur Seite 14 („Ein nächster Sprint-Slice ist bewusst NICHT
+> entschieden“) ist damit aufgelöst; die Seite führt diese Formulierung seit dem
+> 09.08.2026 selbst als SUPERSEDED.
 > Ursprünglicher Inhalt darunter unverändert.
 
 # Sprint 1 Runway Scope Sharpening — Implementation Plan (Rev. 2, nach PO-Review)
