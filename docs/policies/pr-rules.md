@@ -71,3 +71,28 @@ dokumentiert, nicht als entschieden behauptet (Realfall 2026-08-08: eine
 Runway-Priorisierung wurde auf zwei Statusseiten als entschieden dokumentiert,
 während die maßgebliche dritte Seite sie ausdrücklich als „bewusst NICHT
 entschieden“ führte — die Diskrepanz ging zur Auflösung an den PO).
+
+**Kontrollierte Materialisierung (eng gefasste Ausnahme, Reflect 2026-08-09 §3).**
+Chat- bzw. Session-Kontext ist niemals selbst das dauerhafte
+Entscheidungsartefakt. Erteilt der menschliche Product Owner eine Entscheidung
+im aktuellen Auftrag jedoch ausdrücklich UND autorisiert dort ausdrücklich die
+Erstellung eines kanonischen Entscheidungsartefakts, darf der ausführende Agent
+diese Entscheidung kontrolliert materialisieren. Bedingungen, kumulativ:
+
+1. Die Entscheidung ist im aktuellen Auftrag explizit formuliert.
+2. Das Zielartefakt (System, Seite/Ticket, ID) ist vor der Mutation benannt.
+3. Der Agent ergänzt, interpretiert und inferiert nichts — materialisiert wird
+   ausschließlich der erteilte Inhalt.
+4. Nach dem Write ist Read-after-Write Pflicht.
+5. Erst das erfolgreich zurückgelesene Artefakt darf anschließend in Jira,
+   Confluence oder Repo-Dokumenten als Evidenz zitiert werden — zitiert wird das
+   Artefakt, nie der Auftrag.
+6. Ohne erfolgreich materialisiertes Artefakt bleibt der Punkt „OFFEN —
+   PO-Entscheidung ausstehend“.
+7. Die Materialisierung folgt der Idempotenz-Vorprüfung: existiert der
+   Zielinhalt bereits, wird verifiziert statt dupliziert.
+
+**Ausnahme von der Ausnahme (G2):** Das G2-AUTHORIZATION-Artefakt ist von dieser
+Regel ausgenommen. Es wird ausschließlich vom menschlichen PO selbst erzeugt;
+der ausführende Agent erzeugt oder editiert es niemals — auch nicht auf
+ausdrückliche Anweisung im Auftrag.

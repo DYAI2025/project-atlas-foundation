@@ -229,6 +229,26 @@ check(
     prRules.includes('niemals aus Plan-Entwürfen')
 )
 
+// 11) Reflect 2026-08-09 §3 correction: an explicit PO order is materializable,
+//     under conditions, without weakening the anti-inference core
+check(
+  'pr-rules allow controlled materialization of an explicit PO order',
+  prRules.includes('Kontrollierte Materialisierung')
+)
+check(
+  'controlled materialization requires read-after-write before citation',
+  prRules.includes('Read-after-Write')
+)
+check(
+  'G2 authorization artifact stays carved out of controlled materialization',
+  prRules.includes('Ausnahme von der Ausnahme (G2)')
+)
+check(
+  'anti-inference core is preserved, not weakened',
+  prRules.includes('niemals aus Plan-Entwürfen') &&
+    prRules.includes('OFFEN — PO-Entscheidung ausstehend')
+)
+
 if (failures.length > 0) {
   console.error('VALIDATION FAILED')
   for (const f of failures) console.error(' ✗', f)
