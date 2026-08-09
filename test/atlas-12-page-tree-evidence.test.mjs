@@ -12,7 +12,36 @@ const EVIDENCE_PATH = fileURLToPath(
 
 const EXPECTED_ROOT = '14778372'
 const EXPECTED_BLUEPRINT = '14647297'
-const EXPECTED_NUMBERS = Array.from({ length: 19 }, (_, i) => String(i).padStart(2, '0'))
+const EXPECTED_ROOT_TITLE = 'ATLAS Single Source of Truth'
+const EXPECTED_BLUEPRINT_TITLE = 'ATLAS Seitenbaum 00–18'
+
+// The exact page tree observed under root 14778372 at 2026-08-09T17:50:48Z.
+// Frozen regression evidence for a historical artifact — NOT runtime
+// configuration and NOT a second source of truth. Confluence stays canonical;
+// if Confluence changes, this evidence and these expectations do not.
+// Tuples are [number, page_id, title]. Titles use EN DASH (U+2013).
+const EXPECTED_TREE = [
+  ['00', '15138817', '00 – Project Home and Executive Brief'],
+  ['01', '15171585', '01 – Product Vision, Users, Outcomes and Scope'],
+  ['02', '14680066', '02 – Source of Truth, Governance and Decision Rights'],
+  ['03', '15204353', '03 – Current State, Legacy Findings and Problem Statement'],
+  ['04', '15073290', '04 – Target Architecture and System Context'],
+  ['05', '14614530', '05 – Canonical Data Model and Semantics'],
+  ['06', '15237121', '06 – Ingestion, Normalization and Provenance Pipeline'],
+  ['07', '15269889', '07 – Embeddings, Retrieval and Search Quality'],
+  ['08', '15302657', '08 – Knowledge Graph, Temporal Semantics and Evidence'],
+  ['09', '15237147', '09 – MCP Access, Routing and Project Isolation'],
+  ['10', '14385164', '10 – Obsidian Projection and Knowledge UX'],
+  ['11', '15335425', '11 – Premium Graph UI Specification'],
+  ['12', '15368193', '12 – Security, Data Classification and Compliance Guardrails'],
+  ['13', '15040514', '13 – Repository Assessment and Technical Reuse Strategy'],
+  ['14', '15171611', '14 – Delivery Model, Program Increment and Sprint Plan'],
+  ['15', '14778401', '15 – Backlog Structure, Epics and Jira Mapping'],
+  ['16', '15400961', '16 – Migration, Archive, Backup and Recovery'],
+  ['17', '14548994', '17 – Test Strategy, Release Gates and Evidence Ledger'],
+  ['18', '14581771', '18 – Change Log and Session Handoffs']
+]
+const EXPECTED_NUMBERS = EXPECTED_TREE.map(([number]) => number)
 const EXPECTED_CHILD_COUNT = EXPECTED_NUMBERS.length
 
 function loadEvidence() {
@@ -39,6 +68,9 @@ function validateEvidence(doc) {
   if (doc.source_of_truth !== 'Confluence') errors.push('source_of_truth must be Confluence')
   if (doc.space_key !== 'PRODUKTMAN') errors.push('space_key must be PRODUKTMAN')
   if (doc.root_page_id !== EXPECTED_ROOT) errors.push(`root_page_id must be ${EXPECTED_ROOT}`)
+  if (doc.root_title !== EXPECTED_ROOT_TITLE) {
+    errors.push(`root_title must be ${JSON.stringify(EXPECTED_ROOT_TITLE)}`)
+  }
   if (typeof doc.observed_at !== 'string' || doc.observed_at.length === 0) {
     errors.push('observed_at must be a non-empty string')
   }
@@ -89,11 +121,31 @@ function validateEvidence(doc) {
     ids.push(child.page_id)
   }
 
+  // Exact historical identity. The structural rules above cannot catch a
+  // unique-but-wrong ID or a correctly-prefixed-but-wrong title.
+  for (const [number, pageId, title] of EXPECTED_TREE) {
+    const child = children.find((c) => c.number === number)
+    // An entirely absent number is already reported as a missing child;
+    // do not double-report it as an identity mismatch.
+    if (!child) continue
+    if (child.page_id !== pageId) {
+      errors.push(`child ${number} page_id must be ${pageId}, got ${child.page_id}`)
+    }
+    if (child.title !== title) {
+      errors.push(
+        `child ${number} title must be ${JSON.stringify(title)}, got ${JSON.stringify(child.title)}`
+      )
+    }
+  }
+
   const blueprint = doc.blueprint
   if (!blueprint || blueprint.page_id !== EXPECTED_BLUEPRINT) {
     errors.push(`blueprint.page_id must be ${EXPECTED_BLUEPRINT}`)
   } else if (ids.includes(blueprint.page_id)) {
     errors.push('blueprint must not also be one of the numbered children')
+  }
+  if (blueprint && blueprint.title !== EXPECTED_BLUEPRINT_TITLE) {
+    errors.push(`blueprint.title must be ${JSON.stringify(EXPECTED_BLUEPRINT_TITLE)}`)
   }
 
   return errors
@@ -159,6 +211,19 @@ test('blueprint page is recorded and is not one of the numbered children', () =>
   assert.equal(doc.blueprint.page_id, EXPECTED_BLUEPRINT)
   const ids = doc.numbered_children.map((c) => c.page_id)
   assert.equal(ids.includes(EXPECTED_BLUEPRINT), false)
+})
+
+test('evidence file matches the exact observed page tree', () => {
+  const doc = loadEvidence()
+  assert.deepEqual(
+    doc.numbered_children.map((c) => [c.number, c.page_id, c.title]),
+    EXPECTED_TREE,
+    'numbered children must equal the exact observed tree, in order'
+  )
+  assert.equal(doc.root_page_id, EXPECTED_ROOT)
+  assert.equal(doc.root_title, EXPECTED_ROOT_TITLE)
+  assert.equal(doc.blueprint.page_id, EXPECTED_BLUEPRINT)
+  assert.equal(doc.blueprint.title, EXPECTED_BLUEPRINT_TITLE)
 })
 
 test('the real evidence file passes the validator with zero errors', () => {
@@ -351,6 +416,20 @@ const MUTATIONS = [
       d.numbered_children[0].page_id = EXPECTED_BLUEPRINT
     },
     error: 'blueprint must not also be one of the numbered children'
+  },
+  {
+    name: 'a wrong root_title',
+    mutate: (d) => {
+      d.root_title = 'Something Else'
+    },
+    error: `root_title must be ${JSON.stringify(EXPECTED_ROOT_TITLE)}`
+  },
+  {
+    name: 'a wrong blueprint title',
+    mutate: (d) => {
+      d.blueprint.title = 'Wrong Blueprint Title'
+    },
+    error: `blueprint.title must be ${JSON.stringify(EXPECTED_BLUEPRINT_TITLE)}`
   }
 ]
 
@@ -374,5 +453,57 @@ test('rejects non-array numbered_children and returns before the blueprint check
     errors.some((e) => e.startsWith('blueprint')),
     false,
     `blueprint checks must not run after the early return, got: ${errors.join('; ')}`
+  )
+})
+
+// --- negative: exact historical identity (PO finding I-1) ---------------------
+// Structural validity is not enough for a frozen artifact: a unique-but-wrong ID
+// and a correctly-prefixed-but-wrong title are both corruption of the record.
+
+test('rejects a unique but wrong page ID', () => {
+  const doc = freshEvidence()
+  doc.numbered_children[7].page_id = '99999999'
+  const errors = validateEvidence(doc)
+
+  assert.ok(
+    errors.includes('child 07 page_id must be 15269889, got 99999999'),
+    errors.join('; ')
+  )
+  // Prove the rejection is an exact-identity mismatch, not a structural one:
+  // the value is unique, non-empty and well-formed.
+  assert.equal(
+    errors.some((e) => e.startsWith('duplicate page_id')),
+    false,
+    `must not be rejected as a duplicate: ${errors.join('; ')}`
+  )
+  assert.equal(
+    errors.some((e) => e.includes('has empty page_id')),
+    false,
+    `must not be rejected as empty: ${errors.join('; ')}`
+  )
+})
+
+test('rejects a wrong full title whose number prefix is still valid', () => {
+  const doc = freshEvidence()
+  doc.numbered_children[7].title = '07 – Wrong Title'
+  const errors = validateEvidence(doc)
+
+  assert.ok(
+    errors.includes(
+      'child 07 title must be "07 – Embeddings, Retrieval and Search Quality", got "07 – Wrong Title"'
+    ),
+    errors.join('; ')
+  )
+  // Prove the rejection is an exact-title mismatch, not the prefix rule:
+  // "07 " is still the correct prefix, so the prefix rule must stay silent.
+  assert.equal(
+    errors.some((e) => e.includes('title does not start with its number')),
+    false,
+    `prefix rule must not fire: ${errors.join('; ')}`
+  )
+  assert.equal(
+    errors.some((e) => e.includes('has empty title')),
+    false,
+    `must not be rejected as empty: ${errors.join('; ')}`
   )
 })
