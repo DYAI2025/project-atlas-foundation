@@ -258,6 +258,23 @@ check(
   prRulesFlat.includes('nicht vom PO selbst verfasst')
 )
 
+// 12) ATLAS-57: the two accepted controlled-materialization conditions that carried
+//     no policy-side regression binding yet. Condition 7 (idempotency semantics) was
+//     bound only in the Skill, not in the policy; Condition 8 was bound only by its
+//     disclaimer half, so a rewrite could drop the marking and the reader
+//     distinguishability while the existing check stayed green.
+check(
+  'pr-rules bind controlled materialization to the idempotency pre-check (Bedingung 7)',
+  prRulesFlat.includes('Idempotenz-Vorprüfung') &&
+    prRulesFlat.includes('verifiziert statt dupliziert') &&
+    prRulesFlat.includes('wird nicht überschrieben')
+)
+check(
+  'pr-rules require materialized artifacts to name their agent authorship (Bedingung 8)',
+  prRulesFlat.includes('materialisiert durch den ausführenden Agenten') &&
+    prRulesFlat.includes('unterscheiden können')
+)
+
 if (failures.length > 0) {
   console.error('VALIDATION FAILED')
   for (const f of failures) console.error(' ✗', f)
