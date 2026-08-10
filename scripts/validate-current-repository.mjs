@@ -28,6 +28,7 @@ const REQUIRED_FILES = [
   'architecture-decision.json',
   'architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md',
   'architecture/approval-boundary.md',
+  'config/project-registry.json',
   'docs/repository-assessment.md',
   'docs/governance/repository-roles.md',
   'docs/governance/blockers.md',
@@ -273,6 +274,44 @@ check(
   'pr-rules require materialized artifacts to name their agent authorship (Bedingung 8)',
   prRulesFlat.includes('materialisiert durch den ausführenden Agenten') &&
     prRulesFlat.includes('unterscheiden können')
+)
+
+// 13) ATLAS-58: the writer registry is a mandatory repository artifact. This binding is
+//     deliberately repository-level only — existence (REQUIRED_FILES), parseability, the
+//     root project_id and the exact V1 project-id set. The deep registry contract
+//     (schema_version, description wording, jira_key/root_page_id mappings, space,
+//     allowed_writers, approval_workflow, status, duplicate/ambiguity rules, selector and
+//     routing behaviour) stays owned by src/registry/resolve.mjs and
+//     test/registry-resolve.test.mjs and is NOT duplicated here.
+//     The read is guarded so a missing or malformed registry becomes a validator finding
+//     instead of an uncaught ENOENT/SyntaxError that would skip the VALIDATION FAILED
+//     verdict entirely. Guarding the remaining unguarded reads is ATLAS-64, not this slice.
+let registry = null
+let registryReadError = ''
+try {
+  registry = JSON.parse(await readFile('config/project-registry.json', 'utf8'))
+} catch (error) {
+  registryReadError = error.message
+}
+check(
+  'writer registry parses as a JSON object',
+  registry !== null && typeof registry === 'object' && !Array.isArray(registry),
+  registryReadError || 'registry root must be a JSON object'
+)
+check(
+  'writer registry root project_id is ATLAS',
+  registry?.project_id === 'ATLAS',
+  `found: ${registry?.project_id ?? 'none'}`
+)
+// Keyed by the project_id set only, and sorted so the order of `projects` carries no
+// meaning — a missing, extra or duplicated project id all fail closed here.
+const registryProjectIds = Array.isArray(registry?.projects)
+  ? registry.projects.map((p) => p?.project_id).toSorted()
+  : []
+check(
+  'writer registry contains exactly the three V1 projects',
+  JSON.stringify(registryProjectIds) === JSON.stringify(['ATLAS', 'EASYTREE', 'PLUMBLINE']),
+  `found: ${registryProjectIds.join(',') || 'none'}`
 )
 
 if (failures.length > 0) {
