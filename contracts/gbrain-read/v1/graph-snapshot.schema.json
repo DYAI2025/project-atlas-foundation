@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:contracts/gbrain-read/v1/graph-snapshot.schema.json",
+  "title": "Deterministic graph snapshot (ATLAS-22, Slice 2)",
+  "description": "Standalone, versioned graph-projection document. It is NOT wrapped in a transport envelope: a consumer loads this document directly. Identifiers are projection-local and are explicitly NOT canonical entity identifiers (PO decision D9; Confluence page 05 is unresolved). This schema expresses structure only. Deterministic identifier derivation, canonical ordering, identifier uniqueness and edge referential integrity are additionally enforced by src/gbrain-read-contract/validate.mjs and are not expressible here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "project_id",
+    "id_scheme",
+    "canonical_entity_ids",
+    "source",
+    "nodes",
+    "edges"
+  ],
+  "$defs": {
+    "id_component": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "A component of a projection-local identifier. The restricted charset excludes the ':' separator, so composition is transparent and decomposition is unambiguous without escaping."
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "source_ref", "label"],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Derived as <project_id>:<source_kind>:<source_id>:<source_ref>."
+        },
+        "source_ref": {
+          "$ref": "#/$defs/id_component",
+          "description": "Provenance anchor: the identifier of the origin object inside the source."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable display text. Deliberately not identifier-constrained."
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge_id", "from", "to", "relation_type", "origin"],
+      "properties": {
+        "edge_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Derived as <project_id>:<source_kind>:<source_id>:<relation_type>:<from source_ref>:<to source_ref>."
+        },
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "relation_type": {
+          "$ref": "#/$defs/id_component",
+          "description": "Syntactically constrained relation token. Deliberately NOT an enum: the canonical relation-type catalog is an open point on Confluence page 08 and is not decided by this contract."
+        },
+        "origin": {
+          "type": "string",
+          "enum": ["explicit"],
+          "description": "Preserves the explicit/inferred distinction required by Confluence page 08. V1 admits explicit relations only; inferred relations are rejected and none are generated."
+        }
+      }
+    }
+  },
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "project_id": { "$ref": "#/$defs/id_component" },
+    "id_scheme": {
+      "type": "string",
+      "const": "projection-local/v1"
+    },
+    "canonical_entity_ids": {
+      "type": "boolean",
+      "const": false,
+      "description": "Machine-visible boundary marker: these identifiers are projection-local and never the final canonical entity identifiers."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_kind", "source_id"],
+      "properties": {
+        "source_kind": {
+          "type": "string",
+          "enum": ["confluence"]
+        },
+        "source_id": {
+          "$ref": "#/$defs/id_component",
+          "description": "For source_kind confluence this is the project's registered root page id."
+        }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/edge" }
+    }
+  }
+}

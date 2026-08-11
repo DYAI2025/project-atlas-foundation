@@ -1,0 +1,43 @@
+{
+  "contract_version": "2.0.0",
+  "project_id": "PLUMBLINE",
+  "id_scheme": "projection-local/v1",
+  "canonical_entity_ids": false,
+  "source": {
+    "source_kind": "confluence",
+    "source_id": "7503873"
+  },
+  "nodes": [
+    {
+      "node_id": "PLUMBLINE:confluence:7503873:900000001",
+      "source_ref": "900000001",
+      "label": "Synthetic root"
+    },
+    {
+      "node_id": "PLUMBLINE:confluence:7503873:900000002",
+      "source_ref": "900000002",
+      "label": "Synthetic child A"
+    },
+    {
+      "node_id": "PLUMBLINE:confluence:7503873:900000003",
+      "source_ref": "900000003",
+      "label": "Synthetic child B"
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "PLUMBLINE:confluence:7503873:parent_of:900000001:900000002",
+      "from": "PLUMBLINE:confluence:7503873:900000001",
+      "to": "PLUMBLINE:confluence:7503873:900000002",
+      "relation_type": "parent_of",
+      "origin": "explicit"
+    },
+    {
+      "edge_id": "PLUMBLINE:confluence:7503873:parent_of:900000001:900000003",
+      "from": "PLUMBLINE:confluence:7503873:900000001",
+      "to": "PLUMBLINE:confluence:7503873:900000003",
+      "relation_type": "parent_of",
+      "origin": "explicit"
+    }
+  ]
+}
