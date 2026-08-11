@@ -29,6 +29,14 @@ const REQUIRED_FILES = [
   'architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md',
   'architecture/approval-boundary.md',
   'config/project-registry.json',
+  // ATLAS-22 Slice 2: the published gbrain-read contract is a first-class repository
+  // artifact, so its absence must be a repository finding. Deliberately existence
+  // only — schema correctness, identifier semantics, project/source scope, canonical
+  // ordering and graph integrity stay owned by src/gbrain-read-contract/** and
+  // test/gbrain-read-contract.test.mjs and are NOT duplicated here.
+  'contracts/gbrain-read/v1/request.schema.json',
+  'contracts/gbrain-read/v1/response.schema.json',
+  'contracts/gbrain-read/v1/graph-snapshot.schema.json',
   'docs/repository-assessment.md',
   'docs/governance/repository-roles.md',
   'docs/governance/blockers.md',
