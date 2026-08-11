@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:contracts/gbrain-read/v1/response.schema.json",
+  "title": "gbrain-read contract checker response (ATLAS-22, Slice 2)",
+  "description": "Versioned, machine-readable verdict of the contract checker. This is a validation result, not the graph artifact: the graph snapshot is a standalone document and is never embedded, echoed or summarized here. Deterministic: identical input yields byte-identical output regardless of process locale; errors are sorted by path, then code, in UTF-16 code-unit order. Error paths are display strings, not RFC 6901 JSON Pointers (keys are not escaped); request findings are namespaced under /request, snapshot findings under /snapshot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "valid", "project_id", "errors"],
+  "if": {
+    "properties": { "valid": { "const": true } },
+    "required": ["valid"]
+  },
+  "then": {
+    "properties": { "errors": { "maxItems": 0 } }
+  },
+  "else": {
+    "properties": { "errors": { "minItems": 1 } }
+  },
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "valid": { "type": "boolean" },
+    "project_id": {
+      "type": ["string", "null"],
+      "description": "The project resolved through the writer registry, or null when no project was resolved."
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "code", "message"],
+        "properties": {
+          "path": { "type": "string" },
+          "code": {
+            "type": "string",
+            "enum": [
+              "E_CHARSET",
+              "E_CONST",
+              "E_DUPLICATE_EDGE_ID",
+              "E_DUPLICATE_NODE_ID",
+              "E_EDGE_ENDPOINT_UNKNOWN",
+              "E_EMPTY",
+              "E_ENUM",
+              "E_ID_DERIVATION",
+              "E_INTERNAL",
+              "E_INVALID_JSON",
+              "E_MISSING",
+              "E_ORDER",
+              "E_PROJECT_MISMATCH",
+              "E_REGISTRY_AMBIGUOUS",
+              "E_REGISTRY_INVALID",
+              "E_REGISTRY_UNREADABLE",
+              "E_ROOT_TYPE",
+              "E_SOURCE_SCOPE",
+              "E_TYPE",
+              "E_UNKNOWN_FIELD",
+              "E_UNKNOWN_PROJECT",
+              "E_UNREADABLE",
+              "E_USAGE"
+            ]
+          },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

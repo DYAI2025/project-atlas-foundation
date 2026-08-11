@@ -1,0 +1,9 @@
+{
+  "contract_version": "1.0.0",
+  "request_id": "req-gr-001",
+  "project": {
+    "selector_kind": "root_page_id",
+    "selector_value": "7503873"
+  },
+  "operation": "read_graph"
+}

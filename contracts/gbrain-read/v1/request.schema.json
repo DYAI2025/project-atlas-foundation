@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "atlas:contracts/gbrain-read/v1/request.schema.json",
+  "title": "gbrain-read request contract (ATLAS-22, Slice 2)",
+  "description": "Versioned request for the gbrain-read / graph-projection contract checker. Exposes exactly one capability: read_graph. The project is selected by an exact registry selector; title or fuzzy matching is impossible by construction. No read is performed by this contract: it defines the boundary, not a reader.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "request_id", "project", "operation"],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selector_kind", "selector_value"],
+      "description": "Exact project selector. The selector kinds are owned by the writer registry (config/project-registry.json, src/registry/resolve.mjs); an unresolved or ambiguous selector denies.",
+      "properties": {
+        "selector_kind": {
+          "type": "string",
+          "enum": ["project_id", "jira_key", "root_page_id"]
+        },
+        "selector_value": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["read_graph"]
+    }
+  }
+}
