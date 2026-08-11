@@ -11,10 +11,15 @@
     "required": ["valid"]
   },
   "then": {
-    "properties": { "errors": { "maxItems": 0 } }
+    "properties": {
+      "project_id": { "type": "string" },
+      "errors": { "type": "array", "maxItems": 0 }
+    }
   },
   "else": {
-    "properties": { "errors": { "minItems": 1 } }
+    "properties": {
+      "errors": { "type": "array", "minItems": 1 }
+    }
   },
   "properties": {
     "contract_version": {
@@ -24,7 +29,8 @@
     "valid": { "type": "boolean" },
     "project_id": {
       "type": ["string", "null"],
-      "description": "The project resolved through the writer registry, or null when no project was resolved."
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "The project resolved through the writer registry, or null when no project was resolved. A resolved project id is an identifier component and obeys the same charset as every other V1 identifier component; null carries no charset. A valid verdict always names a resolved project, so the valid:true branch additionally forbids null."
     },
     "errors": {
       "type": "array",

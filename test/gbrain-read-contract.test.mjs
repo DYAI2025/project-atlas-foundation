@@ -506,6 +506,45 @@ test('the published response schema rejects both contradictory verdict shapes', 
   )
 })
 
+// PO review finding (2026-08-11): the published response schema accepted
+// {valid:true, project_id:null, errors:[]} — a state the runtime cannot produce
+// (an unresolved project always yields E_UNKNOWN_PROJECT, so a valid verdict always
+// names a resolved project). The published contract was weaker than the executable
+// one; these vectors pin the repaired invariant in both directions.
+test('the published response schema forbids a valid verdict without a resolved project', () => {
+  const response = (overrides) => ({
+    contract_version: '1.0.0',
+    valid: true,
+    project_id: 'PLUMBLINE',
+    errors: [],
+    ...overrides
+  })
+  const anError = [{ path: '/request/project/selector_value', code: 'E_UNKNOWN_PROJECT', message: 'x' }]
+
+  // A: a valid verdict may never carry a null project.
+  assert.equal(validateResponseSchema(response({ project_id: null })), false)
+  // B: a valid verdict naming the resolved project is the only accepted success shape.
+  assert.equal(validateResponseSchema(response()), true)
+  // C: an invalid verdict MAY carry a null project — deny-by-default is exactly this shape.
+  assert.equal(
+    validateResponseSchema(response({ valid: false, project_id: null, errors: anError })),
+    true
+  )
+  // D: an invalid verdict MAY also name a resolved project (scope and structural findings).
+  assert.equal(validateResponseSchema(response({ valid: false, errors: anError })), true)
+  // E: whenever project_id is a string it stays an identifier component, in BOTH branches.
+  assert.equal(validateResponseSchema(response({ project_id: '' })), false)
+  assert.equal(validateResponseSchema(response({ project_id: 'has:separator' })), false)
+  assert.equal(
+    validateResponseSchema(response({ valid: false, project_id: '', errors: anError })),
+    false
+  )
+  assert.equal(
+    validateResponseSchema(response({ valid: false, project_id: 'has:separator', errors: anError })),
+    false
+  )
+})
+
 test('every real CLI output conforms to the published response schema', () => {
   const pairs = [
     ['valid-request.json', 'valid-graph-snapshot.json'],
@@ -588,6 +627,14 @@ test('response schema parity with the implementation', () => {
   })
   assert.equal(responseSchema.then.properties.errors.maxItems, 0)
   assert.equal(responseSchema.else.properties.errors.minItems, 1)
+
+  // The runtime resolves project_id from the writer registry and can only report a
+  // valid verdict for a resolved project, so the published contract must say so too:
+  // string-only in the valid branch, and identifier-constrained wherever it is a string.
+  assert.equal(responseSchema.then.properties.project_id.type, 'string')
+  assert.equal(responseSchema.else.properties.project_id, undefined)
+  assert.deepEqual(responseSchema.properties.project_id.type, ['string', 'null'])
+  assert.equal(responseSchema.properties.project_id.pattern, ID_COMPONENT_PATTERN.source)
   assert.equal(responseSchema.properties.errors.items.additionalProperties, false)
   assert.deepEqual(responseSchema.properties.errors.items.required.toSorted(), [
     'code',
