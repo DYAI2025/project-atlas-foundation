@@ -78,10 +78,16 @@ function main() {
     return technicalFailure(code, error.message ?? 'unexpected internal error')
   }
 
-  // Same principle as above: scope is only meaningful once the snapshot itself is
-  // structurally sound, so a malformed snapshot never manufactures scope findings.
   const snapshotErrors = validateSnapshot(snapshotRead.data)
-  const scopeErrors = snapshotErrors.length === 0 ? validateScope(project, snapshotRead.data) : []
+  // Two different rules, deliberately not collapsed into one:
+  //   - Deny by default (DEC-09) is the single most important signal and must never
+  //     be masked by unrelated structural findings, so an unresolved project is
+  //     always reported regardless of the snapshot's condition.
+  //   - The project/source comparisons only become meaningful once the snapshot is
+  //     structurally sound; running them on a malformed document would manufacture
+  //     derived findings from values that are already known to be invalid.
+  const scopeErrors =
+    project === null || snapshotErrors.length === 0 ? validateScope(project, snapshotRead.data) : []
 
   const response = buildResponse(project?.project_id ?? null, [...snapshotErrors, ...scopeErrors])
   emit(response)

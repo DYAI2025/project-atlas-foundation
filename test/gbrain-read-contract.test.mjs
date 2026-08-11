@@ -608,3 +608,30 @@ test('the ATLAS-12 frozen evidence file has no runtime consumer in this slice', 
     assert.ok(!source.includes('docs/evidence'), `${file} must not read docs/evidence`)
   }
 })
+
+// Adversarial review finding (2026-08-11): the deny-by-default signal must never be
+// masked by unrelated structural findings. Before the fix, an unknown project paired
+// with a structurally invalid snapshot reported only the structural finding, so a
+// consumer inspecting `errors` could not see that the project had been denied at all.
+test('CLI: the denial survives a structurally invalid snapshot and is never masked', () => {
+  const run = runCli([
+    fx('invalid-unknown-project-request.json'),
+    fx('invalid-duplicate-node-snapshot.json')
+  ])
+  assert.equal(run.code, 1)
+  const observed = codes(body(run).errors)
+  assert.ok(
+    observed.includes('/request/project/selector_value:E_UNKNOWN_PROJECT'),
+    `denial missing from ${observed.join(',')}`
+  )
+  assert.ok(observed.includes('/snapshot/nodes/2/node_id:E_DUPLICATE_NODE_ID'), observed.join(','))
+  assert.equal(body(run).project_id, null)
+})
+
+test('CLI: a valid verdict always names the resolved project', () => {
+  const run = runCli([fx('valid-request.json'), fx('valid-graph-snapshot.json')])
+  const response = body(run)
+  assert.equal(response.valid, true)
+  assert.equal(typeof response.project_id, 'string')
+  assert.notEqual(response.project_id, null)
+})
