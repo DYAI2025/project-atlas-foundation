@@ -6,9 +6,18 @@
 %%     reports/release-decision.json is NOT_READY; runtime containers do not exist yet.
 %%   - It is not a container or deployment diagram. Technology and stack choices are
 %%     deliberately absent, including any graph UI stack (approval-boundary.md item 7).
+%% Knowledge governance follows DEC-06 exactly and adds nothing to it:
+%%   - regular coding agents hold read and propose only;
+%%   - an agent-authored knowledge change needs a human decision;
+%%   - the deciding role and the publishing role are technically separate identities;
+%%   - direct agent publication does not exist.
+%% Which person or team is assigned either role is an operational matter, not an
+%% architecture statement, so no delivery role is drawn as the knowledge authority.
 flowchart TB
 
-  PO["Product Owner (human)<br/>approves proposals and authorizes publication"]
+  APPROVER["Human approver, knowledge governance role<br/>decides on agent-authored proposals, a human decision per DEC-06<br/>technically separate identity from the publishing role, never publishes"]
+  PUBLISHER["Publisher, technically separate identity per DEC-06<br/>authorizes publication only for proposals that already carry a human decision<br/>never decides approval itself"]
+  PO["Product Owner (human)<br/>delivery, architecture and release governance<br/>not the knowledge approver and not the publisher"]
   AGENT["Coding agents<br/>read and propose by default, never approve or publish"]
   READER["Knowledge reader<br/>read-side consumer of graph and retrieval results"]
 
@@ -26,7 +35,9 @@ flowchart TB
   LEGACY["DYAI2025/gbrain-atlas<br/>read-only legacy reference artifact, pinned and never modified,<br/>explicitly not an implementation source for this architecture"]
 
   AGENT -->|"submits proposals"| CORE
-  PO -->|"approves, then authorizes publication"| CORE
+  APPROVER -->|"records the human decision on a proposal"| CORE
+  PUBLISHER -->|"releases decided proposals for publication"| CORE
+  PO -->|"governs delivery and architecture of"| CORE
   CONF -->|"approved source revisions with identity and hash"| CORE
   CORE -->|"publishes only human-approved proposals"| CONF
   CORE -->|"idempotent, project-scoped projection"| GBRAIN

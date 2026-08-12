@@ -7,13 +7,20 @@
 //      (exit 1 + VALIDATION FAILED) rather than an uncaught crash.
 //   2. SEMANTICS — durable architecture invariants of the two diagrams: the pilot and
 //      the production target stay distinguishable, GBrain stays a derived projection,
-//      the pilot claims no production controls, no graph UI stack is selected, and the
-//      legacy repository is never an implementation source.
+//      the pilot claims no production controls, no graph UI stack is selected, the
+//      legacy repository is never an implementation source, and the DEC-06 knowledge
+//      governance separation (human approval, separate publisher, agents read+propose)
+//      survives.
 //
-// The semantic assertions are structural (node declarations, subgraph blocks, edge
-// direction) or property-based (a class of labels must/must not carry a marker). They
-// deliberately do not pin arbitrary exact prose, and they do not define a diagram DSL:
-// what is parsed here is ordinary Mermaid flowchart syntax.
+// WHAT THESE TESTS DELIBERATELY DO NOT DO — no diagram DSL.
+// Nothing here is anchored to a Mermaid identifier, to an exact subgraph title, to a
+// node count or to a particular layout/topology. Roles are discovered by what an
+// element SAYS it is: a lane is found by a title that reads as the pilot or as the
+// production target, the control plane is found by the label that names it, the
+// approval and publication authorities are found by the authority they claim. A
+// consistent rename of every structural id in either diagram, or a different but
+// meaning-preserving arrangement of the same elements, must leave this suite green.
+// What is parsed is ordinary Mermaid flowchart syntax and ordinary label text.
 //
 // The validator cases run the real script as a subprocess against a throwaway copy of
 // the working tree, so no test ever mutates the repository itself.
@@ -52,7 +59,7 @@ const FORBIDDEN_UI_STACKS = [
 ]
 
 // ---------------------------------------------------------------------------
-// Mermaid flowchart reading helpers (structure only, no rendering, no new deps)
+// Generic Mermaid flowchart reader (structure only, no rendering, no new deps)
 // ---------------------------------------------------------------------------
 
 function readDiagram(relPath) {
@@ -61,6 +68,7 @@ function readDiagram(relPath) {
 
 const NODE_DECL = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)\[\s*"([\s\S]*?)"\s*\]/gm
 const ARROW = /-(?:\.)?-+>/
+const SUBGRAPH_OPEN = /^subgraph\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[\s*"([\s\S]*?)"\s*\])?/
 
 // Three kinds of element can legitimately mention "gbrain", and they carry different
 // obligations: the pinned legacy repository, the versioned read contract, and the
@@ -68,6 +76,10 @@ const ARROW = /-(?:\.)?-+>/
 const LEGACY_NODE = /gbrain-atlas/i
 const READ_CONTRACT_NODE = /gbrain-read/i
 const CANONICAL_CLAIM = /source of truth|canonical (?:store|write)|system of record|write store/i
+
+// The ATLAS-owned control plane, found by what it calls itself rather than by the
+// identifier or the boundary box it happens to sit in today.
+const CONTROL_PLANE = /atlas core|control plane/i
 
 /** All `ID["label"]` declarations in a diagram (or in one extracted block). */
 function nodes(src) {
@@ -97,32 +109,73 @@ function edges(src) {
   return out
 }
 
-/** The full text of `subgraph <id>[...] ... end`, nesting-aware. */
-function subgraphBlock(src, id) {
+/**
+ * Every `subgraph ... end` block, nesting-aware, as {id, title, block}. A subgraph
+ * without a quoted title falls back to its identifier so callers never crash on one.
+ */
+function subgraphs(src) {
   const lines = src.split('\n')
-  const start = lines.findIndex((l) => new RegExp(`^\\s*subgraph\\s+${id}\\b`).test(l))
-  assert.notEqual(start, -1, `subgraph ${id} is not declared`)
-  let depth = 0
-  for (let i = start; i < lines.length; i++) {
-    const t = lines[i].trim()
-    if (/^subgraph\b/.test(t)) depth++
-    else if (t === 'end') {
-      depth--
-      if (depth === 0) return lines.slice(start, i + 1).join('\n')
+  const open = []
+  const out = []
+  lines.forEach((raw, i) => {
+    const t = raw.trim()
+    if (t.startsWith('%%')) return
+    const m = t.match(SUBGRAPH_OPEN)
+    if (m) {
+      open.push({ id: m[1], title: m[2] ?? m[1], start: i })
+      return
     }
-  }
-  assert.fail(`subgraph ${id} is never closed`)
+    if (t === 'end') {
+      const started = open.pop()
+      assert.ok(started, 'unbalanced `end` without an open subgraph')
+      out.push({
+        id: started.id,
+        title: started.title,
+        block: lines.slice(started.start, i + 1).join('\n')
+      })
+    }
+  })
+  assert.equal(open.length, 0, `unclosed subgraph: ${open.map((s) => s.id).join(',')}`)
+  return out
 }
 
-/** Ids of the elements the context diagram places inside the ATLAS-owned boundary. */
-function controlPlaneIds(ctx) {
-  return [...nodes(subgraphBlock(ctx, 'ATLAS_BOUNDARY')).keys()]
+/** The one subgraph whose TITLE reads like `pattern` — never addressed by identifier. */
+function subgraphTitled(src, pattern, what) {
+  const hits = subgraphs(src).filter((s) => pattern.test(s.title))
+  assert.equal(hits.length, 1, `${what}: expected exactly one subgraph titled like ${pattern}, found ${hits.length}`)
+  return hits[0]
 }
 
-function subgraphTitle(src, id) {
-  const m = src.match(new RegExp(`^\\s*subgraph\\s+${id}\\s*\\[\\s*"([\\s\\S]*?)"\\s*\\]`, 'm'))
-  assert.ok(m, `subgraph ${id} has no quoted title`)
-  return m[1]
+/** Ids of the ATLAS-owned control-plane elements, however many the diagram draws. */
+function controlPlaneIds(src) {
+  const ids = [...nodes(src)].filter(([, label]) => CONTROL_PLANE.test(label)).map(([id]) => id)
+  assert.ok(ids.length > 0, 'no ATLAS control-plane element is declared')
+  return ids
+}
+
+// ---------------------------------------------------------------------------
+// Authority reading — who claims to decide, who claims to publish (DEC-06)
+// ---------------------------------------------------------------------------
+//
+// A label is read clause by clause (`<br/>`-separated, as authors already write them).
+// A clause that negates the authority ("never approve or publish", "not the knowledge
+// approver") is a disclaimer, not a claim. Descriptive nouns are not authority: a store
+// that keeps "approval evidence" or "publication and audit records" holds neither role.
+
+const CLAUSE_SEPARATOR = /<br\s*\/?>|\n/
+const NEGATION = /\b(?:never|not|no|without|neither|nor)\b/i
+const APPROVAL_AUTHORITY = /\bapprov(?:e|es|er)\b/i
+const PUBLICATION_AUTHORITY =
+  /\b(?:publisher|publishes|authoriz(?:e|es)\s+publication|publication\s+authority)\b/i
+
+function claimsAuthority(label, pattern) {
+  return label
+    .split(CLAUSE_SEPARATOR)
+    .some((clause) => pattern.test(clause) && !NEGATION.test(clause))
+}
+
+function nodesClaiming(src, pattern) {
+  return [...nodes(src)].filter(([, label]) => claimsAuthority(label, pattern))
 }
 
 // ---------------------------------------------------------------------------
@@ -306,19 +359,16 @@ test('malformed diagram_paths declarations fail closed without an unhandled cras
 })
 
 // ---------------------------------------------------------------------------
-// 4) - 8) Architecture semantics
+// 4) Architecture semantics
 // ---------------------------------------------------------------------------
 
 test('both diagrams are well-formed flowcharts with balanced blocks and declared edge ends', () => {
   for (const rel of decision.diagram_paths) {
     const src = readDiagram(rel)
     assert.match(src, /^flowchart\s+\w+/m, `${rel}: no flowchart directive`)
-    const opens = (src.match(/^\s*subgraph\b/gm) ?? []).length
-    const closes = (src.match(/^\s*end\s*$/gm) ?? []).length
-    assert.equal(opens, closes, `${rel}: ${opens} subgraph vs ${closes} end`)
     const declared = nodes(src)
-    const subgraphIds = [...src.matchAll(/^\s*subgraph\s+([A-Za-z_][A-Za-z0-9_]*)/gm)].map((m) => m[1])
-    const known = new Set([...declared.keys(), ...subgraphIds])
+    const blocks = subgraphs(src) // throws on any unbalanced subgraph/end
+    const known = new Set([...declared.keys(), ...blocks.map((b) => b.id)])
     assert.ok(declared.size > 0, `${rel}: no nodes declared`)
     for (const [from, to] of edges(src)) {
       assert.ok(known.has(from), `${rel}: edge from undeclared id ${from}`)
@@ -329,42 +379,34 @@ test('both diagrams are well-formed flowcharts with balanced blocks and declared
 
 test('the container diagram keeps the local pilot and the production target distinguishable', () => {
   const src = readDiagram(CONTAINER_PATH)
-  const pilotTitle = subgraphTitle(src, 'LANE_A')
-  const targetTitle = subgraphTitle(src, 'LANE_B')
-
-  assert.match(pilotTitle, /pilot/i, 'lane A must be titled as the pilot lane')
-  assert.match(targetTitle, /production target/i, 'lane B must be titled as the production target')
+  const pilot = subgraphTitled(src, /pilot/i, 'pilot lane')
+  const target = subgraphTitled(src, /production target/i, 'production-target lane')
+  assert.notEqual(pilot.id, target.id, 'pilot and production target must be two lanes')
 
   // Both lanes are target state; neither may read as an existing deployment.
-  assert.match(pilotTitle, /not implemented/i)
-  assert.match(targetTitle, /not implemented/i)
+  assert.match(pilot.title, /not implemented/i)
+  assert.match(target.title, /not implemented/i)
 
-  const pilotIds = [...nodes(subgraphBlock(src, 'LANE_A')).keys()]
-  const targetIds = [...nodes(subgraphBlock(src, 'LANE_B')).keys()]
+  const pilotIds = [...nodes(pilot.block).keys()]
+  const targetIds = [...nodes(target.block).keys()]
   assert.ok(pilotIds.length > 0, 'pilot lane has no containers')
   assert.ok(targetIds.length > 0, 'production-target lane has no containers')
   const overlap = pilotIds.filter((id) => targetIds.includes(id))
   assert.deepEqual(overlap, [], `lanes must not share containers: ${overlap.join(',')}`)
 })
 
-test('the pilot lane runs through real local persistence and the read contract to a viewer', () => {
-  const src = readDiagram(CONTAINER_PATH)
-  const block = subgraphBlock(src, 'LANE_A')
-  const labels = [...nodes(block).values()].join('\n')
+test('the pilot lane is local, goes through the read contract and ends at a viewer', () => {
+  const labels = [...nodes(subgraphTitled(readDiagram(CONTAINER_PATH), /pilot/i, 'pilot lane').block).values()].join('\n')
   assert.match(labels, /local/i, 'pilot must be explicitly local')
   assert.match(labels, /gbrain-read\/v1/i, 'pilot must go through the gbrain-read/v1 contract')
   assert.match(labels, /projection-local\/v1/i, 'pilot identifiers stay projection-local')
   assert.match(labels, /browser/i, 'pilot ends at a browser viewer')
-  // The lane is a chain: every pilot container is connected to another pilot container.
-  const ids = [...nodes(block).keys()]
-  const laneEdges = edges(block).filter(([f, t]) => ids.includes(f) && ids.includes(t))
-  assert.ok(laneEdges.length >= ids.length - 1, 'pilot containers must form a connected flow')
 })
 
 test('GBrain is represented as a derived projection, never as the canonical store', () => {
-  let projectionNodes = 0
   for (const rel of decision.diagram_paths) {
     const src = readDiagram(rel)
+    let projections = 0
     for (const [id, label] of nodes(src)) {
       if (!/gbrain/i.test(label)) continue
       if (LEGACY_NODE.test(label)) continue // legacy artifact, covered by its own test
@@ -374,11 +416,11 @@ test('GBrain is represented as a derived projection, never as the canonical stor
         assert.match(label, /read-only|read contract/i, `${rel}: ${id} must stay a read-only contract`)
         continue
       }
-      projectionNodes++
+      projections++
       assert.match(label, /derived|projection/i, `${rel}: ${id} must be marked derived/projection`)
     }
+    assert.ok(projections >= 1, `${rel}: GBrain must be shown as a derived projection`)
   }
-  assert.ok(projectionNodes >= 2, 'both diagrams must show GBrain as a projection')
 
   // Exactly one element in the context diagram carries the source-of-truth role, and it
   // is Confluence — not GBrain.
@@ -388,10 +430,8 @@ test('GBrain is represented as a derived projection, never as the canonical stor
   assert.match(sourceOfTruth[0][1], /confluence/i)
 
   // Direction is the real invariant: the control plane projects into GBrain, and GBrain
-  // never writes back into it.
+  // never writes back into it. How many boxes either side is drawn as is not.
   const coreIds = controlPlaneIds(ctx)
-  assert.equal(coreIds.length, 1, 'the ATLAS boundary must hold exactly one control-plane element')
-  const core = coreIds[0]
   const gbrainIds = [...nodes(ctx)]
     .filter(
       ([, label]) =>
@@ -402,11 +442,11 @@ test('GBrain is represented as a derived projection, never as the canonical stor
   const ctxEdges = edges(ctx)
   for (const g of gbrainIds) {
     assert.ok(
-      ctxEdges.some(([f, t]) => f === core && t === g),
+      ctxEdges.some(([f, t]) => coreIds.includes(f) && t === g),
       `the control plane must project into ${g}`
     )
     assert.ok(
-      !ctxEdges.some(([f, t]) => f === g && t === core),
+      !ctxEdges.some(([f, t]) => f === g && coreIds.includes(t)),
       `${g} must never write into the control plane`
     )
   }
@@ -414,8 +454,8 @@ test('GBrain is represented as a derived projection, never as the canonical stor
 
 test('the pilot lane claims no production isolation, publisher or deployment controls', () => {
   const src = readDiagram(CONTAINER_PATH)
-  const pilot = subgraphBlock(src, 'LANE_A')
-  const target = subgraphBlock(src, 'LANE_B')
+  const pilot = subgraphTitled(src, /pilot/i, 'pilot lane').block
+  const target = subgraphTitled(src, /production target/i, 'production-target lane').block
 
   for (const claim of [/postgres/i, /\brls\b/i, /publish/i, /\bvps\b/i]) {
     assert.doesNotMatch(pilot, claim, `pilot lane must not claim ${claim}`)
@@ -439,25 +479,87 @@ test('no Premium Graph UI stack is selected or implied by either diagram', () =>
   }
 })
 
+// ---------------------------------------------------------------------------
+// 5) DEC-06 knowledge governance
+// ---------------------------------------------------------------------------
+
+test('the knowledge approval decision and the publication authority stay separate roles', () => {
+  // DEC-06: an agent-authored knowledge change needs a HUMAN decision, and the
+  // approving identity and the publishing identity are technically separated. Which
+  // organisational person holds either is not an architecture statement — so the test
+  // asks who CLAIMS the authority, not who is named.
+  const ctx = readDiagram(CONTEXT_PATH)
+  const approvers = nodesClaiming(ctx, APPROVAL_AUTHORITY)
+  const publishers = nodesClaiming(ctx, PUBLICATION_AUTHORITY)
+
+  assert.ok(approvers.length > 0, 'no element holds the knowledge approval decision')
+  assert.ok(publishers.length > 0, 'no element holds the publication responsibility')
+
+  const publisherIds = new Set(publishers.map(([id]) => id))
+  const collapsed = approvers.map(([id]) => id).filter((id) => publisherIds.has(id))
+  assert.deepEqual(
+    collapsed,
+    [],
+    `approval and publication must not collapse into one role: ${collapsed.join(',')}`
+  )
+
+  assert.ok(
+    approvers.some(([, label]) => /human/i.test(label)),
+    'the approval decision must be marked as a human decision (DEC-06)'
+  )
+})
+
+test('delivery-governance roles are not declared as the knowledge approver or publisher', () => {
+  // The Product Owner may appear for delivery, architecture and release governance.
+  // DEC-06 does not make that role the canonical knowledge approver or publisher, so
+  // the diagram must not invent it. Vacuous if no such role is drawn at all.
+  const ctx = readDiagram(CONTEXT_PATH)
+  const delivery = [...nodes(ctx)].filter(([, label]) => /product owner/i.test(label))
+  for (const [id, label] of delivery) {
+    assert.ok(
+      !claimsAuthority(label, APPROVAL_AUTHORITY),
+      `${id} must not be declared the knowledge approver`
+    )
+    assert.ok(
+      !claimsAuthority(label, PUBLICATION_AUTHORITY),
+      `${id} must not be declared the publication authority`
+    )
+  }
+})
+
 test('the context diagram preserves the approval-boundary write paths', () => {
-  // approval-boundary.md item 3: no direct agent publish. Agents reach Confluence only
-  // through the control plane and a human approval, never with an edge of their own.
+  // approval-boundary.md item 3 / DEC-06: no direct agent publish. Agents keep
+  // read+propose, reach Confluence only through the control plane and a human decision,
+  // and never carry an approval or publication authority of their own.
   // approval-boundary.md item 2: Obsidian is a read-only projection in V1, so it never
   // writes back into Confluence or into the control plane.
   const ctx = readDiagram(CONTEXT_PATH)
   const idsWhere = (pattern) =>
     [...nodes(ctx)].filter(([, label]) => pattern.test(label)).map(([id]) => id)
 
-  const agents = idsWhere(/coding agents/i)
+  const agentNodes = [...nodes(ctx)].filter(([, label]) => /coding agents/i.test(label))
   const confluence = idsWhere(/confluence/i)
   const obsidian = idsWhere(/obsidian/i)
   const core = controlPlaneIds(ctx)
-  assert.ok(agents.length > 0, 'the context diagram must show coding agents')
+  assert.ok(agentNodes.length > 0, 'the context diagram must show coding agents')
   assert.ok(confluence.length > 0, 'the context diagram must show Confluence')
   assert.ok(obsidian.length > 0, 'the context diagram must show Obsidian')
 
+  for (const [id, label] of agentNodes) {
+    assert.match(label, /read/i, `${id} must keep the read capability`)
+    assert.match(label, /propose/i, `${id} must keep the propose capability`)
+    assert.ok(
+      !claimsAuthority(label, APPROVAL_AUTHORITY),
+      `${id} must never hold approval authority (DEC-06)`
+    )
+    assert.ok(
+      !claimsAuthority(label, PUBLICATION_AUTHORITY),
+      `${id} must never publish canonical knowledge (DEC-06)`
+    )
+  }
+
   const ctxEdges = edges(ctx)
-  for (const agent of agents) {
+  for (const [agent] of agentNodes) {
     for (const target of confluence) {
       assert.ok(
         !ctxEdges.some(([f, t]) => f === agent && t === target),
