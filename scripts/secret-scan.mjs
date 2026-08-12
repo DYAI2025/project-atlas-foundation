@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
-  mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync
+  mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, realpathSync
 } from 'node:fs'
 import { tmpdir, devNull } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
@@ -288,7 +288,18 @@ async function main() {
   console.log('SECRET-SCAN PASSED')
 }
 
-const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+// Node realpaths the main entry (import.meta.url), so a symlinked invocation path
+// (e.g. macOS /var -> /private/var) must be realpathed too — otherwise the guard
+// mismatches, main() never runs, and the gate would fail OPEN with exit 0.
+function isMainEntry() {
+  if (!process.argv[1]) return false
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+const isDirectRun = isMainEntry()
 if (isDirectRun) {
   main().catch(e => {
     if (e instanceof GateFailure) {
