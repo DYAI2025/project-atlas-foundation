@@ -1,0 +1,45 @@
+%% C4 Level 2 — Container view, Project ATLAS
+%% Declared by architecture-decision.json (AD-001) as diagram_paths[1].
+%% Authoritative reasoning: architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md
+%%
+%% STATUS OF THIS DIAGRAM — read before citing it as evidence:
+%%   Both lanes below are TARGET STATE. Neither lane asserts that its containers exist.
+%%   This repository currently contains contracts, gates, validators and evidence only
+%%   (reports/release-decision.json: NOT_READY; AD-001 status: conditional).
+%%
+%% The two lanes are deliberately separate and must not be read as one pipeline:
+%%   Lane A is a bounded local pilot slice that may use real content and real local
+%%   persistence, and claims no production isolation, publisher or deployment controls.
+%%   Lane B is the later production target, where those controls are the whole point.
+%%   Lane A produces evidence for Lane B. It never substitutes for it, and passing
+%%   Lane A never discharges a Lane B release gate.
+%%
+%% No graph UI stack is selected at this level (approval-boundary.md item 7); the
+%% read-side containers are stack-neutral.
+flowchart TB
+
+  subgraph LANE_A["Lane A — Sprint-2 local pilot (target slice, not implemented)"]
+    direction TB
+    A_SRC["Approved ATLAS source revision<br/>real content, bounded and explicitly selected"]
+    A_IMPORT["Bounded project-scoped import and projection step<br/>single project scope, idempotent, rebuildable from source"]
+    A_STORE["Local pinned GBrain persistence<br/>developer machine only, real local derived data,<br/>projection-local/v1 identifiers, discardable and rebuildable"]
+    A_READ["gbrain-read/v1 read contract<br/>contracts/gbrain-read/v1, read-only and fail-closed"]
+    A_VIEW["Local browser viewer<br/>read-side consumer, stack-neutral at this level"]
+    A_SRC --> A_IMPORT --> A_STORE --> A_READ --> A_VIEW
+  end
+
+  subgraph LANE_B["Lane B — later production target (target state, not implemented)"]
+    direction TB
+    subgraph B_DEPLOY["VPS deployment boundary (conditional on the ATLAS-16 audit)"]
+      direction TB
+      B_CORE["ATLAS-owned canonical control plane<br/>project registry, source-revision identity,<br/>proposals, approval evidence, audit, checkpoints"]
+      B_ISO["Isolation and authorization controls<br/>project_id on canonical data, PostgreSQL RLS,<br/>separate service roles, separate approver and publisher identities"]
+      B_PROJ["Derived GBrain projection<br/>rebuilt idempotently from approved revisions,<br/>with checkpoints, projection lag and reconciliation"]
+      B_CORE --> B_ISO
+      B_ISO --> B_PROJ
+    end
+    B_CONS["Read consumers: graph UI, MCP, search<br/>read-only, stack-neutral at this level"]
+    B_PROJ --> B_CONS
+  end
+
+  A_VIEW -.->|"pilot evidence informs the target, never authorizes it"| B_CORE
