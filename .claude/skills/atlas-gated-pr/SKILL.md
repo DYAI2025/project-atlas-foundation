@@ -29,7 +29,8 @@ time. Any material deviation is a hard STOP (report, don't improvise).
 6. **Review:** spec-compliance review of the diff against the task (fresh reviewer, read-only).
 7. **Commit + push + PR** (merge commits only, no squash/rebase; PR body: purpose, slice
    boundary, changes, evidence, out-of-scope, remaining gates).
-8. **CI on the exact head:** wait for workflow `ci`, job/context `check`, `success` with
+8. **CI on the exact head:** wait for BOTH contexts `check` (workflow `ci`) AND
+   `secret-scan` (workflow `secret-scan`), each `success` with
    `head_sha` equal to the PR head (`~/.claude/scripts/gh-ci-wait <owner/repo> <sha>` —
    exit 0 required). Never rerun/dispatch manually to force green.
 9. **Adversarial review** (multi-lens, e.g. saved workflow `adversarial-review` with
@@ -52,7 +53,8 @@ time. Any material deviation is a hard STOP (report, don't improvise).
     gate-verified artifact actually shows.
 12. **Merge commit** (`gh pr merge --merge`), then **read-after-write:** PR state MERGED,
     merge-commit SHA captured, local `main` fast-forwarded to it.
-13. **Main-CI verify:** `check` success on the merge commit (gh-ci-wait exit 0).
+13. **Main-CI verify:** BOTH `check` AND `secret-scan` success on the merge commit
+    (gh-ci-wait exit 0).
 14. **External evidence with read-after-write:** Jira comment (branch, commit, merge commit,
     files, local + fresh-checkout + CI run IDs, explicitly remaining gates) and, where
     ordered, Confluence updates — each mutation read back immediately. Compose → re-read →

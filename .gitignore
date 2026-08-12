@@ -7,3 +7,4 @@ sbom.cdx.json
 !.claude/skills/
 .claude-flow/
 scratch/
+.cache/

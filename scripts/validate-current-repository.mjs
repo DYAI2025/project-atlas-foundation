@@ -51,7 +51,11 @@ const REQUIRED_FILES = [
   '.github/workflows/ci.yml',
   '.claude/skills/atlas-gated-pr/SKILL.md',
   'scripts/g2-authorization-gate.mjs',
-  'test/g2-authorization-gate.test.mjs'
+  'test/g2-authorization-gate.test.mjs',
+  'security/secret-scan.pin.json',
+  'scripts/secret-scan.mjs',
+  'test/secret-scan.test.mjs',
+  '.github/workflows/secret-scan.yml'
 ]
 
 for (const f of REQUIRED_FILES) {
@@ -321,6 +325,68 @@ check(
   JSON.stringify(registryProjectIds) === JSON.stringify(['ATLAS', 'EASYTREE', 'PLUMBLINE']),
   `found: ${registryProjectIds.join(',') || 'none'}`
 )
+
+// 14) ATLAS-23 SECRET_SCAN_ONLY: the secret-scan gate is a mandatory repository
+//     artifact. Presence + binding checks only — scan correctness is owned by the
+//     gate's runtime self-test and test/secret-scan.test.mjs, not duplicated here.
+let pin = null
+let pinReadError = ''
+try {
+  pin = JSON.parse(await readFile('security/secret-scan.pin.json', 'utf8'))
+} catch (error) {
+  pinReadError = error.message
+}
+check(
+  'secret-scan pin: parses as a JSON object',
+  pin !== null && typeof pin === 'object' && !Array.isArray(pin),
+  pinReadError || 'pin root must be a JSON object'
+)
+check(
+  'secret-scan pin: role marker',
+  pin?.role === 'CI SECURITY TOOL — NOT PRODUCT RUNTIME UPSTREAM'
+)
+check(
+  'secret-scan pin: version 8.30.1',
+  pin?.version === '8.30.1' && pin?.expectedVersionOutput === '8.30.1'
+)
+check(
+  'secret-scan pin: full-history log-opts',
+  pin?.logOpts === '--all --full-history --root -m'
+)
+check(
+  'secret-scan pin: linux digest shape',
+  /^[0-9a-f]{64}$/.test(pin?.assets?.['linux-x64']?.sha256 ?? '')
+)
+check(
+  'secret-scan pin: darwin digest shape',
+  /^[0-9a-f]{64}$/.test(pin?.assets?.['darwin-arm64']?.sha256 ?? '')
+)
+const wf = await readFile('.github/workflows/secret-scan.yml', 'utf8')
+check('secret-scan workflow: job id secret-scan', /^\s{2}secret-scan:/m.test(wf))
+check('secret-scan workflow: full-history checkout', wf.includes('fetch-depth: 0'))
+check(
+  'secret-scan workflow: contents read only',
+  wf.includes('permissions:\n  contents: read')
+)
+const wrapper = await readFile('scripts/secret-scan.mjs', 'utf8')
+check(
+  'secret-scan wrapper: pinned traversal',
+  wrapper.includes('--all --full-history --root -m') || wrapper.includes('pin.logOpts')
+)
+check(
+  'secret-scan wrapper: self-test stage present',
+  wrapper.includes('SELF-TEST PASSED')
+)
+const pkg = JSON.parse(await readFile('package.json', 'utf8'))
+check(
+  'package.json: secret-scan script',
+  pkg.scripts?.['secret-scan'] === 'node scripts/secret-scan.mjs'
+)
+check(
+  'pr-rules: secret-scan named as required context',
+  prRules.includes('`secret-scan`')
+)
+check('atlas-gated-pr skill: waits for secret-scan context', skill.includes('secret-scan'))
 
 if (failures.length > 0) {
   console.error('VALIDATION FAILED')

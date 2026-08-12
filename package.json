@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "npm test && node scripts/validate-current-repository.mjs"
+    "check": "npm test && node scripts/validate-current-repository.mjs",
+    "secret-scan": "node scripts/secret-scan.mjs"
   },
   "devDependencies": {
     "ajv": "8.20.0"
