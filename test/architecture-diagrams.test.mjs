@@ -114,6 +114,11 @@ function subgraphBlock(src, id) {
   assert.fail(`subgraph ${id} is never closed`)
 }
 
+/** Ids of the elements the context diagram places inside the ATLAS-owned boundary. */
+function controlPlaneIds(ctx) {
+  return [...nodes(subgraphBlock(ctx, 'ATLAS_BOUNDARY')).keys()]
+}
+
 function subgraphTitle(src, id) {
   const m = src.match(new RegExp(`^\\s*subgraph\\s+${id}\\s*\\[\\s*"([\\s\\S]*?)"\\s*\\]`, 'm'))
   assert.ok(m, `subgraph ${id} has no quoted title`)
@@ -140,7 +145,13 @@ function makeFixtureRepo() {
   assert.ok(listed.length > 0, 'fixture source file list must not be empty')
   for (const rel of listed) {
     const src = path.join(REPO, rel)
-    if (!statSync(src).isFile()) continue
+    let info
+    try {
+      info = statSync(src)
+    } catch {
+      continue // listed but unreadable, e.g. a dangling symlink in a dirty worktree
+    }
+    if (!info.isFile()) continue
     const dest = path.join(dir, rel)
     mkdirSync(path.dirname(dest), { recursive: true })
     cpSync(src, dest)
@@ -202,14 +213,20 @@ test('architecture-decision.json declares diagram_paths that all resolve to file
   }
 })
 
-test('the declared set covers exactly one context and one container diagram', () => {
-  // Parity is about the declaration, not about hard-coded filenames: the two roles are
-  // identified by role keyword, so a rename stays legal as long as both roles survive.
+test('the declared set covers both the context and the container role', () => {
+  // Parity is about the declaration, not about hard-coded filenames: the roles are
+  // identified by keyword, so a rename stays legal. Declaring a further diagram later
+  // (component, deployment) must not fail this test — only losing a role may.
   const declared = decision.diagram_paths
   const context = declared.filter((p) => /context/i.test(p))
   const container = declared.filter((p) => /container/i.test(p))
-  assert.equal(context.length, 1, `expected exactly one context diagram, got ${context.length}`)
-  assert.equal(container.length, 1, `expected exactly one container diagram, got ${container.length}`)
+  assert.ok(context.length >= 1, 'no context diagram is declared')
+  assert.ok(container.length >= 1, 'no container diagram is declared')
+  assert.notEqual(
+    context[0],
+    container[0],
+    'context and container must be two separate documents'
+  )
 })
 
 const CONTEXT_PATH = decision.diagram_paths.find((p) => /context/i.test(p))
@@ -372,7 +389,7 @@ test('GBrain is represented as a derived projection, never as the canonical stor
 
   // Direction is the real invariant: the control plane projects into GBrain, and GBrain
   // never writes back into it.
-  const coreIds = [...nodes(subgraphBlock(ctx, 'ATLAS_BOUNDARY')).keys()]
+  const coreIds = controlPlaneIds(ctx)
   assert.equal(coreIds.length, 1, 'the ATLAS boundary must hold exactly one control-plane element')
   const core = coreIds[0]
   const gbrainIds = [...nodes(ctx)]
@@ -420,6 +437,42 @@ test('no Premium Graph UI stack is selected or implied by either diagram', () =>
     // The read side is named, but only as a stack-neutral role.
     assert.match(src, /stack-neutral|read consumer|read-side|viewer/i, `${rel}: read side unnamed`)
   }
+})
+
+test('the context diagram preserves the approval-boundary write paths', () => {
+  // approval-boundary.md item 3: no direct agent publish. Agents reach Confluence only
+  // through the control plane and a human approval, never with an edge of their own.
+  // approval-boundary.md item 2: Obsidian is a read-only projection in V1, so it never
+  // writes back into Confluence or into the control plane.
+  const ctx = readDiagram(CONTEXT_PATH)
+  const idsWhere = (pattern) =>
+    [...nodes(ctx)].filter(([, label]) => pattern.test(label)).map(([id]) => id)
+
+  const agents = idsWhere(/coding agents/i)
+  const confluence = idsWhere(/confluence/i)
+  const obsidian = idsWhere(/obsidian/i)
+  const core = controlPlaneIds(ctx)
+  assert.ok(agents.length > 0, 'the context diagram must show coding agents')
+  assert.ok(confluence.length > 0, 'the context diagram must show Confluence')
+  assert.ok(obsidian.length > 0, 'the context diagram must show Obsidian')
+
+  const ctxEdges = edges(ctx)
+  for (const agent of agents) {
+    for (const target of confluence) {
+      assert.ok(
+        !ctxEdges.some(([f, t]) => f === agent && t === target),
+        `${agent} must not write into ${target} directly (approval boundary item 3)`
+      )
+    }
+  }
+  const obsidianWrites = ctxEdges.filter(
+    ([f, t]) => obsidian.includes(f) && (confluence.includes(t) || core.includes(t))
+  )
+  assert.deepEqual(
+    obsidianWrites,
+    [],
+    `Obsidian must stay read-only (approval boundary item 2): ${JSON.stringify(obsidianWrites)}`
+  )
 })
 
 test('the legacy gbrain-atlas repository is never an implementation source', () => {
