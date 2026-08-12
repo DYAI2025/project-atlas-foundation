@@ -6,7 +6,8 @@
 - Kein Self-Merge ohne dokumentierte Owner-Ausnahme (Solo-Owner-Situation:
   Owner-Merge nach Review-Evidenz zulässig, `enforce_admins` wäre false —
   Owner-Entscheidung G2 vom 2026-08-06).
-- Required CI-Checks ab ATLAS-23: `check`, `secret-scan`, `vuln-scan`.
+- Required CI-Checks ab ATLAS-23: `check`, `secret-scan` (beide aktiv seit
+  ATLAS-23 Secret-Scan-Slice), `vuln-scan` (ausstehend, künftiger ATLAS-23-Scope).
 - Commit-Konvention: `feat|docs|ci|test|chore(ATLAS-XX): Beschreibung`.
 
 **Erzwingungsstatus:** Diese Regeln sind derzeit disziplinarische Policy ohne
