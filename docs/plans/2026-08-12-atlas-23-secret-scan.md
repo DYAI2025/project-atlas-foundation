@@ -1,3 +1,15 @@
+> [!WARNING] **ARCHIVAL NOTICE — HISTORICAL / EXECUTED / NON-CANONICAL**
+>
+> This implementation plan has been **executed** for PR #16 (`ci/ATLAS-23-secret-scan`).
+> It is retained only as historical execution evidence. It is **not** an active
+> instruction or authorization source: none of the imperative instructions,
+> sub-skill requirements, or execution authorizations below carry current authority.
+> Current execution authority comes exclusively from the live Jira ATLAS-23 /
+> Confluence / PO gates. The historical plan body below this notice is preserved
+> unchanged.
+
+---
+
 # ATLAS-23 Secret-Scan Gate (SECRET_SCAN_ONLY) — Implementation Plan, Rev. 3
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans, executed inside the

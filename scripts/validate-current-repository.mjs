@@ -329,26 +329,37 @@ check(
 // 14) ATLAS-23 SECRET_SCAN_ONLY: the secret-scan gate is a mandatory repository
 //     artifact. Presence + binding checks only — scan correctness is owned by the
 //     gate's runtime self-test and test/secret-scan.test.mjs, not duplicated here.
-const pin = JSON.parse(await readFile('security/secret-scan.pin.json', 'utf8'))
+let pin = null
+let pinReadError = ''
+try {
+  pin = JSON.parse(await readFile('security/secret-scan.pin.json', 'utf8'))
+} catch (error) {
+  pinReadError = error.message
+}
+check(
+  'secret-scan pin: parses as a JSON object',
+  pin !== null && typeof pin === 'object' && !Array.isArray(pin),
+  pinReadError || 'pin root must be a JSON object'
+)
 check(
   'secret-scan pin: role marker',
-  pin.role === 'CI SECURITY TOOL — NOT PRODUCT RUNTIME UPSTREAM'
+  pin?.role === 'CI SECURITY TOOL — NOT PRODUCT RUNTIME UPSTREAM'
 )
 check(
   'secret-scan pin: version 8.30.1',
-  pin.version === '8.30.1' && pin.expectedVersionOutput === '8.30.1'
+  pin?.version === '8.30.1' && pin?.expectedVersionOutput === '8.30.1'
 )
 check(
   'secret-scan pin: full-history log-opts',
-  pin.logOpts === '--all --full-history --root -m'
+  pin?.logOpts === '--all --full-history --root -m'
 )
 check(
   'secret-scan pin: linux digest shape',
-  /^[0-9a-f]{64}$/.test(pin.assets?.['linux-x64']?.sha256 ?? '')
+  /^[0-9a-f]{64}$/.test(pin?.assets?.['linux-x64']?.sha256 ?? '')
 )
 check(
   'secret-scan pin: darwin digest shape',
-  /^[0-9a-f]{64}$/.test(pin.assets?.['darwin-arm64']?.sha256 ?? '')
+  /^[0-9a-f]{64}$/.test(pin?.assets?.['darwin-arm64']?.sha256 ?? '')
 )
 const wf = await readFile('.github/workflows/secret-scan.yml', 'utf8')
 check('secret-scan workflow: job id secret-scan', /^\s{2}secret-scan:/m.test(wf))
