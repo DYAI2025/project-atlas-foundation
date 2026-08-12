@@ -1,0 +1,38 @@
+%% C4 Level 1 — System Context, Project ATLAS
+%% Declared by architecture-decision.json (AD-001) as diagram_paths[0].
+%% Authoritative reasoning: architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md
+%% Scope limits: this is the APPROVED ARCHITECTURE BOUNDARY at context granularity.
+%%   - It is not an implementation-status claim. AD-001 is "conditional" and
+%%     reports/release-decision.json is NOT_READY; runtime containers do not exist yet.
+%%   - It is not a container or deployment diagram. Technology and stack choices are
+%%     deliberately absent, including any graph UI stack (approval-boundary.md item 7).
+flowchart TB
+
+  PO["Product Owner (human)<br/>approves proposals and authorizes publication"]
+  AGENT["Coding agents<br/>read and propose by default, never approve or publish"]
+  READER["Knowledge reader<br/>read-side consumer of graph and retrieval results"]
+
+  CONF["Confluence, space PRODUKTMAN<br/>fachliche source of truth for approved knowledge"]
+  JIRA["Jira, ATLAS board<br/>delivery governance: tickets, gates, decision records"]
+  GH["GitHub DYAI2025/project-atlas-foundation<br/>delivery governance: code, CI gates, evidence"]
+
+  subgraph ATLAS_BOUNDARY["ATLAS governance and control-plane boundary (ATLAS-owned)"]
+    CORE["ATLAS Core<br/>project registry, source-revision identity and hashes,<br/>classifications, proposals, approval evidence,<br/>publication and audit records, projection checkpoints"]
+  end
+
+  GBRAIN["GBrain, pinned snapshot<br/>derived retrieval and graph projection,<br/>rebuilt idempotently from approved source revisions"]
+  OBS["Obsidian<br/>read-only, reconstructable projection in V1"]
+
+  LEGACY["DYAI2025/gbrain-atlas<br/>read-only legacy reference artifact, pinned and never modified,<br/>explicitly not an implementation source for this architecture"]
+
+  AGENT -->|"submits proposals"| CORE
+  PO -->|"approves, then authorizes publication"| CORE
+  CONF -->|"approved source revisions with identity and hash"| CORE
+  CORE -->|"publishes only human-approved proposals"| CONF
+  CORE -->|"idempotent, project-scoped projection"| GBRAIN
+  CORE -->|"read-only projection"| OBS
+  GBRAIN -->|"retrieval and graph reads"| READER
+  GBRAIN -->|"retrieval and graph reads"| AGENT
+  OBS -->|"reads"| READER
+  JIRA -->|"governs delivery of"| CORE
+  GH -->|"governs delivery of"| CORE

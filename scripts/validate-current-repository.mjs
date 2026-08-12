@@ -1,7 +1,7 @@
 // Current-state consistency validation for DYAI2025/project-atlas-foundation.
 // Zero dependencies; run with: node scripts/validate-current-repository.mjs
 // Exit 0 + "VALIDATION PASSED" when consistent, exit 1 with findings otherwise.
-import { readFile, access } from 'node:fs/promises'
+import { readFile, access, stat } from 'node:fs/promises'
 
 const failures = []
 const ok = []
@@ -10,6 +10,16 @@ async function exists(path) {
   try {
     await access(path)
     return true
+  } catch {
+    return false
+  }
+}
+
+// Stricter than exists(): a directory carrying the declared name must not satisfy a
+// declared file reference. Guarded like exists(), so an unreadable path is a finding.
+async function isFile(path) {
+  try {
+    return (await stat(path)).isFile()
   } catch {
     return false
   }
@@ -387,6 +397,61 @@ check(
   prRules.includes('`secret-scan`')
 )
 check('atlas-gated-pr skill: waits for secret-scan context', skill.includes('secret-scan'))
+
+// 15) ATLAS-14 ARCH_DOC_PARITY: architecture-decision.json declares its architecture
+//     diagrams in `diagram_paths`. A declared-but-absent diagram makes the approved
+//     architecture record internally inconsistent and unreviewable, so every declared
+//     path is dereferenced here instead of being taken on faith.
+//     Deliberately generic: the check reads whatever the decision declares rather than
+//     re-listing the current filenames in REQUIRED_FILES, so renaming or adding a
+//     diagram cannot silently bypass the parity gate.
+//     Deliberately parity-only — the architecture SEMANTICS of the diagrams (lane
+//     separation, gbrain-as-derived-projection, no UI stack selection, legacy handling)
+//     stay owned by test/architecture-diagrams.test.mjs and are NOT duplicated here.
+//     The read is guarded so a missing or malformed decision file becomes a validator
+//     finding instead of an uncaught ENOENT/SyntaxError that would skip the
+//     VALIDATION FAILED verdict entirely. Guarding the remaining unguarded reads in this
+//     script is ATLAS-64, not this slice; no existing read is widened here.
+let decision = null
+let decisionReadError = ''
+try {
+  decision = JSON.parse(await readFile('architecture-decision.json', 'utf8'))
+} catch (error) {
+  decisionReadError = error.message
+}
+check(
+  'architecture decision parses as a JSON object',
+  decision !== null && typeof decision === 'object' && !Array.isArray(decision),
+  decisionReadError || 'architecture-decision.json root must be a JSON object'
+)
+const declaredDiagrams = decision?.diagram_paths
+check(
+  'architecture decision declares diagram_paths as a non-empty array',
+  Array.isArray(declaredDiagrams) && declaredDiagrams.length > 0,
+  `found: ${JSON.stringify(declaredDiagrams) ?? 'none'}`
+)
+// Each declared entry is checked in two independent halves so neither can mask the
+// other: first that it is a usable repository-relative reference at all, then that it
+// actually resolves. An unusable entry is a finding in its own right and is never
+// silently downgraded to "nothing to dereference".
+for (const [index, declared] of (Array.isArray(declaredDiagrams)
+  ? declaredDiagrams
+  : []
+).entries()) {
+  const label = `diagram_paths[${index}]`
+  const usable =
+    typeof declared === 'string' &&
+    declared.trim() !== '' &&
+    !declared.startsWith('/') &&
+    !declared.split('/').includes('..')
+  check(
+    `${label} is a non-empty repository-relative path`,
+    usable,
+    `found: ${JSON.stringify(declared)}`
+  )
+  if (!usable) continue
+  check(`${label} resolves to an existing file: ${declared}`, await isFile(declared))
+}
 
 if (failures.length > 0) {
   console.error('VALIDATION FAILED')
