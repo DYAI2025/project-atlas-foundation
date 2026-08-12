@@ -158,9 +158,11 @@ function controlPlaneIds(src) {
 // ---------------------------------------------------------------------------
 //
 // A label is read clause by clause (`<br/>`-separated, as authors already write them).
-// A clause that negates the authority ("never approve or publish", "not the knowledge
-// approver") is a disclaimer, not a claim. Descriptive nouns are not authority: a store
-// that keeps "approval evidence" or "publication and audit records" holds neither role.
+// A clause disclaims the authority only when the negation stands BEFORE it ("never
+// approve or publish", "not the knowledge approver"); a negation trailing an unrelated
+// part of the same clause cannot launder a claim into a disclaimer. Descriptive nouns
+// are not authority either: a store that keeps "approval evidence" or "publication and
+// audit records" holds neither role.
 
 const CLAUSE_SEPARATOR = /<br\s*\/?>|\n/
 const NEGATION = /\b(?:never|not|no|without|neither|nor)\b/i
@@ -169,9 +171,11 @@ const PUBLICATION_AUTHORITY =
   /\b(?:publisher|publishes|authoriz(?:e|es)\s+publication|publication\s+authority)\b/i
 
 function claimsAuthority(label, pattern) {
-  return label
-    .split(CLAUSE_SEPARATOR)
-    .some((clause) => pattern.test(clause) && !NEGATION.test(clause))
+  return label.split(CLAUSE_SEPARATOR).some((clause) => {
+    const claim = clause.match(pattern)
+    if (!claim) return false
+    return !NEGATION.test(clause.slice(0, claim.index))
+  })
 }
 
 function nodesClaiming(src, pattern) {
@@ -482,6 +486,24 @@ test('no Premium Graph UI stack is selected or implied by either diagram', () =>
 // ---------------------------------------------------------------------------
 // 5) DEC-06 knowledge governance
 // ---------------------------------------------------------------------------
+
+test('authority reading counts a claim unless the negation precedes it', () => {
+  // Guards the reader itself. Without the ordering rule, a label saying "approves
+  // proposals and authorizes publication, not delegated" would be read as holding
+  // neither role, and the separation test below could be walked past by wording alone.
+  const laundered = 'approves proposals and authorizes publication, not delegated'
+  assert.ok(claimsAuthority(laundered, APPROVAL_AUTHORITY), 'trailing negation must not erase the approval claim')
+  assert.ok(claimsAuthority(laundered, PUBLICATION_AUTHORITY), 'trailing negation must not erase the publication claim')
+
+  // A real disclaimer stands before the authority it disclaims.
+  assert.ok(!claimsAuthority('read and propose by default, never approve or publish', APPROVAL_AUTHORITY))
+  assert.ok(!claimsAuthority('not the knowledge approver and not the publisher', APPROVAL_AUTHORITY))
+  assert.ok(!claimsAuthority('not the knowledge approver and not the publisher', PUBLICATION_AUTHORITY))
+
+  // Keeping records of a decision is not holding the authority for it.
+  assert.ok(!claimsAuthority('classifications, proposals, approval evidence', APPROVAL_AUTHORITY))
+  assert.ok(!claimsAuthority('publication and audit records, projection checkpoints', PUBLICATION_AUTHORITY))
+})
 
 test('the knowledge approval decision and the publication authority stay separate roles', () => {
   // DEC-06: an agent-authored knowledge change needs a HUMAN decision, and the
