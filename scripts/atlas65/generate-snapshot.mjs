@@ -6,7 +6,7 @@
 // Defense in depth: after the in-process validation, the existing contract CLI
 // (src/gbrain-read-contract/cli.mjs) must also accept request+snapshot (exit 0).
 // Failure idiom: process.exitCode + natural termination so pipes always flush.
-import { writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs'
+import { writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { loadRegistry, resolveProject, RegistryError } from '../../src/registry/resolve.mjs'
@@ -60,6 +60,7 @@ async function main() {
       throw new GbrainError('E_GBRAIN_CLI', `list_pages returned unrecognized shape: ${JSON.stringify(listed).slice(0, 500)}`)
     }
     const pageRows = (Array.isArray(listed) ? listed : listed.pages).filter((p) => (p.slug ?? '').startsWith('pages/'))
+    if (pageRows.length >= 500) return fail('E_READBACK_TRUNCATED: list_pages returned the full limit — refusing a possibly truncated readback', 2)
     const pages = []
     const links = []
     const linkKeys = new Set()
@@ -86,7 +87,7 @@ async function main() {
   }
 
   try {
-    const { snapshot, provenance } = buildSnapshotFromReadback({ project, readback })
+    const { snapshot, provenance } = buildSnapshotFromReadback({ project, readback, generatedAt: new Date().toISOString() })
     validateOrThrow(snapshot, project)
 
     mkdirSync(OUT_DIR, { recursive: true })
@@ -101,11 +102,20 @@ async function main() {
     writeFileSync(tmpSnapshot, `${JSON.stringify(snapshot, null, 2)}\n`)
 
     const check = spawnSync(process.execPath, [join(repoRoot, 'src/gbrain-read-contract/cli.mjs'), REQUEST_PATH, tmpSnapshot], { encoding: 'utf8' })
-    writeFileSync(CONTRACT_RESPONSE_PATH, check.stdout)
-    if (check.status !== 0) return fail(`E_SNAPSHOT_INVALID: contract CLI rejected the generated snapshot (exit ${check.status}) — see ${CONTRACT_RESPONSE_PATH}`)
+    writeFileSync(CONTRACT_RESPONSE_PATH, check.stdout ?? '')
+    if (check.status !== 0) {
+      try { unlinkSync(tmpSnapshot) } catch { /* the failure below is the primary signal */ }
+      return fail(`E_SNAPSHOT_INVALID: contract CLI rejected the generated snapshot (exit ${check.status}) — see ${CONTRACT_RESPONSE_PATH}`)
+    }
 
+    // Atomic pair publish: both artifacts land via tmp+rename, snapshot first,
+    // provenance immediately after, so a crash never leaves a fresh snapshot
+    // paired with a stale (or half-written) sidecar for longer than the gap
+    // between two renames.
+    const tmpProvenance = `${PROVENANCE_PATH}.tmp`
+    writeFileSync(tmpProvenance, `${JSON.stringify(provenance, null, 2)}\n`)
     renameSync(tmpSnapshot, SNAPSHOT_PATH)
-    writeFileSync(PROVENANCE_PATH, `${JSON.stringify(provenance, null, 2)}\n`)
+    renameSync(tmpProvenance, PROVENANCE_PATH)
     process.stdout.write(`atlas65-snapshot: ${snapshot.nodes.length} nodes, ${snapshot.edges.length} edges from persisted state -> ${SNAPSHOT_PATH}\n`)
   } catch (e) {
     if (e instanceof SnapshotError) {

@@ -42,6 +42,14 @@ test('builder produces a contract-valid, scope-valid snapshot from persisted rea
   assert.deepEqual(provenance.pages.map((p) => [p.page_id, p.version]), [['900000001', 5], ['900000002', 2]])
 })
 
+test('provenance sidecar carries generated_at only when provided (D9 freshness)', () => {
+  const withTs = buildSnapshotFromReadback({ project, readback: readback(), generatedAt: 'T2' })
+  assert.equal(withTs.provenance.generated_at, 'T2')
+  assert.deepEqual(Object.keys(withTs.provenance).slice(0, 3), ['schema_version', 'generated_from', 'generated_at'])
+  const without = buildSnapshotFromReadback({ project, readback: readback() })
+  assert.ok(!('generated_at' in without.provenance), 'generated_at must be absent when not provided')
+})
+
 test('builder is deterministic (byte-identical)', () => {
   const a = buildSnapshotFromReadback({ project, readback: readback() })
   const b = buildSnapshotFromReadback({ project, readback: readback() })

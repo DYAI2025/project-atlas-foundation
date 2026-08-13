@@ -4,8 +4,10 @@
 // Only live-verified hierarchy links (link_type=parent_of AND
 // link_source=confluence-hierarchy) become edges; anything else the brain may
 // have auto-derived is deliberately excluded rather than presented as a
-// source-backed relation. The sidecar is display metadata keyed by source_ref —
-// it is NOT a second graph model and NOT part of the gbrain-read/v1 contract.
+// source-backed relation. The sidecar is display metadata keyed by source_ref
+// plus an optional generated_at freshness stamp (passed in by the caller — the
+// module itself never reads the clock) — it is NOT a second graph model and NOT
+// part of the gbrain-read/v1 contract.
 import { composeNodeId, composeEdgeId, validateSnapshot, validateScope, sortErrors } from '../gbrain-read-contract/validate.mjs'
 
 export class SnapshotError extends Error {
@@ -21,7 +23,7 @@ const EDGE_LINK_TYPE = 'parent_of'
 const EDGE_LINK_SOURCE = 'confluence-hierarchy'
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 
-export function buildSnapshotFromReadback({ project, readback }) {
+export function buildSnapshotFromReadback({ project, readback, generatedAt }) {
   if (!Array.isArray(readback.pages) || readback.pages.length === 0) {
     throw new SnapshotError('E_PERSISTENCE_EMPTY', 'persisted gbrain state contains no pilot pages — run atlas65:import; there is no fixture substitution')
   }
@@ -91,6 +93,7 @@ export function buildSnapshotFromReadback({ project, readback }) {
   const provenance = {
     schema_version: '1.0',
     generated_from: 'gbrain-readback',
+    ...(typeof generatedAt === 'string' && generatedAt.length > 0 ? { generated_at: generatedAt } : {}),
     project_id: project.project_id,
     source: { source_kind: SOURCE_KIND, source_id: project.root_page_id },
     pages: provenancePages.sort((a, b) => byCodeUnit(a.page_id, b.page_id))
