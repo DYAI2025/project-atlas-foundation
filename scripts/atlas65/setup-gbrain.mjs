@@ -60,7 +60,7 @@ async function main() {
   const head = sh('git', ['-C', GBRAIN_CHECKOUT, 'rev-parse', 'HEAD'])
   if (head.failed) return fail(`E_PIN: cannot resolve checkout HEAD: ${head.detail}`, 2)
   if (head.stdout !== gbrain.source_commit) {
-    return fail(`E_PIN_MISMATCH: checkout HEAD ${head.stdout} != pinned ${gbrain.source_commit} — refusing to run an unpinned gbrain`)
+    return fail(`E_PIN_MISMATCH: checkout HEAD ${head.stdout} != pinned ${gbrain.source_commit} — refusing to run an unpinned gbrain — delete third_party/gbrain-checkout and re-run atlas65:setup`)
   }
 
   // 3) Dependencies (postinstall is best-effort upstream and never fails the install)
@@ -72,6 +72,13 @@ async function main() {
   // 4) Brain init (idempotent; PGLite; embedding deliberately disabled for the pilot)
   mkdirSync(BRAIN_HOME, { recursive: true })
   const configPath = join(BRAIN_HOME, '.gbrain/config.json')
+  const dataPath = join(BRAIN_HOME, '.gbrain/brain.pglite')
+  // Torn-state guard: config.json without the PGLite data dir must never skip
+  // init — the next gbrain op would silently fabricate an EMPTY brain (upstream
+  // connectEngine creates missing PGLite dirs on connect).
+  if (existsSync(configPath) && !existsSync(dataPath)) {
+    return fail('E_GBRAIN_TORN_STATE: config.json exists but brain.pglite data dir is missing — delete out/atlas65/gbrain-home and re-run atlas65:setup')
+  }
   if (!existsSync(configPath)) {
     let res
     try {
@@ -99,6 +106,9 @@ async function main() {
     }
   }
   if (!existsSync(configPath)) return fail('E_GBRAIN_INIT: config.json missing after init')
+  if (!existsSync(dataPath)) {
+    return fail('E_GBRAIN_TORN_STATE: brain.pglite data dir missing beside config.json — delete out/atlas65/gbrain-home and re-run atlas65:setup')
+  }
 
   process.stdout.write(
     `atlas65-setup: OK\n` +

@@ -60,7 +60,7 @@ export function runGbrain({ checkoutDir, brainHome, sourceId, args, input, allow
   })
   if (res.error) throw new GbrainError('E_GBRAIN_SPAWN', res.error.message)
   if (res.status !== 0 && !allowFailure) {
-    throw new GbrainError('E_GBRAIN_CLI', `gbrain ${args[0]} exited ${res.status}: ${res.stderr.slice(0, 2000)}`)
+    throw new GbrainError('E_GBRAIN_CLI', `gbrain ${args[0]} exited ${res.status}: ${res.stderr.slice(-2000)}`)
   }
   return res
 }
@@ -70,6 +70,6 @@ export function callOp({ checkoutDir, brainHome, sourceId, op, payload }) {
   try {
     return JSON.parse(res.stdout)
   } catch {
-    throw new GbrainError('E_GBRAIN_CLI', `gbrain call ${op}: output is not JSON`)
+    throw new GbrainError('E_GBRAIN_CLI', `gbrain call ${op}: output is not JSON: ${res.stdout.slice(0, 500)}`)
   }
 }
