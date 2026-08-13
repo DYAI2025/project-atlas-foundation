@@ -24,6 +24,7 @@ function fail(message, code = 1) {
 
 function validateCaptureShape(capture) {
   if (capture === null || typeof capture !== 'object' || Array.isArray(capture)) return 'capture root must be an object'
+  if (capture.schema_version !== '1.0') return 'schema_version must be "1.0"'
   if (typeof capture.project_id !== 'string' || capture.project_id.length === 0) return 'project_id missing'
   if (capture.source?.source_kind !== 'confluence' || typeof capture.source?.source_id !== 'string') return 'source missing or malformed'
   if (typeof capture.captured_at !== 'string' || capture.captured_at.length === 0) return 'captured_at missing'
@@ -80,14 +81,29 @@ async function main() {
   }
 
   const gb = { checkoutDir: GBRAIN_CHECKOUT, brainHome: BRAIN_HOME, sourceId: projection.gbrain_source_id }
+  // Source management must run WITHOUT GBRAIN_SOURCE: the pinned `gbrain call`
+  // strictly resolves the env source id before dispatching ANY op, so a scoped
+  // sources_list on a fresh brain (id not yet registered) would throw before
+  // it could even tell us the source is missing.
+  const gbNoSource = { checkoutDir: GBRAIN_CHECKOUT, brainHome: BRAIN_HOME }
 
   try {
-    // 1) source registration (idempotent)
-    const sources = callOp({ ...gb, op: 'sources_list', payload: {} })
-    const registered = JSON.stringify(sources).includes(`"${projection.gbrain_source_id}"`)
-    if (!registered) {
-      callOp({ ...gb, op: 'sources_add', payload: { id: projection.gbrain_source_id, name: `ATLAS-65 Confluence ${capture.source.source_id}` } })
+    // 1) source registration (idempotent). Structural check against the real
+    // sources_list shape ({ sources: [{ id, ... }] }); anything else is a hard
+    // failure — never silently treated as "unregistered".
+    const sources = callOp({ ...gbNoSource, op: 'sources_list', payload: {} })
+    if (!Array.isArray(sources?.sources) || sources.sources.some((s) => typeof s?.id !== 'string')) {
+      throw new GbrainError('E_GBRAIN_CLI', `sources_list returned unrecognized shape: ${JSON.stringify(sources).slice(0, 500)}`)
     }
+    const registered = sources.sources.some((s) => s.id === projection.gbrain_source_id)
+    if (!registered) {
+      callOp({ ...gbNoSource, op: 'sources_add', payload: { id: projection.gbrain_source_id, name: `ATLAS-65 Confluence ${capture.source.source_id}` } })
+    }
+    // Scoped verification probe: with GBRAIN_SOURCE set, the strict resolver in
+    // `gbrain call` re-validates that the source is actually registered and
+    // throws otherwise — converting any wrong "already registered" skip into a
+    // hard failure BEFORE the first page write.
+    callOp({ ...gb, op: 'sources_list', payload: {} })
 
     // 2) pages first
     const pageResults = []
@@ -105,7 +121,11 @@ async function main() {
       linkResults.push({ ...link, status: 'ok' })
     }
 
-    const head = spawnSync('git', ['-C', GBRAIN_CHECKOUT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
+    const headRes = spawnSync('git', ['-C', GBRAIN_CHECKOUT, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+    if (headRes.error || headRes.status !== 0) {
+      return fail('E_INTERNAL: cannot resolve gbrain checkout HEAD', 2)
+    }
+    const head = headRes.stdout.trim()
     mkdirSync(OUT_DIR, { recursive: true })
     const receipt = {
       schema_version: '1.0',
