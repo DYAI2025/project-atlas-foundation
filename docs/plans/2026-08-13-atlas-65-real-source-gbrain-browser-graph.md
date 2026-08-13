@@ -613,7 +613,17 @@ test('no relation is ever invented: parentless pages produce zero links', () => 
   assert.deepEqual(buildProjection(c).links, [])
 })
 
-test('a parent outside the capture fails closed instead of inventing an edge', () => {
+test('the declared root is the scope boundary: a live root parent above it is never an edge and never a failure', () => {
+  // Review round 1 finding: the root page may legitimately live under the space
+  // homepage; its parent lies ABOVE the pilot scope and must neither materialize
+  // an edge nor hard-fail the good path.
+  const c = capture()
+  c.pages[0].parent_id = '900000777' // outside the capture, on the ROOT row
+  const p = buildProjection(c)
+  assert.deepEqual(p.links.map((l) => [l.from_slug, l.to_slug]), [['pages/900000001', 'pages/900000002']])
+})
+
+test('a NON-root page with a parent outside the capture fails closed instead of inventing an edge', () => {
   const c = capture()
   c.pages[1].parent_id = '900000099'
   assert.throws(() => buildProjection(c), (e) => e instanceof ProjectionError && e.code === 'E_PROJECTION_PARENT_UNKNOWN')
@@ -669,6 +679,11 @@ export function buildProjection(capture) {
   const links = []
   for (const p of capture.pages) {
     if (p.parent_id === null) continue
+    // The declared root is the pilot's scope boundary. Its own live parent (for
+    // example the space homepage) lies ABOVE that boundary: it is recorded in the
+    // capture as provenance but is never materialized as an edge and never a
+    // failure. Only NON-root pages must resolve their parent inside the capture.
+    if (p.page_id === capture.source.source_id) continue
     if (!ids.has(p.parent_id)) {
       throw new ProjectionError('E_PROJECTION_PARENT_UNKNOWN', `page ${p.page_id} declares parent ${p.parent_id} which is not part of the verified capture`)
     }
@@ -1935,6 +1950,14 @@ Record: branch, head SHA, PR number/URL. Wait for PR CI (`ci`/`check` + `secret-
 | Invalid generated snapshot | `validateOrThrow` + contract-CLI gate in generator (Task 7); serve startup exit 1 + runtime 503 tests (Task 8); viewer error banner |
 | Missing source relation → no invented edge | projection zero-links test (Task 4), foreign-provenance exclusion + dangling fail-closed tests (Task 7), `E_GRAPH_TOO_SMALL` e2e guard (Task 9) |
 | GBrain pin/runtime incompatibility | `E_PIN_MISMATCH`, bun version gate (Task 5) → STOP, never a substitute store |
+
+## Deviation log (recorded during execution — plan vs. shipped)
+
+| # | Where | Deviation | Why |
+|---|---|---|---|
+| D1 | `test/atlas65-confluence-source.test.mjs` | Plan's loop-based `verifySourceSet` negatives replaced by 3 explicit tests (+ branch-precise message asserts in review round 1) | The loop's root-mismatch fixture fed 1 page against a 3-page set and would have passed via the count-mismatch branch — a wrong-reason pass. |
+| D2 | `scripts/atlas65/fetch-source.mjs` | Review round 1: `process.exitCode` + natural termination instead of `process.exit()`; coded `E_SOURCE_SET_UNREADABLE` for config errors; scope gate also asserts `selector_kind === 'project_id'`; test-only `ATLAS65_SOURCE_SET_PATH` override (mirrors `ATLAS_REGISTRY_PATH` idiom) | Repo idiom (see `src/gbrain-read-contract/cli.mjs` header), fail-closed consistency, offline testability of the scope branch. |
+| D3 | Task 4 `buildProjection` (amended above, pre-implementation) | Declared root is the scope boundary: its live parent is captured as provenance but never an edge and never a failure; non-root out-of-set parents still fail closed | Root may legitimately live under the space homepage; the original plan would have hard-failed the good-path live run with `E_PROJECTION_PARENT_UNKNOWN`. Found by review round 1 (Important 1, sharpened). Skip-key trust: every production call of `buildProjection` sits behind the import CLI's `E_SCOPE` gate, which pins `capture.source.source_id` to the registry's `root_page_id` before the capture is used. |
 
 ## Anti-drift checklist (re-read before each task)
 
