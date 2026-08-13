@@ -42,7 +42,10 @@ async function main() {
   if (stage('import (write persistence)', 'scripts/atlas65/import-to-gbrain.mjs', ['--project', selector], process.env) !== true) return FAILED
 
   // Readback in a credential-stripped environment: re-import is impossible here.
+  // ATLAS65_BUN_BIN is a runtime binary path, not a credential — forward it so
+  // the stripped readback can still locate bun when the default is overridden.
   const stripped = { PATH: process.env.PATH, HOME: process.env.HOME }
+  if (process.env.ATLAS65_BUN_BIN) stripped.ATLAS65_BUN_BIN = process.env.ATLAS65_BUN_BIN
   if (stage('snapshot (readback WITHOUT source credentials)', 'scripts/atlas65/generate-snapshot.mjs', ['--project', selector], stripped) !== true) return FAILED
 
   // Belt-and-suspenders on top of the generator's own contract gate: the
@@ -62,10 +65,21 @@ async function main() {
     return fail(`E_GRAPH_TOO_SMALL: ${snapshot.nodes.length} nodes / ${snapshot.edges.length} edges — the source set carries no defensible relation; select a different real source set, never invent an edge`)
   }
 
+  // Membership: the snapshot read back WITHOUT credentials must equal exactly
+  // this run's captured pages (source_ref IS the Confluence page id) — only the
+  // e2e legitimately sees both sides, so only it can assert set equality.
+  const capture = JSON.parse(readFileSync(CAPTURE_PATH, 'utf8'))
+  const capturedIds = new Set(capture.pages.map((p) => p.page_id))
+  const snapshotRefs = new Set(snapshot.nodes.map((n) => n.source_ref))
+  const captureOnly = [...capturedIds].filter((id) => !snapshotRefs.has(id))
+  const snapshotOnly = [...snapshotRefs].filter((ref) => !capturedIds.has(ref))
+  if (captureOnly.length > 0 || snapshotOnly.length > 0) {
+    return fail(`E_MEMBERSHIP_MISMATCH: snapshot nodes do not equal this run's captured pages — capture-only: [${captureOnly.join(', ')}] snapshot-only: [${snapshotOnly.join(', ')}]`)
+  }
+
   // Evidence copy (committed): capture WITHOUT page bodies (bodies -> sha256).
   const evidenceDir = join(repoRoot, 'docs/evidence/atlas-65')
   mkdirSync(evidenceDir, { recursive: true })
-  const capture = JSON.parse(readFileSync(CAPTURE_PATH, 'utf8'))
   const evidenceCapture = {
     ...capture,
     pages: capture.pages.map(({ body_storage, ...rest }) => ({
