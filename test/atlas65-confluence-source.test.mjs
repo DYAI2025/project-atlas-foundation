@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import {
   SourceError,
   requireAuth,
@@ -45,6 +47,17 @@ test('requireAuth returns base url + auth header parts', () => {
     'https://dyai2026.atlassian.net/wiki/api/v2/pages/900000001?body-format=storage')
 })
 
+test('requireAuth strips trailing slashes from a base-url override', () => {
+  const a = requireAuth({
+    ATLAS65_CONFLUENCE_BASE_URL: 'https://example.invalid///',
+    ATLAS65_CONFLUENCE_EMAIL: 'u@example.com',
+    ATLAS65_CONFLUENCE_API_TOKEN: 't'
+  })
+  assert.equal(a.baseUrl, 'https://example.invalid')
+  assert.equal(pageUrl(a.baseUrl, '900000001'),
+    'https://example.invalid/wiki/api/v2/pages/900000001?body-format=storage')
+})
+
 test('assertPageShape accepts a complete page and normalizes parentId', () => {
   const p = assertPageShape(raw('900000002', '900000001'), '900000002')
   assert.deepEqual(
@@ -78,7 +91,8 @@ test('verifySourceSet fails closed: root not registry root', () => {
   const pages = [assertPageShape(raw('900000001', undefined), '900000001')]
   const set = { ...SET, pages: [{ page_id: '900000001', expected_parent_id: null }] }
   assert.throws(() => verifySourceSet(pages, set, { ...PROJECT, root_page_id: '900000099' }),
-    (e) => e instanceof SourceError && e.code === 'E_SOURCE_HIERARCHY')
+    (e) => e instanceof SourceError && e.code === 'E_SOURCE_HIERARCHY' &&
+      /is not the registered project root/.test(e.message))
 })
 
 test('verifySourceSet fails closed: live parent differs from declared', () => {
@@ -88,7 +102,8 @@ test('verifySourceSet fails closed: live parent differs from declared', () => {
     assertPageShape(raw('900000003', '900000002'), '900000003')
   ]
   assert.throws(() => verifySourceSet(pages, SET, PROJECT),
-    (e) => e instanceof SourceError && e.code === 'E_SOURCE_HIERARCHY')
+    (e) => e instanceof SourceError && e.code === 'E_SOURCE_HIERARCHY' &&
+      /hierarchy drifted/.test(e.message))
 })
 
 test('verifySourceSet fails closed: declared parent outside the source set', () => {
@@ -101,7 +116,8 @@ test('verifySourceSet fails closed: declared parent outside the source set', () 
     assertPageShape(raw('900000003', '900000005'), '900000003')
   ]
   assert.throws(() => verifySourceSet(pages, set, PROJECT),
-    (e) => e instanceof SourceError && e.code === 'E_SOURCE_HIERARCHY')
+    (e) => e instanceof SourceError && e.code === 'E_SOURCE_HIERARCHY' &&
+      /not in source set/.test(e.message))
 })
 
 test('fetchSourceSet builds a deterministic capture from live pages', async () => {
@@ -135,6 +151,24 @@ test('fetchSourceSet fails closed on HTTP error — no partial capture', async (
   )
 })
 
+test('fetchSourceSet fails closed when fetch itself rejects — network failure', async () => {
+  const fetchImpl = async () => { throw new Error('socket hang up') }
+  const env = { ATLAS65_CONFLUENCE_EMAIL: 'u@example.com', ATLAS65_CONFLUENCE_API_TOKEN: 't' }
+  await assert.rejects(
+    fetchSourceSet({ env, sourceSet: SET, project: PROJECT, capturedAt: 'x', fetchImpl }),
+    (e) => e instanceof SourceError && e.code === 'E_SOURCE_UNREADABLE' && /network failure/.test(e.message)
+  )
+})
+
+test('fetchSourceSet fails closed when the response body is not JSON', async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => { throw new Error('bad json') } })
+  const env = { ATLAS65_CONFLUENCE_EMAIL: 'u@example.com', ATLAS65_CONFLUENCE_API_TOKEN: 't' }
+  await assert.rejects(
+    fetchSourceSet({ env, sourceSet: SET, project: PROJECT, capturedAt: 'x', fetchImpl }),
+    (e) => e instanceof SourceError && e.code === 'E_SOURCE_UNREADABLE' && /not JSON/.test(e.message)
+  )
+})
+
 test('fetch CLI: unknown project selector is denied before any network use', () => {
   const r = spawnSync(process.execPath, [FETCH_CLI, '--project', 'NOPE'], { encoding: 'utf8', env: cleanEnv })
   assert.equal(r.status, 1)
@@ -145,4 +179,49 @@ test('fetch CLI: missing credentials fail closed with E_SOURCE_AUTH_MISSING', ()
   const r = spawnSync(process.execPath, [FETCH_CLI, '--project', 'ATLAS'], { encoding: 'utf8', env: cleanEnv })
   assert.equal(r.status, 1)
   assert.match(r.stderr, /E_SOURCE_AUTH_MISSING/)
+})
+
+test('fetch CLI: source set declaring a non-project_id selector_kind fails the scope gate', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'atlas65-fetch-'))
+  const setPath = join(dir, 'source-set.json')
+  writeFileSync(setPath, JSON.stringify({
+    schema_version: '1.0',
+    project_selector: { selector_kind: 'root_page_id', selector_value: 'ATLAS' },
+    pages: [{ page_id: '14778372', expected_parent_id: null }]
+  }))
+  // Dummy credentials so the observed exit-1 can only come from the scope gate,
+  // and a loopback base URL so no environment can ever reach real Confluence.
+  const r = spawnSync(process.execPath, [FETCH_CLI, '--project', 'ATLAS'], {
+    encoding: 'utf8',
+    env: {
+      ...cleanEnv,
+      ATLAS65_SOURCE_SET_PATH: setPath,
+      ATLAS65_CONFLUENCE_BASE_URL: 'https://127.0.0.1:9',
+      ATLAS65_CONFLUENCE_EMAIL: 'u@example.com',
+      ATLAS65_CONFLUENCE_API_TOKEN: 't'
+    }
+  })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /E_SOURCE_SCOPE/)
+})
+
+test('fetch CLI: unreadable source-set path fails closed with E_SOURCE_SET_UNREADABLE', () => {
+  const r = spawnSync(process.execPath, [FETCH_CLI, '--project', 'ATLAS'], {
+    encoding: 'utf8',
+    env: { ...cleanEnv, ATLAS65_SOURCE_SET_PATH: join(tmpdir(), 'atlas65-does-not-exist.json') }
+  })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /E_SOURCE_SET_UNREADABLE/)
+})
+
+test('fetch CLI: source set without a project_selector object fails closed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'atlas65-fetch-'))
+  const setPath = join(dir, 'source-set.json')
+  writeFileSync(setPath, JSON.stringify({ schema_version: '1.0', pages: [] }))
+  const r = spawnSync(process.execPath, [FETCH_CLI, '--project', 'ATLAS'], {
+    encoding: 'utf8',
+    env: { ...cleanEnv, ATLAS65_SOURCE_SET_PATH: setPath }
+  })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /E_SOURCE_SET_UNREADABLE/)
 })
