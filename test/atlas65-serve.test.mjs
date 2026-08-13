@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, copyFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -59,6 +59,26 @@ test('serves the validated snapshot byte-identical', async () => {
 test('refuses to start on a contract-invalid snapshot (fail closed, exit 1)', () => {
   const dir = makeDir(false)
   const r = spawnSync(process.execPath, [SERVE, '--dir', dir, '--port', '43651'], { encoding: 'utf8' })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /E_SNAPSHOT_INVALID/)
+})
+
+test('provenance sidecar is served byte-identical', async () => {
+  const dir = makeDir(true)
+  const { child } = await startServer(dir, 43654)
+  try {
+    const res = await fetch('http://127.0.0.1:43654/provenance.json')
+    assert.equal(res.status, 200)
+    assert.equal(await res.text(), readFileSync(join(dir, 'provenance.json'), 'utf8'))
+  } finally {
+    child.kill()
+  }
+})
+
+test('a dir without provenance.json refuses startup (torn publish, exit 1)', () => {
+  const dir = makeDir(true)
+  unlinkSync(join(dir, 'provenance.json'))
+  const r = spawnSync(process.execPath, [SERVE, '--dir', dir, '--port', '43655'], { encoding: 'utf8', timeout: 5000 })
   assert.equal(r.status, 1)
   assert.match(r.stderr, /E_SNAPSHOT_INVALID/)
 })

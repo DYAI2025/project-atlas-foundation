@@ -47,14 +47,25 @@
     const s = await fetch('/graph-snapshot.json')
     if (!s.ok) throw new Error('snapshot endpoint returned ' + s.status)
     snapshot = await s.json()
-    const p = await fetch('/provenance.json')
-    provenance = p.ok ? await p.json() : { pages: [] }
   } catch (e) {
-    document.body.innerHTML = '<div class="err">Snapshot invalid or unavailable — refusing to render (' + e.message + ')</div>'
+    const err = document.createElement('div')
+    err.className = 'err'
+    err.textContent = 'Snapshot invalid or unavailable — refusing to render (' + e.message + ')'
+    document.body.replaceChildren(err)
     return
+  }
+  let provenanceUnavailable = false
+  try {
+    const p = await fetch('/provenance.json')
+    if (!p.ok) throw new Error('provenance endpoint returned ' + p.status)
+    provenance = await p.json()
+  } catch {
+    provenance = { pages: [] }
+    provenanceUnavailable = true
   }
 
   meta.textContent = snapshot.nodes.length + ' nodes / ' + snapshot.edges.length + ' edges — project ' + snapshot.project_id + ', confluence root ' + snapshot.source.source_id
+  if (provenanceUnavailable) meta.textContent += ' — provenance sidecar unavailable'
   foot.textContent = 'id_scheme ' + snapshot.id_scheme + ' — projection-local identifiers, NOT canonical entity IDs (canonical_entity_ids=' + snapshot.canonical_entity_ids + ')'
   if (provenance.generated_at) foot.textContent += ' — Snapshot generated: ' + provenance.generated_at
 
@@ -122,9 +133,13 @@
     if (prov) {
       row('Revision / version', 'v' + prov.version)
       row('Captured at', prov.captured_at)
-      const a = document.createElement('a'); a.href = prov.confluence_url; a.target = '_blank'; a.rel = 'noreferrer'
-      a.textContent = prov.confluence_url
-      row('Source', null, a)
+      if (/^https:/i.test(prov.confluence_url)) {
+        const a = document.createElement('a'); a.href = prov.confluence_url; a.target = '_blank'; a.rel = 'noreferrer'
+        a.textContent = prov.confluence_url
+        row('Source', null, a)
+      } else {
+        row('Source', prov.confluence_url)
+      }
     } else {
       row('Provenance', 'unavailable in sidecar — not fabricated')
     }

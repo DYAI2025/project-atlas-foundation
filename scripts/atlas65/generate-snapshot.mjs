@@ -59,8 +59,11 @@ async function main() {
     if (!Array.isArray(listed) && !Array.isArray(listed?.pages)) {
       throw new GbrainError('E_GBRAIN_CLI', `list_pages returned unrecognized shape: ${JSON.stringify(listed).slice(0, 500)}`)
     }
-    const pageRows = (Array.isArray(listed) ? listed : listed.pages).filter((p) => (p.slug ?? '').startsWith('pages/'))
-    if (pageRows.length >= 500) return fail('E_READBACK_TRUNCATED: list_pages returned the full limit — refusing a possibly truncated readback', 2)
+    const rawRows = Array.isArray(listed) ? listed : listed.pages
+    // Truncation guard on the RAW listing, before any filtering: a full-limit
+    // result may hide pages beyond the limit even when non-pages/ slugs pad it.
+    if (rawRows.length >= 500) return fail('E_READBACK_TRUNCATED: list_pages returned the full limit — refusing a possibly truncated readback', 2)
+    const pageRows = rawRows.filter((p) => (p.slug ?? '').startsWith('pages/'))
     const pages = []
     const links = []
     const linkKeys = new Set()
