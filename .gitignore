@@ -8,3 +8,5 @@ sbom.cdx.json
 .claude-flow/
 scratch/
 .cache/
+out/
+third_party/gbrain-checkout/
