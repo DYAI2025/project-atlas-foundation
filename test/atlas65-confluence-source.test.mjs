@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import {
   SourceError,
   requireAuth,
@@ -8,6 +11,10 @@ import {
   verifySourceSet,
   fetchSourceSet
 } from '../src/atlas65/confluence-source.mjs'
+
+const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+const FETCH_CLI = join(repoRoot, 'scripts/atlas65/fetch-source.mjs')
+const cleanEnv = { PATH: process.env.PATH, HOME: process.env.HOME }
 
 // Synthetic 9xxxxxxxx refs per repo convention — logic tests only; the real-source
 // acceptance evidence comes exclusively from the live E2E run.
@@ -126,4 +133,16 @@ test('fetchSourceSet fails closed on HTTP error — no partial capture', async (
     fetchSourceSet({ env, sourceSet: SET, project: PROJECT, capturedAt: 'x', fetchImpl }),
     (e) => e instanceof SourceError && e.code === 'E_SOURCE_UNREADABLE'
   )
+})
+
+test('fetch CLI: unknown project selector is denied before any network use', () => {
+  const r = spawnSync(process.execPath, [FETCH_CLI, '--project', 'NOPE'], { encoding: 'utf8', env: cleanEnv })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /no project matches|E_UNKNOWN_PROJECT/)
+})
+
+test('fetch CLI: missing credentials fail closed with E_SOURCE_AUTH_MISSING', () => {
+  const r = spawnSync(process.execPath, [FETCH_CLI, '--project', 'ATLAS'], { encoding: 'utf8', env: cleanEnv })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /E_SOURCE_AUTH_MISSING/)
 })
