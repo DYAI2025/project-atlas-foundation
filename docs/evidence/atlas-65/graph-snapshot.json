@@ -1,0 +1,67 @@
+{
+  "contract_version": "1.0.0",
+  "project_id": "ATLAS",
+  "id_scheme": "projection-local/v1",
+  "canonical_entity_ids": false,
+  "source": {
+    "source_kind": "confluence",
+    "source_id": "14778372"
+  },
+  "nodes": [
+    {
+      "node_id": "ATLAS:confluence:14778372:14680066",
+      "source_ref": "14680066",
+      "label": "02 – Source of Truth, Governance and Decision Rights"
+    },
+    {
+      "node_id": "ATLAS:confluence:14778372:14778372",
+      "source_ref": "14778372",
+      "label": "ATLAS Single Source of Truth"
+    },
+    {
+      "node_id": "ATLAS:confluence:14778372:15073290",
+      "source_ref": "15073290",
+      "label": "04 – Target Architecture and System Context"
+    },
+    {
+      "node_id": "ATLAS:confluence:14778372:15171611",
+      "source_ref": "15171611",
+      "label": "14 – Delivery Model, Program Increment and Sprint Plan"
+    },
+    {
+      "node_id": "ATLAS:confluence:14778372:22478849",
+      "source_ref": "22478849",
+      "label": "Sprint 2 – Visible Real Semantic Atlas – Sprint Plan"
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "ATLAS:confluence:14778372:parent_of:14778372:14680066",
+      "from": "ATLAS:confluence:14778372:14778372",
+      "to": "ATLAS:confluence:14778372:14680066",
+      "relation_type": "parent_of",
+      "origin": "explicit"
+    },
+    {
+      "edge_id": "ATLAS:confluence:14778372:parent_of:14778372:15073290",
+      "from": "ATLAS:confluence:14778372:14778372",
+      "to": "ATLAS:confluence:14778372:15073290",
+      "relation_type": "parent_of",
+      "origin": "explicit"
+    },
+    {
+      "edge_id": "ATLAS:confluence:14778372:parent_of:14778372:15171611",
+      "from": "ATLAS:confluence:14778372:14778372",
+      "to": "ATLAS:confluence:14778372:15171611",
+      "relation_type": "parent_of",
+      "origin": "explicit"
+    },
+    {
+      "edge_id": "ATLAS:confluence:14778372:parent_of:15171611:22478849",
+      "from": "ATLAS:confluence:14778372:15171611",
+      "to": "ATLAS:confluence:14778372:22478849",
+      "relation_type": "parent_of",
+      "origin": "explicit"
+    }
+  ]
+}

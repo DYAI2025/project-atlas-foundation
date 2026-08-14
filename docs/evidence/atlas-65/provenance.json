@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "generated_from": "gbrain-readback",
+  "generated_at": "2026-08-14T22:48:03.379Z",
+  "project_id": "ATLAS",
+  "source": {
+    "source_kind": "confluence",
+    "source_id": "14778372"
+  },
+  "pages": [
+    {
+      "page_id": "14680066",
+      "title": "02 – Source of Truth, Governance and Decision Rights",
+      "version": 1,
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/14680066",
+      "captured_at": "2026-08-14T22:47:30.355Z",
+      "gbrain_slug": "pages/14680066"
+    },
+    {
+      "page_id": "14778372",
+      "title": "ATLAS Single Source of Truth",
+      "version": 3,
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/14778372",
+      "captured_at": "2026-08-14T22:47:30.355Z",
+      "gbrain_slug": "pages/14778372"
+    },
+    {
+      "page_id": "15073290",
+      "title": "04 – Target Architecture and System Context",
+      "version": 2,
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/15073290",
+      "captured_at": "2026-08-14T22:47:30.355Z",
+      "gbrain_slug": "pages/15073290"
+    },
+    {
+      "page_id": "15171611",
+      "title": "14 – Delivery Model, Program Increment and Sprint Plan",
+      "version": 18,
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/15171611",
+      "captured_at": "2026-08-14T22:47:30.355Z",
+      "gbrain_slug": "pages/15171611"
+    },
+    {
+      "page_id": "22478849",
+      "title": "Sprint 2 – Visible Real Semantic Atlas – Sprint Plan",
+      "version": 4,
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/22478849",
+      "captured_at": "2026-08-14T22:47:30.355Z",
+      "gbrain_slug": "pages/22478849"
+    }
+  ]
+}

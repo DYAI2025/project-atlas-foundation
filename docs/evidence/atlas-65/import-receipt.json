@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "imported_at": "2026-08-14T22:47:47.763Z",
+  "project_id": "ATLAS",
+  "gbrain_checkout_commit": "15b9863d13635d173562a54f55a1d388bfcf546b",
+  "brain_home": "/Users/benjaminpoersch/Projects/project-atlas-foundation/out/atlas65/gbrain-home",
+  "gbrain_source_id": "confluence-14778372",
+  "pages": [
+    {
+      "slug": "pages/14680066",
+      "status": "created_or_updated",
+      "chunks": 1
+    },
+    {
+      "slug": "pages/14778372",
+      "status": "created_or_updated",
+      "chunks": 3
+    },
+    {
+      "slug": "pages/15073290",
+      "status": "created_or_updated",
+      "chunks": 2
+    },
+    {
+      "slug": "pages/15171611",
+      "status": "created_or_updated",
+      "chunks": 11
+    },
+    {
+      "slug": "pages/22478849",
+      "status": "created_or_updated",
+      "chunks": 4
+    }
+  ],
+  "links": [
+    {
+      "from_slug": "pages/14778372",
+      "to_slug": "pages/14680066",
+      "link_type": "parent_of",
+      "link_source": "confluence-hierarchy",
+      "status": "ok"
+    },
+    {
+      "from_slug": "pages/14778372",
+      "to_slug": "pages/15073290",
+      "link_type": "parent_of",
+      "link_source": "confluence-hierarchy",
+      "status": "ok"
+    },
+    {
+      "from_slug": "pages/14778372",
+      "to_slug": "pages/15171611",
+      "link_type": "parent_of",
+      "link_source": "confluence-hierarchy",
+      "status": "ok"
+    },
+    {
+      "from_slug": "pages/15171611",
+      "to_slug": "pages/22478849",
+      "link_type": "parent_of",
+      "link_source": "confluence-hierarchy",
+      "status": "ok"
+    }
+  ]
+}
