@@ -319,7 +319,7 @@ export function resolveNextUrl(baseUrl, nextLink) {
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 9 tests (`# tests 9`, `# pass 9`, `# fail 0`).
+Expected: PASS, 10 tests (`# tests 10`, `# pass 10`, `# fail 0`).
 
 **Step 5: Write the failing tests for `paginate`**
 
@@ -523,7 +523,7 @@ export async function paginate({
 **Step 8: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 17 tests (`# tests 17`, `# pass 17`, `# fail 0`).
+Expected: PASS, 18 tests (`# tests 18`, `# pass 18`, `# fail 0`).
 
 **Step 9: Commit**
 
@@ -699,9 +699,9 @@ export function assertPageDetailShape(raw, expectedId) {
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 30 tests, `# fail 0`. (Cumulative counts from here on include Deviation D-1's
-three extra Task-1 tests. If the actual count differs but `# fail` is 0, report the actual
-number rather than adjusting the suite to hit the stated one.)
+Expected: PASS, 31 tests, `# fail 0`. (Cumulative counts from here on include Deviation D-1's
+four extra Task-1 tests — Task 1 ends at 18. If the actual count differs but `# fail` is 0,
+report the actual number rather than adjusting the suite to hit the stated one.)
 
 **Step 5: Commit**
 
@@ -819,7 +819,7 @@ export function lifecycleFor(sourceStatus) {
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 38 tests, `# fail 0`.
+Expected: PASS, 39 tests, `# fail 0`.
 
 **Step 5: Commit**
 
@@ -1147,7 +1147,7 @@ export async function discoverProject({
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 45 tests, `# fail 0`.
+Expected: PASS, 46 tests, `# fail 0`.
 
 **Step 5: Commit**
 
@@ -1449,7 +1449,7 @@ export async function applyPrevious(doc, previous, { env, project, fetchImpl = f
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 54 tests, `# fail 0`.
+Expected: PASS, 55 tests, `# fail 0`.
 
 **Step 5: Commit**
 
