@@ -9,6 +9,13 @@
 // lifecycle status and non-progressing cursor aborts the whole scan. There is no
 // partial result and no synthetic fallback. No page body is ever requested here,
 // so no raw Confluence content enters this path (DEC-04).
+import { createHash } from 'node:crypto'
+// Credentials are NOT re-implemented here. requireAuth is the single existing
+// credential contract (ATLAS65_CONFLUENCE_* env vars) and keeps its own
+// E_SOURCE_AUTH_MISSING code so the runbook stays consistent across pipelines.
+import { requireAuth } from '../atlas65/confluence-source.mjs'
+export { requireAuth }
+
 export class DiscoveryError extends Error {
   constructor(code, message, options) {
     super(message, options)
@@ -282,4 +289,125 @@ export function lifecycleFor(sourceStatus) {
     )
   }
   return STATUS_TO_LIFECYCLE[sourceStatus]
+}
+
+export const DISCOVERY_RULE =
+  'registered root_page_id + every type="page" descendant at any depth; scope from the writer registry only'
+
+export function descendantsUrl(baseUrl, rootPageId, limit = DEFAULT_PAGE_LIMIT) {
+  return `${baseUrl}/wiki/api/v2/pages/${rootPageId}/descendants?limit=${limit}`
+}
+
+// Deliberately no body-format: discovery never reads page bodies (DEC-04).
+export function pageDetailUrl(baseUrl, pageId) {
+  return `${baseUrl}/wiki/api/v2/pages/${pageId}`
+}
+
+function byPageId(a, b) {
+  return a.page_id < b.page_id ? -1 : a.page_id > b.page_id ? 1 : 0
+}
+
+// Field order is written out explicitly, never spread, so identical input
+// serializes byte-identically.
+function buildPageRecord({ detail, depth, baseUrl, spaceKey }) {
+  return {
+    page_id: detail.page_id,
+    title: detail.title,
+    version: detail.version,
+    parent_id: detail.parent_id,
+    depth,
+    lifecycle: lifecycleFor(detail.source_status),
+    source_status: detail.source_status,
+    confluence_url: `${baseUrl}/wiki/spaces/${spaceKey}/pages/${detail.page_id}`
+  }
+}
+
+export function digestOf(semantic) {
+  return createHash('sha256').update(JSON.stringify(semantic)).digest('hex')
+}
+
+export async function discoverProject({
+  env,
+  project,
+  capturedAt,
+  fetchImpl = fetch,
+  limit = DEFAULT_PAGE_LIMIT,
+  maxRequests = MAX_PAGINATION_REQUESTS
+}) {
+  const auth = requireAuth(env) // throws E_SOURCE_AUTH_MISSING before any network use
+  const { baseUrl, authorization } = auth
+  const rootId = String(project.root_page_id)
+
+  // 1) The root itself. The descendants endpoint never returns it.
+  const rootRaw = await getJson(pageDetailUrl(baseUrl, rootId), { authorization, fetchImpl })
+  const rootDetail = assertPageDetailShape(rootRaw, rootId)
+
+  // 2) The full subtree, cursor-paginated.
+  const walk = await paginate({
+    startUrl: descendantsUrl(baseUrl, rootId, limit),
+    baseUrl,
+    authorization,
+    fetchImpl,
+    maxRequests
+  })
+
+  const descendants = walk.results.map(assertDescendantShape)
+  const pageDescendants = descendants.filter((d) => d.type === 'page')
+  const nonPageDescendants = descendants.length - pageDescendants.length
+
+  const depthById = new Map()
+  for (const d of pageDescendants) {
+    if (d.page_id === rootId) {
+      throw new DiscoveryError(
+        'E_DISCOVERY_SCOPE',
+        `descendant ${d.page_id} is the registered root — a page cannot be its own descendant`
+      )
+    }
+    if (depthById.has(d.page_id)) {
+      throw new DiscoveryError(
+        'E_DISCOVERY_SCOPE',
+        `page ${d.page_id} appeared twice in the cursor walk — refusing an ambiguous scope`
+      )
+    }
+    depthById.set(d.page_id, d.depth)
+  }
+
+  // 3) One detail read per page: the only place a revision comes from.
+  const pages = [buildPageRecord({ detail: rootDetail, depth: 0, baseUrl, spaceKey: project.confluence_space_key })]
+  for (const pageId of [...depthById.keys()].sort()) {
+    const raw = await getJson(pageDetailUrl(baseUrl, pageId), { authorization, fetchImpl })
+    const d = assertPageDetailShape(raw, pageId)
+    pages.push(buildPageRecord({ detail: d, depth: depthById.get(pageId), baseUrl, spaceKey: project.confluence_space_key }))
+  }
+  pages.sort(byPageId)
+
+  const semantic = {
+    schema_version: SCHEMA_VERSION,
+    project_id: project.project_id,
+    source: {
+      source_kind: 'confluence',
+      source_id: rootId,
+      space_key: project.confluence_space_key,
+      base_url: baseUrl
+    },
+    discovery: {
+      rule: DISCOVERY_RULE,
+      page_count: pages.length,
+      non_page_descendants: nonPageDescendants
+    },
+    pages,
+    absent: [],
+    delta: null
+  }
+
+  return {
+    schema_version: SCHEMA_VERSION,
+    discovery_digest: digestOf(semantic),
+    semantic,
+    capture: {
+      captured_at: capturedAt,
+      pagination_requests: walk.requests,
+      previous_digest: null
+    }
+  }
 }

@@ -11,7 +11,9 @@ import {
   assertPageDetailShape,
   lifecycleFor,
   LIFECYCLES,
-  STATUS_TO_LIFECYCLE
+  STATUS_TO_LIFECYCLE,
+  discoverProject,
+  SCHEMA_VERSION
 } from '../src/atlas25/discovery.mjs'
 
 const BASE = 'https://example.invalid'
@@ -550,4 +552,163 @@ test('archived and deleted are never reported as ordinary active content', () =>
   )
   // The mapping is a closed allowlist, not an open passthrough.
   assert.deepEqual(Object.keys(STATUS_TO_LIFECYCLE).sort(), ['archived', 'current', 'deleted', 'trashed'])
+})
+
+// --- discoverProject --------------------------------------------------------
+
+const PROJECT = {
+  project_id: 'PLUMBLINE',
+  jira_key: 'PLUM',
+  confluence_space_key: 'PRODUKTMAN',
+  root_page_id: '900000001',
+  status: 'active'
+}
+const ENV = {
+  ATLAS65_CONFLUENCE_BASE_URL: BASE,
+  ATLAS65_CONFLUENCE_EMAIL: 'u@example.com',
+  ATLAS65_CONFLUENCE_API_TOKEN: 't'
+}
+
+// Serves: root detail, a two-page cursor walk of descendants, and one detail per
+// descendant. Any page id not registered answers 404.
+function siteFetch({ descendantPages, details }) {
+  const calls = []
+  const impl = async (url) => {
+    calls.push(url)
+    const u = new URL(url)
+    if (u.pathname.endsWith('/descendants')) {
+      const cursor = u.searchParams.get('cursor') ?? '0'
+      const body = descendantPages.get(cursor)
+      if (body === undefined) return { ok: false, status: 404, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => body }
+    }
+    const id = u.pathname.split('/').pop()
+    const d = details.get(id)
+    if (d === undefined) return { ok: false, status: 404, json: async () => ({}) }
+    return { ok: true, status: 200, json: async () => d }
+  }
+  impl.calls = calls
+  return impl
+}
+
+const TWO_PAGE_WALK = new Map([
+  ['0', {
+    results: [descendant({ id: '900000002', parentId: '900000001', depth: 1 })],
+    _links: { next: '/wiki/api/v2/pages/900000001/descendants?limit=100&cursor=c2' }
+  }],
+  ['c2', {
+    results: [
+      descendant({ id: '900000003', parentId: '900000002', depth: 2, status: 'archived' }),
+      descendant({ id: '900000004', parentId: '900000001', depth: 1, type: 'whiteboard' })
+    ],
+    _links: {}
+  }]
+])
+const DETAILS = new Map([
+  ['900000001', detail({ id: '900000001', parentId: null, version: { number: 12 }, title: 'Root' })],
+  ['900000002', detail({ id: '900000002', parentId: '900000001', version: { number: 7 } })],
+  ['900000003', detail({ id: '900000003', parentId: '900000002', version: { number: 2 }, status: 'archived', title: 'Old' })]
+])
+
+test('discoverProject walks the registered root subtree and captures revisions', async () => {
+  const fetchImpl = siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  const doc = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: '2026-08-15T10:00:00.000Z', fetchImpl
+  })
+
+  assert.equal(doc.schema_version, SCHEMA_VERSION)
+  assert.equal(doc.semantic.project_id, 'PLUMBLINE')
+  assert.deepEqual(doc.semantic.source, {
+    source_kind: 'confluence',
+    source_id: '900000001',
+    space_key: 'PRODUKTMAN',
+    base_url: BASE
+  })
+  // Root + type=page descendants only; the whiteboard is counted, not dropped.
+  assert.deepEqual(doc.semantic.pages.map((p) => p.page_id), ['900000001', '900000002', '900000003'])
+  assert.equal(doc.semantic.discovery.non_page_descendants, 1)
+  assert.deepEqual(
+    doc.semantic.pages.map((p) => [p.page_id, p.version, p.lifecycle, p.source_status]),
+    [
+      ['900000001', 12, 'active', 'current'],
+      ['900000002', 7, 'active', 'current'],
+      ['900000003', 2, 'archived', 'archived']
+    ]
+  )
+  assert.equal(doc.semantic.pages[1].parent_id, '900000001')
+  assert.equal(doc.semantic.pages[0].parent_id, null)
+  assert.equal(
+    doc.semantic.pages[1].confluence_url,
+    'https://example.invalid/wiki/spaces/PRODUKTMAN/pages/900000002'
+  )
+  assert.equal(doc.capture.captured_at, '2026-08-15T10:00:00.000Z')
+  assert.equal(doc.capture.pagination_requests, 2) // proves the cursor was actually traversed
+})
+
+test('discoverProject is idempotent: identical source state yields an identical digest', async () => {
+  const mk = () => siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  const a = await discoverProject({ env: ENV, project: PROJECT, capturedAt: '2026-08-15T10:00:00.000Z', fetchImpl: mk() })
+  const b = await discoverProject({ env: ENV, project: PROJECT, capturedAt: '2027-01-01T23:59:59.000Z', fetchImpl: mk() })
+
+  assert.equal(JSON.stringify(a.semantic), JSON.stringify(b.semantic)) // byte-identical
+  assert.equal(a.discovery_digest, b.discovery_digest)
+  assert.notEqual(a.capture.captured_at, b.capture.captured_at) // timestamps differ...
+  assert.equal(JSON.stringify(a.semantic).includes('2026-08-15'), false) // ...and are not identity
+})
+
+test('discoverProject output order does not depend on the order Confluence returns pages', async () => {
+  const reversed = new Map([
+    ['0', {
+      results: [descendant({ id: '900000003', parentId: '900000002', depth: 2, status: 'archived' })],
+      _links: { next: '/wiki/api/v2/pages/900000001/descendants?limit=100&cursor=c2' }
+    }],
+    ['c2', {
+      results: [
+        descendant({ id: '900000004', parentId: '900000001', depth: 1, type: 'whiteboard' }),
+        descendant({ id: '900000002', parentId: '900000001', depth: 1 })
+      ],
+      _links: {}
+    }]
+  ])
+  const a = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x',
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  })
+  const b = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x',
+    fetchImpl: siteFetch({ descendantPages: reversed, details: DETAILS })
+  })
+  assert.equal(a.discovery_digest, b.discovery_digest)
+})
+
+test('discoverProject fails closed when a descendant id appears twice in the walk', async () => {
+  const dup = new Map([['0', { results: [descendant({ id: '900000002' }), descendant({ id: '900000002' })], _links: {} }]])
+  await assert.rejects(
+    discoverProject({ env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl: siteFetch({ descendantPages: dup, details: DETAILS }) }),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_SCOPE' && /twice/.test(e.message)
+  )
+})
+
+test('discoverProject fails closed when a descendant collides with the root id', async () => {
+  const collide = new Map([['0', { results: [descendant({ id: '900000001', depth: 1 })], _links: {} }]])
+  await assert.rejects(
+    discoverProject({ env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl: siteFetch({ descendantPages: collide, details: DETAILS }) }),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_SCOPE' && /root/.test(e.message)
+  )
+})
+
+test('discoverProject fails closed without credentials, before any network call', async () => {
+  const fetchImpl = async () => { throw new Error('must not be reached') }
+  await assert.rejects(
+    discoverProject({ env: { ATLAS65_CONFLUENCE_BASE_URL: BASE }, project: PROJECT, capturedAt: 'x', fetchImpl }),
+    (e) => e.code === 'E_SOURCE_AUTH_MISSING'
+  )
+})
+
+test('discoverProject fails closed when the root page itself is unreadable', async () => {
+  const fetchImpl = siteFetch({ descendantPages: TWO_PAGE_WALK, details: new Map() })
+  await assert.rejects(
+    discoverProject({ env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl }),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_UNREADABLE'
+  )
 })
