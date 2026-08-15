@@ -250,3 +250,36 @@ export function assertPageDetailShape(raw, expectedId) {
     source_status: raw.status
   }
 }
+
+// Closed allowlist. A status Confluence starts returning that is not listed here
+// must fail the scan, not be silently normalized into "active".
+export const STATUS_TO_LIFECYCLE = Object.freeze({
+  current: 'active',
+  archived: 'archived',
+  trashed: 'deleted',
+  deleted: 'deleted'
+})
+
+// "absent" and "removed_from_scope" are never derived from a status field; they
+// are only assigned by the previous-scan probe (see probeAbsent).
+export const LIFECYCLES = Object.freeze([
+  'active',
+  'archived',
+  'deleted',
+  'removed_from_scope',
+  'absent'
+])
+
+export function lifecycleFor(sourceStatus) {
+  if (!isNonEmptyString(sourceStatus)) {
+    throw new DiscoveryError('E_DISCOVERY_LIFECYCLE', 'page status missing — lifecycle cannot be established')
+  }
+  // Object.hasOwn, never `in`: "constructor"/"__proto__" must not resolve.
+  if (!Object.hasOwn(STATUS_TO_LIFECYCLE, sourceStatus)) {
+    throw new DiscoveryError(
+      'E_DISCOVERY_LIFECYCLE',
+      `unknown Confluence page status ${JSON.stringify(sourceStatus)} — refusing to guess a lifecycle state`
+    )
+  }
+  return STATUS_TO_LIFECYCLE[sourceStatus]
+}

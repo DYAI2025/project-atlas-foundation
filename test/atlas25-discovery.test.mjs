@@ -8,7 +8,10 @@ import {
   paginate,
   MAX_PAGINATION_REQUESTS,
   assertDescendantShape,
-  assertPageDetailShape
+  assertPageDetailShape,
+  lifecycleFor,
+  LIFECYCLES,
+  STATUS_TO_LIFECYCLE
 } from '../src/atlas25/discovery.mjs'
 
 const BASE = 'https://example.invalid'
@@ -499,4 +502,52 @@ test('assertPageDetailShape fails closed when the response answers with a differ
     () => assertPageDetailShape(detail({ id: '900000009' }), '900000002'),
     (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_METADATA' && /does not match/.test(e.message)
   )
+})
+
+// --- lifecycle --------------------------------------------------------------
+
+for (const [status, lifecycle] of [
+  ['current', 'active'],
+  ['archived', 'archived'],
+  ['trashed', 'deleted'],
+  ['deleted', 'deleted']
+]) {
+  test(`lifecycleFor maps status "${status}" to "${lifecycle}"`, () => {
+    assert.equal(lifecycleFor(status), lifecycle)
+  })
+}
+
+test('lifecycleFor fails closed on an unknown status rather than guessing', () => {
+  assert.throws(
+    () => lifecycleFor('historical'),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_LIFECYCLE' && /historical/.test(e.message)
+  )
+})
+
+test('lifecycleFor fails closed on a missing status', () => {
+  assert.throws(
+    () => lifecycleFor(''),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_LIFECYCLE'
+  )
+})
+
+test('lifecycleFor does not walk the prototype chain', () => {
+  // "constructor"/"toString" must be unknown statuses, not inherited members.
+  for (const evil of ['constructor', 'toString', '__proto__']) {
+    assert.throws(
+      () => lifecycleFor(evil),
+      (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_LIFECYCLE'
+    )
+  }
+})
+
+test('archived and deleted are never reported as ordinary active content', () => {
+  assert.notEqual(lifecycleFor('archived'), 'active')
+  assert.notEqual(lifecycleFor('trashed'), 'active')
+  assert.deepEqual(
+    [...LIFECYCLES].sort(),
+    ['absent', 'active', 'archived', 'deleted', 'removed_from_scope']
+  )
+  // The mapping is a closed allowlist, not an open passthrough.
+  assert.deepEqual(Object.keys(STATUS_TO_LIFECYCLE).sort(), ['archived', 'current', 'deleted', 'trashed'])
 })
