@@ -170,15 +170,25 @@ Everything in this task is pure and network-free except `paginate`, which takes 
 
 Create `test/atlas25-discovery.test.mjs`:
 
+> **Deviation D-1 (recorded 2026-08-15, during execution).** The first draft of this task
+> was defective in two ways, both found by running it. (a) The fixture `'ht!tp://%%%'` was
+> asserted to be unparseable, but WHATWG URL parsing does not throw on it: `!` is not a legal
+> scheme character, so the string is treated as a *relative reference* and resolves to
+> `https://example.invalid/ht!tp://%%%`. That made the "not a resolvable URL" branch
+> unreachable for exactly the junk Confluence could plausibly return, and would have let a
+> garbage `next` value be promoted into a same-origin URL that the walk then fetches.
+> `resolveNextUrl` is therefore **hardened**: a next link must be either rooted at `/`
+> (Confluence's actual `_links.next` shape) or a parseable absolute URL. Bare relative
+> strings are rejected instead of resolved. A protocol-relative `//host/path` case was added
+> to pin down that it is still caught by the origin check. (b) The Step-1 import list named
+> `paginate`, which does not exist until Step 7; a missing named export is an ESM *link-time*
+> failure that kills the whole module, so Step 4 could never report "6 passing". The import
+> list is now split across Step 1 and Step 5.
+
 ```js
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  DiscoveryError,
-  resolveNextUrl,
-  paginate,
-  MAX_PAGINATION_REQUESTS
-} from '../src/atlas25/discovery.mjs'
+import { DiscoveryError, resolveNextUrl } from '../src/atlas25/discovery.mjs'
 
 const BASE = 'https://example.invalid'
 const AUTH = 'Basic dGVzdA=='
@@ -207,10 +217,26 @@ test('resolveNextUrl fails closed on a next link that leaves the configured orig
   )
 })
 
+test('resolveNextUrl fails closed on a protocol-relative next link pointing at another host', () => {
+  // "//attacker.invalid/x" DOES parse and resolves to the attacker's origin, so
+  // this is caught by the origin check rather than by the parse guard.
+  assert.throws(
+    () => resolveNextUrl(BASE, '//attacker.invalid/wiki/api/v2/pages/1/descendants'),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_PAGINATION' && /origin/.test(e.message)
+  )
+})
+
 for (const [name, link] of [
   ['an empty next link', ''],
   ['a non-string next link', 42],
-  ['an unparseable next link', 'ht!tp://%%%']
+  // Bare relative junk: WHATWG parsing does NOT throw on this (see Deviation D-1),
+  // it silently resolves against the base. It must be rejected for not being
+  // rooted at "/", never resolved into a same-origin URL we would then fetch.
+  ['a bare relative next link', 'ht!tp://%%%'],
+  ['a relative next link that is not rooted at /', 'descendants?cursor=abc'],
+  // These genuinely throw in the URL parser, exercising the parse guard itself.
+  ['an unparseable absolute next link', 'http://'],
+  ['a next link with an unterminated host', 'http://[']
 ]) {
   test(`resolveNextUrl fails closed on ${name}`, () => {
     assert.throws(
@@ -260,18 +286,29 @@ export function resolveNextUrl(baseUrl, nextLink) {
     throw new DiscoveryError('E_DISCOVERY_PAGINATION', `next cursor link ${what}`)
   }
   if (typeof nextLink !== 'string' || nextLink.length === 0) fail('is missing or not a string')
-  let url
-  try {
-    url = new URL(nextLink, `${baseUrl}/`)
-  } catch {
-    return fail(`is not a resolvable URL: ${JSON.stringify(nextLink)}`)
-  }
+
   let base
   try {
     base = new URL(baseUrl)
   } catch {
     throw new DiscoveryError('E_DISCOVERY_PAGINATION', `configured base url is not a URL: ${JSON.stringify(baseUrl)}`)
   }
+
+  // Confluence returns _links.next as a site-relative path ("/wiki/api/v2/...").
+  // Only a rooted path may be resolved against the base; anything else has to be
+  // an absolute URL already. Resolving a BARE relative string would be unsafe:
+  // WHATWG parsing does not throw on junk like "ht!tp://%%%" (an illegal scheme
+  // character just makes it a relative reference), so it would be silently
+  // promoted into a same-origin URL that the cursor walk then fetches.
+  let url
+  try {
+    url = nextLink.startsWith('/') ? new URL(nextLink, base) : new URL(nextLink)
+  } catch {
+    return fail(`is not a resolvable URL: ${JSON.stringify(nextLink)}`)
+  }
+
+  // Also covers protocol-relative "//other.host/path", which parses fine but
+  // resolves to a foreign origin.
   if (url.origin !== base.origin) {
     fail(`leaves the configured Confluence origin (${url.origin} != ${base.origin})`)
   }
@@ -282,11 +319,22 @@ export function resolveNextUrl(baseUrl, nextLink) {
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 6 tests.
+Expected: PASS, 9 tests (`# tests 9`, `# pass 9`, `# fail 0`).
 
 **Step 5: Write the failing tests for `paginate`**
 
-Append to `test/atlas25-discovery.test.mjs`:
+First widen the import at the top of `test/atlas25-discovery.test.mjs` to:
+
+```js
+import {
+  DiscoveryError,
+  resolveNextUrl,
+  paginate,
+  MAX_PAGINATION_REQUESTS
+} from '../src/atlas25/discovery.mjs'
+```
+
+Then append:
 
 ```js
 // --- cursor pagination ------------------------------------------------------
@@ -398,7 +446,10 @@ test('paginate fails closed when a response body is not JSON', async () => {
 **Step 6: Run the tests to verify they fail**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: FAIL — `paginate is not a function` on the 8 new tests; the 6 `resolveNextUrl` tests still pass.
+Expected: FAIL. Because a missing named export is an ESM **link-time** error, the whole module
+fails to load and the run reports `# tests 1 / # fail 1` with
+`SyntaxError: The requested module '../src/atlas25/discovery.mjs' does not provide an export named 'paginate'`.
+It does **not** report 9 passing + 8 failing — that is expected, not a defect.
 
 **Step 7: Implement `getJson` and `paginate`**
 
@@ -472,7 +523,7 @@ export async function paginate({
 **Step 8: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 14 tests.
+Expected: PASS, 17 tests (`# tests 17`, `# pass 17`, `# fail 0`).
 
 **Step 9: Commit**
 
@@ -648,7 +699,9 @@ export function assertPageDetailShape(raw, expectedId) {
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 27 tests.
+Expected: PASS, 30 tests, `# fail 0`. (Cumulative counts from here on include Deviation D-1's
+three extra Task-1 tests. If the actual count differs but `# fail` is 0, report the actual
+number rather than adjusting the suite to hit the stated one.)
 
 **Step 5: Commit**
 
@@ -766,7 +819,7 @@ export function lifecycleFor(sourceStatus) {
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 35 tests.
+Expected: PASS, 38 tests, `# fail 0`.
 
 **Step 5: Commit**
 
@@ -1094,7 +1147,7 @@ export async function discoverProject({
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 42 tests.
+Expected: PASS, 45 tests, `# fail 0`.
 
 **Step 5: Commit**
 
@@ -1396,7 +1449,7 @@ export async function applyPrevious(doc, previous, { env, project, fetchImpl = f
 **Step 4: Run the tests to verify they pass**
 
 Run: `node --test test/atlas25-discovery.test.mjs`
-Expected: PASS, 51 tests.
+Expected: PASS, 54 tests, `# fail 0`.
 
 **Step 5: Commit**
 
