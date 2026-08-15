@@ -252,6 +252,59 @@ for (const [name, link] of [
 Run: `node --test test/atlas25-discovery.test.mjs`
 Expected: FAIL — `Cannot find module .../src/atlas25/discovery.mjs`.
 
+> **Deviation D-2 (recorded 2026-08-15, from the Task-1 code-quality review).** The review
+> found one contract bug and a cluster of caller-side gaps, all reproduced before being
+> accepted. The code blocks below are the POST-D-2 form.
+>
+> - **C1 (critical) — `paginate` returned a silently truncated result set.** End-of-walk was
+>   `next` being `undefined`/`null`/`''`, so a malformed `_links` (e.g. the string `"CORRUPT"`,
+>   where `?.next` yields `undefined`) or an empty-string cursor ended the walk and returned
+>   partial results as if complete — the exact defect the missing-`results` guard exists to
+>   prevent, and a direct contradiction of the module header's "There is no partial result".
+>   It also made `resolveNextUrl`'s own `length === 0` branch unreachable from its only
+>   production caller, so one function's guard was dead while the other's was wrong. **Now:**
+>   only the ABSENCE of `_links.next` ends the walk; a non-object `_links` and any other
+>   `next` value fall through to `resolveNextUrl` and fail closed.
+> - **I4 (important) — `startUrl` bypassed every guard `next` links are held to**, and was
+>   fetched *with the Authorization header attached*. Verified: a `startUrl` of
+>   `http://attacker.invalid/steal` was fetched carrying the credential. **Now:** `startUrl`
+>   goes through the same validator, which also normalizes it (M2: an unnormalized start URL
+>   let the same resource be fetched twice before the repeat guard tripped).
+> - **I2 — `blob:https://host/...` passed the origin check**, because `URL.origin` reports a
+>   blob's INNER origin. **Now:** the scheme must match the base too.
+> - **I2b — userinfo passed**, because `origin` excludes it: `https://u:s3cr3t@example.invalid/`
+>   was accepted, would be fetched, and would then be written verbatim into any error message.
+>   **Now:** rejected outright, which turns "no credential in the logs in practice" into "no
+>   credential in the logs by construction".
+> - **I3 — a missing `authorization` shipped the literal string `undefined`**, surfacing a
+>   local config defect as a remote HTTP 401. **Now:** `E_DISCOVERY_AUTH_MISSING` before any
+>   request, mirroring `src/atlas65/confluence-source.mjs`.
+> - **I6 — no test pinned the outgoing request.** Deleting the `authorization` header from
+>   `getJson` left all 18 tests green, and DEC-04 ("no page body is ever requested here") was
+>   enforced by nothing but nobody having typed `body-format`. **Now:** the fixture captures
+>   `init` and the suite asserts both.
+> - **M3/M4/M5/M6/M8:** config errors get their own `E_DISCOVERY_CONFIG` code; `fail()` call
+>   style unified; `DiscoveryError` sets `name` and forwards `cause`, and a non-`Error` throw
+>   no longer degrades to `network failure (undefined)`; a literal JSON `null` body is rejected
+>   so it cannot impersonate `getJson`'s 404 signal (Task 5 reads `null` as evidence a page is
+>   gone); the results spread became a loop.
+>
+> **On the code blocks below.** Steps 3 and 7 are the authoritative source for
+> `src/atlas25/discovery.mjs` and the module is verified byte-identical to them (`cmp` clean).
+> The Step-5 **test** block is deliberately NOT updated to the post-D-2 suite: D-2 added 15
+> tests (18 → 33) covering the outgoing request shape, the C1 regressions, the new
+> scheme/userinfo guards, `startUrl` validation, and `getJson`'s auth / literal-null /
+> `allow404` paths. Reproducing all of them inline would bloat this plan without adding
+> traceability. For the test file, `test/atlas25-discovery.test.mjs` on disk is authoritative;
+> the Step-5 block records the original 8 `paginate` tests only.
+>
+> **Deferred, NOT fixed here** — carried into the PR's findings section: **I5**, no timeout or
+> `AbortSignal`, so a hung socket stalls the walk indefinitely (`maxRequests` bounds requests,
+> not time). This is repo-wide — no `signal`/`timeout` appears anywhere in `src/` — so fixing
+> it is a cross-cutting change outside ATLAS-25's scope. **M7**, the transport-error triad is
+> near-duplicated from `src/atlas65/confluence-source.mjs`; left alone deliberately, since the
+> briefing forbids refactoring ATLAS-65.
+
 **Step 3: Write the minimal implementation**
 
 Create `src/atlas25/discovery.mjs`:
@@ -269,8 +322,9 @@ Create `src/atlas25/discovery.mjs`:
 // partial result and no synthetic fallback. No page body is ever requested here,
 // so no raw Confluence content enters this path (DEC-04).
 export class DiscoveryError extends Error {
-  constructor(code, message) {
-    super(message)
+  constructor(code, message, options) {
+    super(message, options)
+    this.name = 'DiscoveryError'
     this.code = code
   }
 }
@@ -281,17 +335,23 @@ export const DEFAULT_PAGE_LIMIT = 100
 // failure, never a silent truncation.
 export const MAX_PAGINATION_REQUESTS = 200
 
-export function resolveNextUrl(baseUrl, nextLink) {
+// The single gate for every URL this module will fetch — the start URL and every
+// cursor link go through it, so a caller cannot hand the walk a target that a
+// server would not have been allowed to supply. Returns the NORMALIZED href, so
+// the caller's repeat-detection compares like with like.
+export function resolveFetchableUrl(baseUrl, link, label = 'next cursor link') {
   const fail = (what) => {
-    throw new DiscoveryError('E_DISCOVERY_PAGINATION', `next cursor link ${what}`)
+    throw new DiscoveryError('E_DISCOVERY_PAGINATION', `${label} ${what}`)
   }
-  if (typeof nextLink !== 'string' || nextLink.length === 0) fail('is missing or not a string')
+  if (typeof link !== 'string' || link.length === 0) fail('is missing or not a string')
 
   let base
   try {
     base = new URL(baseUrl)
   } catch {
-    throw new DiscoveryError('E_DISCOVERY_PAGINATION', `configured base url is not a URL: ${JSON.stringify(baseUrl)}`)
+    // A bad base URL is a deployment/config defect, not a pagination defect;
+    // sharing the pagination code would route it to the wrong triage path.
+    throw new DiscoveryError('E_DISCOVERY_CONFIG', `configured base url is not a URL: ${JSON.stringify(baseUrl)}`)
   }
 
   // Confluence returns _links.next as a site-relative path ("/wiki/api/v2/...").
@@ -302,17 +362,37 @@ export function resolveNextUrl(baseUrl, nextLink) {
   // promoted into a same-origin URL that the cursor walk then fetches.
   let url
   try {
-    url = nextLink.startsWith('/') ? new URL(nextLink, base) : new URL(nextLink)
+    url = link.startsWith('/') ? new URL(link, base) : new URL(link)
   } catch {
-    return fail(`is not a resolvable URL: ${JSON.stringify(nextLink)}`)
+    fail(`is not a resolvable URL: ${JSON.stringify(link)}`)
   }
 
+  // Same origin is NOT sufficient on its own. `blob:https://host/x` reports the
+  // INNER origin, so an origin-only check passes it straight through to fetch.
+  if (url.protocol !== base.protocol) {
+    fail(`does not use the configured scheme (${url.protocol} != ${base.protocol})`)
+  }
+  // `origin` excludes userinfo, so `https://u:pw@host/` would be accepted, then
+  // fetched, then written verbatim into any error message. Rejecting it makes
+  // "no credential reaches the logs" true by construction rather than by luck.
+  // It also removes `https://attacker.invalid@example.invalid/x`, which a human
+  // triaging a log reads as pointing at the wrong host.
+  if (url.username !== '' || url.password !== '') {
+    fail('carries embedded userinfo credentials')
+  }
   // Also covers protocol-relative "//other.host/path", which parses fine but
-  // resolves to a foreign origin.
+  // resolves to a foreign origin — as does a rooted "/\\evil.com/x", because
+  // WHATWG treats a backslash as a slash for special schemes and promotes it to
+  // an authority. That case is stopped HERE, not by the rooted check above.
   if (url.origin !== base.origin) {
     fail(`leaves the configured Confluence origin (${url.origin} != ${base.origin})`)
   }
   return url.toString()
+}
+
+// Kept as the cursor-link-flavoured name used by paginate and its tests.
+export function resolveNextUrl(baseUrl, nextLink) {
+  return resolveFetchableUrl(baseUrl, nextLink)
 }
 ```
 
@@ -460,19 +540,33 @@ Append to `src/atlas25/discovery.mjs`:
 // treat "Confluence no longer exposes this page" as evidence instead of an
 // error; every other non-2xx stays a hard failure.
 export async function getJson(url, { authorization, fetchImpl = fetch, allow404 = false } = {}) {
+  // A missing credential is a LOCAL config defect. Without this guard the header
+  // goes out as the literal string "undefined" and comes back as a remote HTTP
+  // 401, pointing triage at the wrong system.
+  if (typeof authorization !== 'string' || authorization.length === 0) {
+    throw new DiscoveryError('E_DISCOVERY_AUTH_MISSING', `${url}: no authorization header supplied`)
+  }
   let res
   try {
     res = await fetchImpl(url, { headers: { authorization, accept: 'application/json' } })
   } catch (e) {
-    throw new DiscoveryError('E_DISCOVERY_UNREADABLE', `${url}: network failure (${e.message})`)
+    // A non-Error throw would otherwise degrade to "network failure (undefined)".
+    throw new DiscoveryError('E_DISCOVERY_UNREADABLE', `${url}: network failure (${e?.message ?? String(e)})`, { cause: e })
   }
   if (allow404 && res.status === 404) return null
   if (!res.ok) throw new DiscoveryError('E_DISCOVERY_UNREADABLE', `${url}: HTTP ${res.status}`)
+  let body
   try {
-    return await res.json()
-  } catch {
-    throw new DiscoveryError('E_DISCOVERY_UNREADABLE', `${url}: response is not JSON`)
+    body = await res.json()
+  } catch (e) {
+    throw new DiscoveryError('E_DISCOVERY_UNREADABLE', `${url}: response is not JSON`, { cause: e })
   }
+  // `null` is this function's 404 signal. A literal JSON `null` body must not be
+  // able to impersonate it: Task 5 reads `null` as evidence that a page is gone.
+  if (body === null) {
+    throw new DiscoveryError('E_DISCOVERY_UNREADABLE', `${url}: response body is literally null`)
+  }
+  return body
 }
 
 export async function paginate({
@@ -484,7 +578,11 @@ export async function paginate({
 }) {
   const results = []
   const visited = new Set()
-  let url = startUrl
+  // The start URL is held to exactly the same rules as a server-supplied cursor
+  // link. It used to be fetched unvalidated WITH the Authorization header, so a
+  // caller bug could send the credential to any host; and being unnormalized, it
+  // could fetch the same resource twice before the repeat guard noticed.
+  let url = resolveFetchableUrl(baseUrl, startUrl, 'start url')
   let requests = 0
 
   while (url !== null) {
@@ -494,9 +592,10 @@ export async function paginate({
         `cursor walk exceeded ${maxRequests} requests — refusing a possibly non-terminating pagination sequence`
       )
     }
-    // A cursor that hands back a URL we already fetched is not progressing.
-    // Continuing would loop forever or duplicate results; both are worse than
-    // failing loudly.
+    // Identity check, not a progress proof: a server handing out cursor=1,2,3…
+    // never repeats a URL and never terminates, and only the request cap above
+    // stops that. This catches the narrower case of a cursor pointing back at a
+    // page already fetched, where continuing would loop or duplicate results.
     if (visited.has(url)) {
       throw new DiscoveryError('E_DISCOVERY_PAGINATION', `cursor walk did not progress: ${url} was requested twice`)
     }
@@ -504,16 +603,30 @@ export async function paginate({
     requests += 1
 
     const body = await getJson(url, { authorization, fetchImpl })
-    if (body === null || typeof body !== 'object' || !Array.isArray(body.results)) {
+    if (typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.results)) {
       throw new DiscoveryError(
         'E_DISCOVERY_PAGINATION',
         `${url}: response has no "results" array — refusing a possibly truncated walk`
       )
     }
-    results.push(...body.results)
+    // Spreading a whole page into arguments would RangeError on a large enough
+    // page; the walk must not have a size above which it breaks.
+    for (const entry of body.results) results.push(entry)
 
-    const next = body._links?.next
-    url = next === undefined || next === null || next === '' ? null : resolveNextUrl(baseUrl, next)
+    // End of results is the ABSENCE of _links.next. A malformed _links or any
+    // other next value is corruption, not completion — treating it as "done"
+    // would return a silently truncated set, exactly what the results guard
+    // above exists to prevent. Everything non-absent falls through to the
+    // validator and fails closed there.
+    const links = body._links
+    if (links !== undefined && links !== null && (typeof links !== 'object' || Array.isArray(links))) {
+      throw new DiscoveryError(
+        'E_DISCOVERY_PAGINATION',
+        `${url}: "_links" is not an object — refusing a possibly truncated walk`
+      )
+    }
+    const next = links === undefined || links === null ? undefined : links.next
+    url = next === undefined ? null : resolveNextUrl(baseUrl, next)
   }
 
   return { results, requests }
