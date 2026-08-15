@@ -7,9 +7,15 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test 'test/**/*.test.mjs'",
     "check": "npm test && node scripts/validate-current-repository.mjs",
-    "secret-scan": "node scripts/secret-scan.mjs"
+    "secret-scan": "node scripts/secret-scan.mjs",
+    "atlas65:setup": "node scripts/atlas65/setup-gbrain.mjs",
+    "atlas65:fetch": "node scripts/atlas65/fetch-source.mjs --project ATLAS",
+    "atlas65:import": "node scripts/atlas65/import-to-gbrain.mjs --project ATLAS",
+    "atlas65:snapshot": "node scripts/atlas65/generate-snapshot.mjs --project ATLAS",
+    "atlas65:serve": "node scripts/atlas65/serve.mjs",
+    "atlas65:e2e": "node scripts/atlas65/e2e.mjs --project ATLAS"
   },
   "devDependencies": {
     "ajv": "8.20.0"

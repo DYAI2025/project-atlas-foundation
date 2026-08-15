@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "project_id": "ATLAS",
+  "source": {
+    "source_kind": "confluence",
+    "source_id": "14778372"
+  },
+  "captured_at": "2026-08-14T22:47:30.355Z",
+  "pages": [
+    {
+      "page_id": "14680066",
+      "title": "02 – Source of Truth, Governance and Decision Rights",
+      "version": 1,
+      "parent_id": "14778372",
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/14680066",
+      "body_storage_sha256": "b4e361a1b694ceee0eb7bce738b812f780b93d4e159c750e695af7d5fe75de0b",
+      "body_storage_length": 2614
+    },
+    {
+      "page_id": "14778372",
+      "title": "ATLAS Single Source of Truth",
+      "version": 3,
+      "parent_id": "1736884",
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/14778372",
+      "body_storage_sha256": "170a7ba22f683cf02af58442164fe81e64333648a54bd09508bb230273ce0181",
+      "body_storage_length": 9973
+    },
+    {
+      "page_id": "15073290",
+      "title": "04 – Target Architecture and System Context",
+      "version": 2,
+      "parent_id": "14778372",
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/15073290",
+      "body_storage_sha256": "473a8bd9085bee44f52be17c366934f5cfe4286c49b4ab55e302d222bb18b6c4",
+      "body_storage_length": 7544
+    },
+    {
+      "page_id": "15171611",
+      "title": "14 – Delivery Model, Program Increment and Sprint Plan",
+      "version": 18,
+      "parent_id": "14778372",
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/15171611",
+      "body_storage_sha256": "0c35a7bc973446194c36e92cdb18b48a1518fcb295ecaea138bfe3f11a4b34eb",
+      "body_storage_length": 37240
+    },
+    {
+      "page_id": "22478849",
+      "title": "Sprint 2 – Visible Real Semantic Atlas – Sprint Plan",
+      "version": 4,
+      "parent_id": "15171611",
+      "confluence_url": "https://dyai2026.atlassian.net/wiki/spaces/PRODUKTMAN/pages/22478849",
+      "body_storage_sha256": "17da97bb9a54f78cdc8624f9bd90158990dd8fb0eb871e186fd1ef6870734636",
+      "body_storage_length": 14784
+    }
+  ]
+}

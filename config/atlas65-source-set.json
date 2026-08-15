@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "description": "ATLAS-65 pilot: deterministic real source set under the registered ATLAS Confluence root. Edges may only ever be derived from live-verified parentage of exactly these pages.",
+  "project_selector": { "selector_kind": "project_id", "selector_value": "ATLAS" },
+  "pages": [
+    { "page_id": "14778372", "expected_parent_id": null },
+    { "page_id": "14680066", "expected_parent_id": "14778372" },
+    { "page_id": "15073290", "expected_parent_id": "14778372" },
+    { "page_id": "15171611", "expected_parent_id": "14778372" },
+    { "page_id": "22478849", "expected_parent_id": "15171611" }
+  ]
+}
