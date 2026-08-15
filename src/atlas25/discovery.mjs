@@ -188,3 +188,65 @@ export async function paginate({
 
   return { results, requests }
 }
+
+function normalizeId(value) {
+  if (typeof value === 'string' && value.length > 0) return value
+  if (typeof value === 'number' && Number.isInteger(value)) return String(value)
+  return null
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.length > 0
+}
+
+// Shape of one entry from GET /wiki/api/v2/pages/{id}/descendants.
+// No version here — the descendants endpoint does not return one; revisions come
+// exclusively from assertPageDetailShape.
+export function assertDescendantShape(raw) {
+  const fail = (what) => {
+    throw new DiscoveryError('E_DISCOVERY_METADATA', `descendant ${JSON.stringify(raw?.id ?? null)}: ${what}`)
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) fail('entry is not an object')
+  const pageId = normalizeId(raw.id)
+  if (pageId === null) fail('id missing or not an id')
+  if (!isNonEmptyString(raw.title)) fail('title missing or empty')
+  if (!isNonEmptyString(raw.status)) fail('status missing or empty — lifecycle cannot be established')
+  if (!isNonEmptyString(raw.type)) fail('type missing or empty')
+  if (!Number.isInteger(raw.depth)) fail('depth missing or not an integer')
+  const parentId = raw.parentId === undefined || raw.parentId === null ? null : normalizeId(raw.parentId)
+  if (raw.parentId !== undefined && raw.parentId !== null && parentId === null) fail('parentId is not an id')
+  return {
+    page_id: pageId,
+    title: raw.title,
+    type: raw.type,
+    parent_id: parentId,
+    depth: raw.depth,
+    source_status: raw.status
+  }
+}
+
+// Shape of GET /wiki/api/v2/pages/{id} (requested WITHOUT body-format, so no
+// page body is ever read here).
+export function assertPageDetailShape(raw, expectedId) {
+  const fail = (what) => {
+    throw new DiscoveryError('E_DISCOVERY_METADATA', `page ${expectedId}: ${what}`)
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) fail('response is not an object')
+  const pageId = normalizeId(raw.id)
+  if (pageId === null) fail('id missing or not an id')
+  if (pageId !== String(expectedId)) fail(`response id ${JSON.stringify(raw.id)} does not match the requested id`)
+  if (!isNonEmptyString(raw.title)) fail('title missing or empty')
+  if (!isNonEmptyString(raw.status)) fail('status missing or empty — lifecycle cannot be established')
+  if (!Number.isInteger(raw.version?.number)) {
+    fail('version.number missing or not an integer — revision provenance cannot be established')
+  }
+  const parentId = raw.parentId === undefined || raw.parentId === null ? null : normalizeId(raw.parentId)
+  if (raw.parentId !== undefined && raw.parentId !== null && parentId === null) fail('parentId is not an id')
+  return {
+    page_id: pageId,
+    title: raw.title,
+    version: raw.version.number,
+    parent_id: parentId,
+    source_status: raw.status
+  }
+}

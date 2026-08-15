@@ -6,7 +6,9 @@ import {
   resolveFetchableUrl,
   getJson,
   paginate,
-  MAX_PAGINATION_REQUESTS
+  MAX_PAGINATION_REQUESTS,
+  assertDescendantShape,
+  assertPageDetailShape
 } from '../src/atlas25/discovery.mjs'
 
 const BASE = 'https://example.invalid'
@@ -420,4 +422,81 @@ test('paginate treats _links: null as absent and ends the walk normally', async 
   assert.deepEqual(out.results, [{ id: '900000002' }])
   assert.equal(out.requests, 1)
   assert.deepEqual(fetchImpl.calls, [START])
+})
+
+// --- page shape / revision provenance ---------------------------------------
+
+const descendant = (over = {}) => ({
+  id: '900000002', status: 'current', title: 'Page 2', type: 'page',
+  parentId: '900000001', depth: 1, childPosition: 0, ...over
+})
+const detail = (over = {}) => ({
+  id: '900000002', status: 'current', title: 'Page 2',
+  parentId: '900000001', spaceId: '55', version: { number: 7 }, ...over
+})
+
+test('assertDescendantShape accepts a complete page descendant', () => {
+  assert.deepEqual(assertDescendantShape(descendant()), {
+    page_id: '900000002', title: 'Page 2', type: 'page',
+    parent_id: '900000001', depth: 1, source_status: 'current'
+  })
+})
+
+test('assertDescendantShape normalizes a numeric id and a null parentId', () => {
+  const d = assertDescendantShape(descendant({ id: 900000002, parentId: null }))
+  assert.equal(d.page_id, '900000002')
+  assert.equal(d.parent_id, null)
+})
+
+for (const [name, over] of [
+  ['a missing id', { id: undefined }],
+  ['an empty title', { title: '' }],
+  ['a missing status', { status: undefined }],
+  ['a non-string type', { type: 7 }],
+  ['a non-integer depth', { depth: 1.5 }]
+]) {
+  test(`assertDescendantShape fails closed on ${name}`, () => {
+    assert.throws(
+      () => assertDescendantShape(descendant(over)),
+      (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_METADATA'
+    )
+  })
+}
+
+test('assertPageDetailShape captures the revision identifier', () => {
+  assert.deepEqual(assertPageDetailShape(detail(), '900000002'), {
+    page_id: '900000002', title: 'Page 2', version: 7,
+    parent_id: '900000001', source_status: 'current'
+  })
+})
+
+test('assertPageDetailShape fails closed when Confluence supplies no revision', () => {
+  // The whole point of the revision scan: a page without version.number must
+  // never be reported as a verified revision, and no revision is ever invented.
+  assert.throws(
+    () => assertPageDetailShape(detail({ version: undefined }), '900000002'),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_METADATA' &&
+      /revision provenance cannot be established/.test(e.message)
+  )
+})
+
+for (const [name, over] of [
+  ['a non-integer version', { version: { number: 1.5 } }],
+  ['a string version', { version: { number: '7' } }],
+  ['an empty title', { title: '' }],
+  ['a missing status', { status: '' }]
+]) {
+  test(`assertPageDetailShape fails closed on ${name}`, () => {
+    assert.throws(
+      () => assertPageDetailShape(detail(over), '900000002'),
+      (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_METADATA'
+    )
+  })
+}
+
+test('assertPageDetailShape fails closed when the response answers with a different page id', () => {
+  assert.throws(
+    () => assertPageDetailShape(detail({ id: '900000009' }), '900000002'),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_METADATA' && /does not match/.test(e.message)
+  )
 })
