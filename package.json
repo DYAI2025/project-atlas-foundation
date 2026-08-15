@@ -15,7 +15,8 @@
     "atlas65:import": "node scripts/atlas65/import-to-gbrain.mjs --project ATLAS",
     "atlas65:snapshot": "node scripts/atlas65/generate-snapshot.mjs --project ATLAS",
     "atlas65:serve": "node scripts/atlas65/serve.mjs",
-    "atlas65:e2e": "node scripts/atlas65/e2e.mjs --project ATLAS"
+    "atlas65:e2e": "node scripts/atlas65/e2e.mjs --project ATLAS",
+    "atlas25:discover": "node scripts/atlas25/discover.mjs --project ATLAS"
   },
   "devDependencies": {
     "ajv": "8.20.0"
