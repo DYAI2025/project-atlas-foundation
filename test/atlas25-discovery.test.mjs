@@ -13,7 +13,8 @@ import {
   LIFECYCLES,
   STATUS_TO_LIFECYCLE,
   discoverProject,
-  SCHEMA_VERSION
+  SCHEMA_VERSION,
+  applyPrevious
 } from '../src/atlas25/discovery.mjs'
 
 const BASE = 'https://example.invalid'
@@ -711,4 +712,150 @@ test('discoverProject fails closed when the root page itself is unreadable', asy
     discoverProject({ env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl }),
     (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_UNREADABLE'
   )
+})
+
+// --- incremental delta ------------------------------------------------------
+
+// A previous scan that saw four pages: the root, 900000002 (v6), 900000003 (v2)
+// and 900000005 (v1, since removed from the subtree).
+const PREVIOUS = {
+  schema_version: '1.0',
+  discovery_digest: 'previous-digest',
+  semantic: {
+    schema_version: '1.0',
+    project_id: 'PLUMBLINE',
+    source: { source_kind: 'confluence', source_id: '900000001', space_key: 'PRODUKTMAN', base_url: BASE },
+    discovery: { rule: 'x', page_count: 4, non_page_descendants: 0 },
+    pages: [
+      { page_id: '900000001', title: 'Root', version: 12, parent_id: null, depth: 0, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
+      { page_id: '900000002', title: 'Page 2', version: 6, parent_id: '900000001', depth: 1, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
+      { page_id: '900000003', title: 'Old', version: 2, parent_id: '900000002', depth: 2, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
+      { page_id: '900000005', title: 'Gone', version: 1, parent_id: '900000001', depth: 1, lifecycle: 'active', source_status: 'current', confluence_url: 'u' }
+    ],
+    absent: [],
+    delta: null
+  },
+  capture: { captured_at: 'then', pagination_requests: 1, previous_digest: null }
+}
+
+async function discoverWithPrevious(previous, extraDetails = new Map()) {
+  const details = new Map([...DETAILS, ...extraDetails])
+  const doc = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: '2026-08-15T10:00:00.000Z',
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details })
+  })
+  return applyPrevious(doc, previous, {
+    env: ENV, project: PROJECT,
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details })
+  })
+}
+
+test('applyPrevious reports added, unchanged, version_changed and lifecycle_changed', async () => {
+  // 900000005 is absent from the subtree AND 404s on a direct read -> "absent".
+  const doc = await discoverWithPrevious(PREVIOUS)
+  assert.deepEqual(doc.semantic.delta, {
+    previous_digest: 'previous-digest',
+    added: [],
+    unchanged: ['900000001'],
+    version_changed: [{ page_id: '900000002', from: 6, to: 7 }],
+    lifecycle_changed: [{ page_id: '900000003', from: 'active', to: 'archived' }],
+    absent: ['900000005']
+  })
+  assert.equal(doc.capture.previous_digest, 'previous-digest')
+})
+
+test('applyPrevious records an absent page with its 404 evidence, never as "deleted"', async () => {
+  const doc = await discoverWithPrevious(PREVIOUS)
+  assert.deepEqual(doc.semantic.absent, [{
+    page_id: '900000005',
+    lifecycle: 'absent',
+    evidence: 'http_404_on_direct_read',
+    last_seen_version: 1
+  }])
+  assert.equal(doc.semantic.absent.some((a) => a.lifecycle === 'deleted'), false)
+})
+
+test('applyPrevious records an API-evidenced deleted state when the direct read returns a trashed status', async () => {
+  const doc = await discoverWithPrevious(PREVIOUS, new Map([
+    ['900000005', detail({ id: '900000005', parentId: '900000001', version: { number: 1 }, status: 'trashed', title: 'Gone' })]
+  ]))
+  assert.deepEqual(doc.semantic.absent, [{
+    page_id: '900000005',
+    lifecycle: 'deleted',
+    evidence: 'direct_read_status_trashed',
+    last_seen_version: 1
+  }])
+})
+
+test('applyPrevious distinguishes a page that still exists but left the registered subtree', async () => {
+  const doc = await discoverWithPrevious(PREVIOUS, new Map([
+    ['900000005', detail({ id: '900000005', parentId: '900000009', version: { number: 4 }, status: 'current', title: 'Moved' })]
+  ]))
+  assert.deepEqual(doc.semantic.absent, [{
+    page_id: '900000005',
+    lifecycle: 'removed_from_scope',
+    evidence: 'direct_read_status_current',
+    last_seen_version: 1
+  }])
+})
+
+test('applyPrevious with no previous scan leaves delta null and absent empty', async () => {
+  const doc = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x',
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  })
+  // Deviation D-3: applyPrevious is async, so its result MUST be awaited even on
+  // the early-return path. The plan's draft read `same.semantic` off the pending
+  // promise, which is `undefined` — the test would have failed with a TypeError
+  // rather than proving the no-previous behaviour.
+  const same = await applyPrevious(doc, null, {})
+  assert.equal(same.semantic.delta, null)
+  assert.deepEqual(same.semantic.absent, [])
+  assert.equal(same.discovery_digest, doc.discovery_digest)
+})
+
+test('applyPrevious fails closed when the previous scan belongs to a different project', async () => {
+  const foreign = { ...PREVIOUS, semantic: { ...PREVIOUS.semantic, project_id: 'ATLAS' } }
+  await assert.rejects(
+    discoverWithPrevious(foreign),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_SCOPE' && /project/.test(e.message)
+  )
+})
+
+test('applyPrevious fails closed when the previous scan used a different root', async () => {
+  const foreign = {
+    ...PREVIOUS,
+    semantic: { ...PREVIOUS.semantic, source: { ...PREVIOUS.semantic.source, source_id: '900000099' } }
+  }
+  await assert.rejects(
+    discoverWithPrevious(foreign),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_SCOPE' && /root/.test(e.message)
+  )
+})
+
+test('applyPrevious fails closed on a structurally invalid previous scan', async () => {
+  await assert.rejects(
+    discoverWithPrevious({ semantic: { project_id: 'PLUMBLINE' } }),
+    (e) => e instanceof DiscoveryError && e.code === 'E_PREVIOUS_INVALID'
+  )
+})
+
+test('rerunning against an unchanged previous scan reports every page unchanged and an empty delta body', async () => {
+  const first = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'a',
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  })
+  const second = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'b',
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  })
+  const withDelta = await applyPrevious(second, first, {
+    env: ENV, project: PROJECT, fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  })
+  assert.deepEqual(withDelta.semantic.delta.added, [])
+  assert.deepEqual(withDelta.semantic.delta.version_changed, [])
+  assert.deepEqual(withDelta.semantic.delta.lifecycle_changed, [])
+  assert.deepEqual(withDelta.semantic.delta.absent, [])
+  assert.deepEqual(withDelta.semantic.delta.unchanged, ['900000001', '900000002', '900000003'])
+  assert.equal(withDelta.semantic.delta.previous_digest, first.discovery_digest)
 })

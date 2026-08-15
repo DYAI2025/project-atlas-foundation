@@ -1289,6 +1289,14 @@ git commit -m "feat(ATLAS-25): registry-rooted deterministic project discovery w
 
 **Step 1: Write the failing tests**
 
+> **Deviation D-3 (recorded 2026-08-15, during execution).** The draft of the
+> "applyPrevious with no previous scan" test below reads `same.semantic` from
+> `applyPrevious(doc, null, {})` **without awaiting it**. `applyPrevious` is
+> `async`, so even its early-return path yields a promise: `same.semantic` is
+> `undefined` and the test dies with a TypeError instead of proving the
+> no-previous behaviour. The committed test awaits the call. No production code
+> changed.
+
 Append to `test/atlas25-discovery.test.mjs` (add `applyPrevious` to the import):
 
 ```js

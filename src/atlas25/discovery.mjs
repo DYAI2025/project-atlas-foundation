@@ -411,3 +411,124 @@ export async function discoverProject({
     }
   }
 }
+
+function assertPreviousShape(previous, project) {
+  const s = previous?.semantic
+  if (
+    previous === null || typeof previous !== 'object' || Array.isArray(previous) ||
+    s === null || typeof s !== 'object' || Array.isArray(s) ||
+    !Array.isArray(s.pages) || typeof previous.discovery_digest !== 'string' ||
+    s.source === null || typeof s.source !== 'object'
+  ) {
+    throw new DiscoveryError('E_PREVIOUS_INVALID', 'previous scan document is structurally invalid')
+  }
+  for (const p of s.pages) {
+    if (!isNonEmptyString(p?.page_id) || !Number.isInteger(p?.version) || !isNonEmptyString(p?.lifecycle)) {
+      throw new DiscoveryError('E_PREVIOUS_INVALID', 'previous scan contains a page without id, version or lifecycle')
+    }
+  }
+  if (s.project_id !== project.project_id) {
+    throw new DiscoveryError(
+      'E_DISCOVERY_SCOPE',
+      `previous scan is for project ${JSON.stringify(s.project_id)}, not ${JSON.stringify(project.project_id)}`
+    )
+  }
+  if (String(s.source.source_id) !== String(project.root_page_id)) {
+    throw new DiscoveryError(
+      'E_DISCOVERY_SCOPE',
+      `previous scan used root ${JSON.stringify(s.source.source_id)}, not the registered root ${project.root_page_id}`
+    )
+  }
+  return s
+}
+
+// A page that was seen before but is not in the current subtree is NEVER assumed
+// deleted. It is re-read directly and classified only from what the API returns:
+// an HTTP 404, or an actual status field.
+async function probeAbsent({ pageId, lastSeenVersion, baseUrl, authorization, fetchImpl }) {
+  const raw = await getJson(pageDetailUrl(baseUrl, pageId), { authorization, fetchImpl, allow404: true })
+  if (raw === null) {
+    return {
+      page_id: pageId,
+      lifecycle: 'absent',
+      evidence: 'http_404_on_direct_read',
+      last_seen_version: lastSeenVersion
+    }
+  }
+  const d = assertPageDetailShape(raw, pageId)
+  const mapped = lifecycleFor(d.source_status)
+  return {
+    page_id: pageId,
+    // The page still resolves but is no longer under the registered root: it left
+    // the project's scope. That is a different fact from being deleted.
+    lifecycle: mapped === 'active' ? 'removed_from_scope' : mapped,
+    evidence: `direct_read_status_${d.source_status}`,
+    last_seen_version: lastSeenVersion
+  }
+}
+
+export async function applyPrevious(doc, previous, { env, project, fetchImpl = fetch } = {}) {
+  if (previous === null || previous === undefined) return doc
+
+  const prev = assertPreviousShape(previous, project)
+  const { baseUrl, authorization } = requireAuth(env)
+
+  const currentById = new Map(doc.semantic.pages.map((p) => [p.page_id, p]))
+  const previousById = new Map(prev.pages.map((p) => [p.page_id, p]))
+
+  const added = []
+  const unchanged = []
+  const versionChanged = []
+  const lifecycleChanged = []
+
+  for (const [pageId, page] of currentById) {
+    const before = previousById.get(pageId)
+    if (before === undefined) {
+      added.push(pageId)
+      continue
+    }
+    let changed = false
+    if (before.version !== page.version) {
+      versionChanged.push({ page_id: pageId, from: before.version, to: page.version })
+      changed = true
+    }
+    if (before.lifecycle !== page.lifecycle) {
+      lifecycleChanged.push({ page_id: pageId, from: before.lifecycle, to: page.lifecycle })
+      changed = true
+    }
+    if (!changed) unchanged.push(pageId)
+  }
+
+  const absent = []
+  for (const pageId of [...previousById.keys()].sort()) {
+    if (currentById.has(pageId)) continue
+    absent.push(await probeAbsent({
+      pageId,
+      lastSeenVersion: previousById.get(pageId).version,
+      baseUrl,
+      authorization,
+      fetchImpl
+    }))
+  }
+
+  const sortById = (a, b) => (a.page_id < b.page_id ? -1 : a.page_id > b.page_id ? 1 : 0)
+  const semantic = {
+    ...doc.semantic,
+    absent: absent.sort(sortById),
+    delta: {
+      previous_digest: previous.discovery_digest,
+      added: added.sort(),
+      unchanged: unchanged.sort(),
+      version_changed: versionChanged.sort(sortById),
+      lifecycle_changed: lifecycleChanged.sort(sortById),
+      absent: absent.map((a) => a.page_id).sort()
+    }
+  }
+
+  return {
+    schema_version: doc.schema_version,
+    discovery_digest: digestOf(semantic),
+    semantic,
+    capture: { ...doc.capture, previous_digest: previous.discovery_digest }
+  }
+}
