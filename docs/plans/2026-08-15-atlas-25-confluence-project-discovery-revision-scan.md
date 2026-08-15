@@ -339,9 +339,13 @@ export const MAX_PAGINATION_REQUESTS = 200
 // cursor link go through it, so a caller cannot hand the walk a target that a
 // server would not have been allowed to supply. Returns the NORMALIZED href, so
 // the caller's repeat-detection compares like with like.
-export function resolveFetchableUrl(baseUrl, link, label = 'next cursor link') {
+// `code` is a parameter because a bad SERVER-supplied cursor and a bad
+// CALLER-supplied start URL are different triage paths: the first is a remote
+// defect, the second a local one. Sharing one code would re-create exactly the
+// problem that gave a malformed base URL its own E_DISCOVERY_CONFIG.
+export function resolveFetchableUrl(baseUrl, link, label = 'next cursor link', code = 'E_DISCOVERY_PAGINATION') {
   const fail = (what) => {
-    throw new DiscoveryError('E_DISCOVERY_PAGINATION', `${label} ${what}`)
+    throw new DiscoveryError(code, `${label} ${what}`)
   }
   if (typeof link !== 'string' || link.length === 0) fail('is missing or not a string')
 
@@ -582,7 +586,7 @@ export async function paginate({
   // link. It used to be fetched unvalidated WITH the Authorization header, so a
   // caller bug could send the credential to any host; and being unnormalized, it
   // could fetch the same resource twice before the repeat guard noticed.
-  let url = resolveFetchableUrl(baseUrl, startUrl, 'start url')
+  let url = resolveFetchableUrl(baseUrl, startUrl, 'start url', 'E_DISCOVERY_CONFIG')
   let requests = 0
 
   while (url !== null) {
@@ -603,7 +607,10 @@ export async function paginate({
     requests += 1
 
     const body = await getJson(url, { authorization, fetchImpl })
-    if (typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.results)) {
+    // The `body === null` clause is not redundant: getJson returns null for a
+    // 404 under allow404, and the moment a caller threads that through here a
+    // bare property read would raise a TypeError instead of a DiscoveryError.
+    if (body === null || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.results)) {
       throw new DiscoveryError(
         'E_DISCOVERY_PAGINATION',
         `${url}: response has no "results" array — refusing a possibly truncated walk`
@@ -625,6 +632,9 @@ export async function paginate({
         `${url}: "_links" is not an object — refusing a possibly truncated walk`
       )
     }
+    // `_links: null` is read as absent, per the JSON convention that null means
+    // "no value" — the one place where corruption and completion still coincide.
+    // Every OTHER non-object _links is rejected above.
     const next = links === undefined || links === null ? undefined : links.next
     url = next === undefined ? null : resolveNextUrl(baseUrl, next)
   }
