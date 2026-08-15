@@ -1,5 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   DiscoveryError,
   resolveNextUrl,
@@ -9,10 +13,12 @@ import {
   MAX_PAGINATION_REQUESTS,
   assertDescendantShape,
   assertPageDetailShape,
+  assertCrossReadConsistent,
   lifecycleFor,
   LIFECYCLES,
   STATUS_TO_LIFECYCLE,
   discoverProject,
+  digestOf,
   SCHEMA_VERSION,
   applyPrevious
 } from '../src/atlas25/discovery.mjs'
@@ -718,25 +724,36 @@ test('discoverProject fails closed when the root page itself is unreadable', asy
 
 // A previous scan that saw four pages: the root, 900000002 (v6), 900000003 (v2)
 // and 900000005 (v1, since removed from the subtree).
-const PREVIOUS = {
+const PREVIOUS_SEMANTIC = {
   schema_version: '1.0',
-  discovery_digest: 'previous-digest',
-  semantic: {
-    schema_version: '1.0',
-    project_id: 'PLUMBLINE',
-    source: { source_kind: 'confluence', source_id: '900000001', space_key: 'PRODUKTMAN', base_url: BASE },
-    discovery: { rule: 'x', page_count: 4, non_page_descendants: 0 },
-    pages: [
-      { page_id: '900000001', title: 'Root', version: 12, parent_id: null, depth: 0, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
-      { page_id: '900000002', title: 'Page 2', version: 6, parent_id: '900000001', depth: 1, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
-      { page_id: '900000003', title: 'Old', version: 2, parent_id: '900000002', depth: 2, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
-      { page_id: '900000005', title: 'Gone', version: 1, parent_id: '900000001', depth: 1, lifecycle: 'active', source_status: 'current', confluence_url: 'u' }
-    ],
-    absent: [],
-    delta: null
-  },
-  capture: { captured_at: 'then', pagination_requests: 1, previous_digest: null }
+  project_id: 'PLUMBLINE',
+  source: { source_kind: 'confluence', source_id: '900000001', space_key: 'PRODUKTMAN', base_url: BASE },
+  discovery: { rule: 'x', page_count: 4, non_page_descendants: 0 },
+  pages: [
+    { page_id: '900000001', title: 'Root', version: 12, parent_id: null, depth: 0, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
+    { page_id: '900000002', title: 'Page 2', version: 6, parent_id: '900000001', depth: 1, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
+    { page_id: '900000003', title: 'Old', version: 2, parent_id: '900000002', depth: 2, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
+    { page_id: '900000005', title: 'Gone', version: 1, parent_id: '900000001', depth: 1, lifecycle: 'active', source_status: 'current', confluence_url: 'u' }
+  ],
+  absent: [],
+  delta: null
 }
+
+// A previous scan is now only accepted if its digest matches its own body, so
+// every fixture derives the digest from the body it actually carries. Hand-typed
+// digests would make each fixture prove nothing except the digest guard.
+function previousScan(semanticOver = {}, envelopeOver = {}) {
+  const semantic = { ...PREVIOUS_SEMANTIC, ...semanticOver }
+  return {
+    schema_version: '1.0',
+    discovery_digest: digestOf(semantic),
+    semantic,
+    capture: { captured_at: 'then', pagination_requests: 1, previous_digest: null },
+    ...envelopeOver
+  }
+}
+
+const PREVIOUS = previousScan()
 
 async function discoverWithPrevious(previous, extraDetails = new Map()) {
   const details = new Map([...DETAILS, ...extraDetails])
@@ -754,14 +771,14 @@ test('applyPrevious reports added, unchanged, version_changed and lifecycle_chan
   // 900000005 is absent from the subtree AND 404s on a direct read -> "absent".
   const doc = await discoverWithPrevious(PREVIOUS)
   assert.deepEqual(doc.semantic.delta, {
-    previous_digest: 'previous-digest',
+    previous_digest: PREVIOUS.discovery_digest,
     added: [],
     unchanged: ['900000001'],
     version_changed: [{ page_id: '900000002', from: 6, to: 7 }],
     lifecycle_changed: [{ page_id: '900000003', from: 'active', to: 'archived' }],
     absent: ['900000005']
   })
-  assert.equal(doc.capture.previous_digest, 'previous-digest')
+  assert.equal(doc.capture.previous_digest, PREVIOUS.discovery_digest)
 })
 
 test('applyPrevious records an absent page with its 404 evidence, never as "deleted"', async () => {
@@ -815,7 +832,10 @@ test('applyPrevious with no previous scan leaves delta null and absent empty', a
 })
 
 test('applyPrevious fails closed when the previous scan belongs to a different project', async () => {
-  const foreign = { ...PREVIOUS, semantic: { ...PREVIOUS.semantic, project_id: 'ATLAS' } }
+  // Digest recomputed over the altered body, so this fixture is intact and can
+  // only be rejected by the project-scope check — not incidentally by the
+  // integrity checks that now run before it.
+  const foreign = previousScan({ project_id: 'ATLAS' })
   await assert.rejects(
     discoverWithPrevious(foreign),
     (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_SCOPE' && /project/.test(e.message)
@@ -823,10 +843,7 @@ test('applyPrevious fails closed when the previous scan belongs to a different p
 })
 
 test('applyPrevious fails closed when the previous scan used a different root', async () => {
-  const foreign = {
-    ...PREVIOUS,
-    semantic: { ...PREVIOUS.semantic, source: { ...PREVIOUS.semantic.source, source_id: '900000099' } }
-  }
+  const foreign = previousScan({ source: { ...PREVIOUS_SEMANTIC.source, source_id: '900000099' } })
   await assert.rejects(
     discoverWithPrevious(foreign),
     (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_SCOPE' && /root/.test(e.message)
@@ -858,4 +875,362 @@ test('rerunning against an unchanged previous scan reports every page unchanged 
   assert.deepEqual(withDelta.semantic.delta.absent, [])
   assert.deepEqual(withDelta.semantic.delta.unchanged, ['900000001', '900000002', '900000003'])
   assert.equal(withDelta.semantic.delta.previous_digest, first.discovery_digest)
+})
+
+// --- previous-scan integrity (PO finding 1) ---------------------------------
+//
+// "Structurally plausible" is not "produced by this implementation". A previous
+// scan drives the delta AND is carried forward as provenance in
+// capture.previous_digest, so it is authenticated before any field is believed.
+
+test('applyPrevious accepts a previous scan whose digest matches its own semantic body', async () => {
+  // The positive case, pinned explicitly: the fixture's digest is not a literal,
+  // it is recomputed from the body, so this test fails if digestOf ever changes
+  // meaning rather than passing on a hardcoded constant.
+  assert.equal(PREVIOUS.discovery_digest, digestOf(PREVIOUS.semantic))
+  const doc = await discoverWithPrevious(PREVIOUS)
+  assert.equal(doc.capture.previous_digest, PREVIOUS.discovery_digest)
+  assert.notEqual(doc.semantic.delta, null)
+})
+
+// A body edited after the fact: the digest still belongs to the ORIGINAL body.
+const TAMPERED_PREVIOUS = {
+  ...PREVIOUS,
+  semantic: {
+    ...PREVIOUS.semantic,
+    pages: PREVIOUS.semantic.pages.map((p) => (p.page_id === '900000002' ? { ...p, version: 999 } : p))
+  }
+}
+
+test('applyPrevious fails closed on a previous scan whose semantic body was tampered with', async () => {
+  assert.notEqual(JSON.stringify(TAMPERED_PREVIOUS.semantic), JSON.stringify(PREVIOUS.semantic))
+  assert.equal(TAMPERED_PREVIOUS.discovery_digest, PREVIOUS.discovery_digest) // stale by construction
+  await assert.rejects(
+    discoverWithPrevious(TAMPERED_PREVIOUS),
+    (e) => e instanceof DiscoveryError && e.code === 'E_PREVIOUS_INVALID' && /discovery_digest does not match/.test(e.message)
+  )
+})
+
+test('applyPrevious fails closed on an arbitrary forged discovery_digest', async () => {
+  const forged = { ...PREVIOUS, discovery_digest: 'f'.repeat(64) }
+  await assert.rejects(
+    discoverWithPrevious(forged),
+    (e) => e instanceof DiscoveryError && e.code === 'E_PREVIOUS_INVALID' && /discovery_digest does not match/.test(e.message)
+  )
+})
+
+// Two rows for one page id, digest recomputed so the document is otherwise
+// intact: only the duplicate guard can reject it.
+const DUPLICATE_PREVIOUS = previousScan({
+  pages: [
+    ...PREVIOUS_SEMANTIC.pages,
+    { page_id: '900000002', title: 'Page 2 (second row)', version: 999, parent_id: '900000001', depth: 1, lifecycle: 'active', source_status: 'current', confluence_url: 'u' }
+  ]
+})
+
+test('applyPrevious fails closed when the previous scan lists one page id twice', async () => {
+  assert.equal(DUPLICATE_PREVIOUS.discovery_digest, digestOf(DUPLICATE_PREVIOUS.semantic)) // intact, not stale
+  await assert.rejects(
+    discoverWithPrevious(DUPLICATE_PREVIOUS),
+    (e) => e instanceof DiscoveryError && e.code === 'E_PREVIOUS_INVALID' && /lists page 900000002 more than once/.test(e.message)
+  )
+})
+
+test('applyPrevious fails closed on a previous lifecycle outside the closed model', async () => {
+  const bad = previousScan({
+    pages: PREVIOUS_SEMANTIC.pages.map((p) => (p.page_id === '900000003' ? { ...p, lifecycle: 'historical' } : p))
+  })
+  await assert.rejects(
+    discoverWithPrevious(bad),
+    (e) =>
+      e instanceof DiscoveryError &&
+      e.code === 'E_PREVIOUS_INVALID' &&
+      /outside the closed lifecycle model/.test(e.message) &&
+      /"historical"/.test(e.message)
+  )
+})
+
+test('applyPrevious accepts every lifecycle the closed model actually declares', async () => {
+  // The guard must reject unknown values without narrowing the declared model —
+  // a stricter allowlist here would silently redefine the lifecycle contract.
+  for (const lifecycle of LIFECYCLES) {
+    const ok = previousScan({
+      pages: PREVIOUS_SEMANTIC.pages.map((p) => (p.page_id === '900000005' ? { ...p, lifecycle } : p))
+    })
+    const doc = await discoverWithPrevious(ok)
+    assert.equal(doc.capture.previous_digest, ok.discovery_digest)
+  }
+})
+
+for (const [where, semanticOver, envelopeOver] of [
+  ['the semantic body', { schema_version: '2.0' }, {}],
+  ['the envelope', {}, { schema_version: '0.9' }]
+]) {
+  test(`applyPrevious fails closed on an incompatible previous schema version in ${where}`, async () => {
+    await assert.rejects(
+      discoverWithPrevious(previousScan(semanticOver, envelopeOver)),
+      (e) =>
+        e instanceof DiscoveryError &&
+        e.code === 'E_PREVIOUS_INVALID' &&
+        /schema version/.test(e.message) &&
+        new RegExp(`is not the supported "${SCHEMA_VERSION}"`).test(e.message)
+    )
+  })
+}
+
+// --- cross-read source consistency (PO finding 2) ---------------------------
+
+test('assertCrossReadConsistent accepts an agreeing descendant observation and detail read', () => {
+  assert.equal(
+    assertCrossReadConsistent(
+      { page_id: '900000002', parent_id: '900000001', depth: 1, source_status: 'current' },
+      { page_id: '900000002', parent_id: '900000001', version: 7, source_status: 'current' }
+    ),
+    undefined
+  )
+})
+
+test('assertCrossReadConsistent fails closed on a parent_id that changed between the two reads', () => {
+  assert.throws(
+    () => assertCrossReadConsistent(
+      { page_id: '900000002', parent_id: '900000001', depth: 1, source_status: 'current' },
+      { page_id: '900000002', parent_id: '900000009', version: 7, source_status: 'current' }
+    ),
+    (e) =>
+      e instanceof DiscoveryError &&
+      e.code === 'E_DISCOVERY_METADATA' &&
+      /source metadata changed during the scan/.test(e.message) &&
+      /parent_id/.test(e.message)
+  )
+})
+
+test('assertCrossReadConsistent fails closed on a status that changed between the two reads', () => {
+  assert.throws(
+    () => assertCrossReadConsistent(
+      { page_id: '900000002', parent_id: '900000001', depth: 1, source_status: 'current' },
+      { page_id: '900000002', parent_id: '900000001', version: 7, source_status: 'archived' }
+    ),
+    (e) =>
+      e instanceof DiscoveryError &&
+      e.code === 'E_DISCOVERY_METADATA' &&
+      /source metadata changed during the scan/.test(e.message) &&
+      /status/.test(e.message)
+  )
+})
+
+test('discoverProject emits page records only when both reads agree on parent and status', async () => {
+  // The happy path stated as a consistency claim rather than as a side effect of
+  // the main walk test: every emitted record matches the descendants observation.
+  const doc = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x',
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  })
+  const observed = new Map([['900000002', ['900000001', 'current']], ['900000003', ['900000002', 'archived']]])
+  for (const [pageId, [parentId, status]] of observed) {
+    const record = doc.semantic.pages.find((p) => p.page_id === pageId)
+    assert.deepEqual([record.parent_id, record.source_status], [parentId, status])
+  }
+})
+
+test('discoverProject fails closed when the detail read reports a different parent than the walk', async () => {
+  // descendants said parentId 900000001; the detail read says 900000009.
+  const moved = new Map([...DETAILS, ['900000002', detail({ id: '900000002', parentId: '900000009', version: { number: 7 } })]])
+  await assert.rejects(
+    discoverProject({
+      env: ENV, project: PROJECT, capturedAt: 'x',
+      fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: moved })
+    }),
+    (e) =>
+      e instanceof DiscoveryError &&
+      e.code === 'E_DISCOVERY_METADATA' &&
+      /page 900000002/.test(e.message) &&
+      /source metadata changed during the scan/.test(e.message) &&
+      /parent_id/.test(e.message)
+  )
+})
+
+test('discoverProject fails closed when the detail read reports a different status than the walk', async () => {
+  // descendants said archived; the detail read says current.
+  const restated = new Map([...DETAILS, ['900000003', detail({ id: '900000003', parentId: '900000002', version: { number: 2 }, status: 'current', title: 'Old' })]])
+  await assert.rejects(
+    discoverProject({
+      env: ENV, project: PROJECT, capturedAt: 'x',
+      fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: restated })
+    }),
+    (e) =>
+      e instanceof DiscoveryError &&
+      e.code === 'E_DISCOVERY_METADATA' &&
+      /page 900000003/.test(e.message) &&
+      /source metadata changed during the scan/.test(e.message) &&
+      /status/.test(e.message)
+  )
+})
+
+test('the registered root may have a parent above the scope boundary — that is not an inconsistency', async () => {
+  // The root is a deliberate scope boundary, not a tree root. Requiring
+  // parent_id === null would make every legitimately nested project fail.
+  const rootHasParent = new Map([
+    ...DETAILS,
+    ['900000001', detail({ id: '900000001', parentId: '900000000', version: { number: 12 }, title: 'Root' })]
+  ])
+  const doc = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x',
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: rootHasParent })
+  })
+  assert.equal(doc.semantic.pages[0].page_id, '900000001')
+  assert.equal(doc.semantic.pages[0].parent_id, '900000000')
+  assert.equal(doc.semantic.pages.some((p) => p.page_id === '900000000'), false) // no page invented
+})
+
+test('a page whose parent is a non-page intermediary is kept, and its parent is not invented as a page', async () => {
+  // Confluence allows folder/whiteboard intermediaries. The scope rule is "all
+  // type=page descendants", so 900000006 stays in scope even though its parent
+  // 900000004 is a whiteboard and therefore never becomes a page record.
+  const walk = new Map([
+    ['0', {
+      results: [descendant({ id: '900000002', parentId: '900000001', depth: 1 })],
+      _links: { next: '/wiki/api/v2/pages/900000001/descendants?limit=100&cursor=c2' }
+    }],
+    ['c2', {
+      results: [
+        descendant({ id: '900000003', parentId: '900000002', depth: 2, status: 'archived' }),
+        descendant({ id: '900000004', parentId: '900000001', depth: 1, type: 'whiteboard' }),
+        descendant({ id: '900000006', parentId: '900000004', depth: 2 })
+      ],
+      _links: {}
+    }]
+  ])
+  const details = new Map([
+    ...DETAILS,
+    ['900000006', detail({ id: '900000006', parentId: '900000004', version: { number: 3 }, title: 'Under a whiteboard' })]
+  ])
+  const doc = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl: siteFetch({ descendantPages: walk, details })
+  })
+  assert.deepEqual(doc.semantic.pages.map((p) => p.page_id), ['900000001', '900000002', '900000003', '900000006'])
+  assert.equal(doc.semantic.pages.find((p) => p.page_id === '900000006').parent_id, '900000004')
+  assert.equal(doc.semantic.pages.some((p) => p.page_id === '900000004'), false) // parent not invented
+  assert.equal(doc.semantic.discovery.non_page_descendants, 1)
+})
+
+// --- mutation / counterexample proofs ---------------------------------------
+//
+// Each guard is proved load-bearing by loading a COPY of the SHIPPED module with
+// exactly that guard's source removed and showing the same input is then
+// accepted. Without this, a guard could be deleted and its test could still pass
+// for some unrelated reason. The occurrence count is asserted before the cut, so
+// a mutation that silently matched nothing cannot masquerade as evidence.
+
+const MODULE_PATH = fileURLToPath(new URL('../src/atlas25/discovery.mjs', import.meta.url))
+const AUTH_MODULE_URL = pathToFileURL(fileURLToPath(new URL('../src/atlas65/confluence-source.mjs', import.meta.url))).href
+const RELATIVE_AUTH_IMPORT = "'../atlas65/confluence-source.mjs'"
+
+async function withoutGuard(fragment, run) {
+  const source = await readFile(MODULE_PATH, 'utf8')
+  assert.equal(
+    source.split(fragment).length - 1, 1,
+    'mutation target must occur exactly once in the shipped source — otherwise the cut proves nothing'
+  )
+  assert.equal(source.split(RELATIVE_AUTH_IMPORT).length - 1, 1)
+  // The copy lives outside the tree, so its relative dependency is rewritten to
+  // an absolute file URL. The shipped file itself is never modified.
+  const mutated = source.split(fragment).join('').replace(RELATIVE_AUTH_IMPORT, JSON.stringify(AUTH_MODULE_URL))
+  assert.equal(mutated.includes(fragment), false)
+  assert.equal(source.length - mutated.length > 0, true)
+  const dir = await mkdtemp(join(tmpdir(), 'atlas25-mutant-'))
+  try {
+    const file = join(dir, 'discovery.mjs')
+    await writeFile(file, mutated)
+    await run(await import(pathToFileURL(file).href))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+async function discoverWithPreviousUsing(mod, previous, details = DETAILS) {
+  const doc = await mod.discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details })
+  })
+  return mod.applyPrevious(doc, previous, {
+    env: ENV, project: PROJECT, fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details })
+  })
+}
+
+const DIGEST_GUARD = [
+  '  if (digestOf(s) !== previous.discovery_digest) {',
+  '    throw new DiscoveryError(',
+  "      'E_PREVIOUS_INVALID',",
+  "      'previous scan discovery_digest does not match a digest recomputed from its own semantic body'",
+  '    )',
+  '  }'
+].join('\n')
+
+const DUPLICATE_GUARD = [
+  '    if (seenPageIds.has(p.page_id)) {',
+  "      throw new DiscoveryError('E_PREVIOUS_INVALID', `previous scan lists page ${p.page_id} more than once`)",
+  '    }'
+].join('\n')
+
+const PARENT_GUARD = [
+  '  if (detail.parent_id !== observed.parent_id) {',
+  '    fail(',
+  '      `parent_id ${JSON.stringify(detail.parent_id)} from the detail read does not match ` +',
+  '      `${JSON.stringify(observed.parent_id)} observed in the descendants walk`',
+  '    )',
+  '  }'
+].join('\n')
+
+const STATUS_GUARD = [
+  '  if (detail.source_status !== observed.source_status) {',
+  '    fail(',
+  '      `status ${JSON.stringify(detail.source_status)} from the detail read does not match ` +',
+  '      `${JSON.stringify(observed.source_status)} observed in the descendants walk`',
+  '    )',
+  '  }'
+].join('\n')
+
+test('counterexample: without the digest guard, a tampered previous scan is accepted', async () => {
+  await withoutGuard(DIGEST_GUARD, async (mod) => {
+    const doc = await discoverWithPreviousUsing(mod, TAMPERED_PREVIOUS)
+    // The forged "version 999" is believed, and the stale digest is carried
+    // forward as this scan's provenance. Exactly what the guard prevents.
+    assert.deepEqual(doc.semantic.delta.version_changed, [{ page_id: '900000002', from: 999, to: 7 }])
+    assert.equal(doc.capture.previous_digest, PREVIOUS.discovery_digest)
+  })
+})
+
+test('counterexample: without the duplicate-page_id guard, one of the duplicate rows disappears silently', async () => {
+  await withoutGuard(DUPLICATE_GUARD, async (mod) => {
+    const doc = await discoverWithPreviousUsing(mod, DUPLICATE_PREVIOUS)
+    // new Map(pages.map(...)) keeps the LAST row; the version-6 row vanishes
+    // with nothing reported. No error, no warning, a wrong delta.
+    assert.deepEqual(doc.semantic.delta.version_changed, [{ page_id: '900000002', from: 999, to: 7 }])
+  })
+})
+
+test('counterexample: the pre-fix implementation accepted a parent_id that changed between the two reads', async () => {
+  // Removing the parent check restores the shipped-before-repair behaviour for
+  // this input: the descendants walk said 900000001, the detail read said
+  // 900000009, and a page record was emitted anyway.
+  const moved = new Map([...DETAILS, ['900000002', detail({ id: '900000002', parentId: '900000009', version: { number: 7 } })]])
+  await withoutGuard(PARENT_GUARD, async (mod) => {
+    const doc = await mod.discoverProject({
+      env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: moved })
+    })
+    const record = doc.semantic.pages.find((p) => p.page_id === '900000002')
+    assert.equal(record.parent_id, '900000009') // contradicts the walk, emitted regardless
+    assert.equal(record.depth, 1) // depth still came from the walk — two source states in one record
+  })
+})
+
+test('counterexample: the pre-fix implementation accepted a status that changed between the two reads', async () => {
+  const restated = new Map([...DETAILS, ['900000003', detail({ id: '900000003', parentId: '900000002', version: { number: 2 }, status: 'current', title: 'Old' })]])
+  await withoutGuard(STATUS_GUARD, async (mod) => {
+    const doc = await mod.discoverProject({
+      env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: restated })
+    })
+    const record = doc.semantic.pages.find((p) => p.page_id === '900000003')
+    // The walk observed "archived", the record says active/current.
+    assert.deepEqual([record.lifecycle, record.source_status], ['active', 'current'])
+  })
 })

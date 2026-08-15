@@ -75,6 +75,49 @@ digest equality**; `captured_at` is never identity. Page order is sorted by
 `page_id`, so the order in which Confluence returns cursor pages does not change
 the digest.
 
+## Cross-read consistency
+
+Each non-root page is observed **twice**: once in the `descendants` cursor walk
+and once in its own detail read. Those are separate requests, so Confluence can
+move, archive or trash a page in between. The full descendant observation
+(`parent_id`, `depth`, `status`) is therefore kept, and after the detail read:
+
+- the detail `id` must match the requested id (as before);
+- the detail `parent_id` must equal the `parentId` observed in the walk;
+- the detail `status` must equal the `status` observed in the walk.
+
+A disagreement is `E_DISCOVERY_METADATA` with an explicit *source metadata
+changed during the scan* message — never a page record assembled from two
+different source states.
+
+Two things are deliberately **not** required:
+
+1. The registered root's `parent_id` may be non-`null`. The root is a scope
+   boundary, not a tree root, and its own parent legitimately lies above it.
+2. A page's parent need not itself be a `type=page` in the result set.
+   Confluence permits folder/whiteboard intermediaries; the scope rule stays
+   "every `type=page` descendant", and a non-page parent is neither invented as
+   a page nor treated as a failure.
+
+## Previous-scan integrity
+
+`--previous` drives the delta and its digest is carried forward as provenance in
+`capture.previous_digest`, so the document is authenticated before any field of
+it is believed. A previous scan is accepted only when **all** of the following
+hold, otherwise `E_PREVIOUS_INVALID`:
+
+- `schema_version` is `1.0` in both the envelope and the `semantic` body;
+- every page has an id, an integer `version`, and a `lifecycle` inside the
+  closed lifecycle model above;
+- no `page_id` appears twice (duplicates would collapse silently into the
+  comparison map and drop a page from the delta with nothing failing);
+- `sha256(JSON.stringify(previous.semantic))` equals `previous.discovery_digest`
+  exactly — an edited body, a stale digest or a forged digest is rejected.
+
+The digest, duplicate and cross-read guards each carry a counterexample test
+that loads a copy of the shipped module with exactly that guard's source removed
+and shows the defect is then accepted.
+
 ## Prerequisites
 
 - Node.js ≥ 22 (repo `engines`), zero runtime dependencies.
@@ -136,13 +179,13 @@ synthetic fallback.
 | `E_UNKNOWN_PROJECT` | 1 | selector matches no registry project (exact match only — no case folding, no Jira keys) |
 | `E_DISCOVERY_SCOPE` | 1 | registry project not `active`; previous scan for another project or root; duplicate or root-colliding descendant |
 | `E_PREVIOUS_UNREADABLE` | 2 | `--previous` file missing or unparseable |
-| `E_PREVIOUS_INVALID` | 1 | previous scan document is structurally invalid |
+| `E_PREVIOUS_INVALID` | 1 | previous scan document is structurally invalid, declares an unsupported `schema_version`, lists a `page_id` twice, carries a lifecycle outside the closed model, or has a `discovery_digest` that does not match a digest recomputed from its own `semantic` body |
 | `E_SOURCE_AUTH_MISSING` | 1 | credentials not set (shared contract with ATLAS-65) |
 | `E_DISCOVERY_AUTH_MISSING` | 1 | an internal caller reached the HTTP layer without an authorization header — a local config defect, raised before any request |
 | `E_DISCOVERY_CONFIG` | 1 | configured base URL is not a URL, or a caller-supplied start URL fails the URL gate |
 | `E_DISCOVERY_UNREADABLE` | 1 | network failure, non-2xx HTTP, non-JSON response, or a literal `null` body |
 | `E_DISCOVERY_PAGINATION` | 1 | missing/invalid `_links.next`, `_links` not an object, next link leaving the configured origin/scheme or carrying userinfo, repeated cursor URL, request cap exceeded, response without a `results` array |
-| `E_DISCOVERY_METADATA` | 1 | page missing id/title/status/`version.number`, or answering with the wrong id |
+| `E_DISCOVERY_METADATA` | 1 | page missing id/title/status/`version.number`, answering with the wrong id, or a detail read whose `parent_id`/`status` contradicts the descendants observation for the same page |
 | `E_DISCOVERY_LIFECYCLE` | 1 | Confluence returned a status outside the closed allowlist |
 | `E_INTERNAL` | 2 | unexpected, uncoded failure |
 

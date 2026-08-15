@@ -258,6 +258,44 @@ export function assertPageDetailShape(raw, expectedId) {
   }
 }
 
+// The descendants walk and the per-page detail read are two separate requests.
+// Confluence can move, archive or trash a page between them, and the two reads
+// then describe different source states. Building one page record out of both
+// would report a state that never existed in any single observation, so a
+// disagreement aborts the scan instead of being silently merged.
+//
+// Deliberately NOT checked here:
+//   - the registered root: it has no descendant observation at all (the
+//     descendants endpoint never returns the root) and its own parent may
+//     legitimately sit above the registered scope boundary;
+//   - whether the observed parent is itself a type="page" in the result set:
+//     Confluence allows non-page intermediaries (folder, whiteboard, …) and the
+//     scope rule is "all type=page descendants", not "a closed page tree".
+//
+// Both shapes above already REQUIRE a non-empty status, so by the time this runs
+// "both reads expose a status" is true by construction and the comparison needs
+// no presence guard.
+export function assertCrossReadConsistent(observed, detail) {
+  const fail = (what) => {
+    throw new DiscoveryError(
+      'E_DISCOVERY_METADATA',
+      `page ${detail.page_id}: source metadata changed during the scan — ${what}`
+    )
+  }
+  if (detail.parent_id !== observed.parent_id) {
+    fail(
+      `parent_id ${JSON.stringify(detail.parent_id)} from the detail read does not match ` +
+      `${JSON.stringify(observed.parent_id)} observed in the descendants walk`
+    )
+  }
+  if (detail.source_status !== observed.source_status) {
+    fail(
+      `status ${JSON.stringify(detail.source_status)} from the detail read does not match ` +
+      `${JSON.stringify(observed.source_status)} observed in the descendants walk`
+    )
+  }
+}
+
 // Closed allowlist. A status Confluence starts returning that is not listed here
 // must fail the scan, not be silently normalized into "active".
 export const STATUS_TO_LIFECYCLE = Object.freeze({
@@ -355,7 +393,10 @@ export async function discoverProject({
   const pageDescendants = descendants.filter((d) => d.type === 'page')
   const nonPageDescendants = descendants.length - pageDescendants.length
 
-  const depthById = new Map()
+  // The WHOLE descendant observation is kept, not only its depth: the detail read
+  // that follows is checked against it, and a check needs something to check
+  // against. Keeping depth alone is what let two contradictory reads be combined.
+  const observedById = new Map()
   for (const d of pageDescendants) {
     if (d.page_id === rootId) {
       throw new DiscoveryError(
@@ -363,21 +404,24 @@ export async function discoverProject({
         `descendant ${d.page_id} is the registered root — a page cannot be its own descendant`
       )
     }
-    if (depthById.has(d.page_id)) {
+    if (observedById.has(d.page_id)) {
       throw new DiscoveryError(
         'E_DISCOVERY_SCOPE',
         `page ${d.page_id} appeared twice in the cursor walk — refusing an ambiguous scope`
       )
     }
-    depthById.set(d.page_id, d.depth)
+    observedById.set(d.page_id, d)
   }
 
-  // 3) One detail read per page: the only place a revision comes from.
+  // 3) One detail read per page: the only place a revision comes from. Every
+  // detail read must still agree with what the walk observed for that page.
   const pages = [buildPageRecord({ detail: rootDetail, depth: 0, baseUrl, spaceKey: project.confluence_space_key })]
-  for (const pageId of [...depthById.keys()].sort()) {
+  for (const pageId of [...observedById.keys()].sort()) {
+    const observed = observedById.get(pageId)
     const raw = await getJson(pageDetailUrl(baseUrl, pageId), { authorization, fetchImpl })
     const d = assertPageDetailShape(raw, pageId)
-    pages.push(buildPageRecord({ detail: d, depth: depthById.get(pageId), baseUrl, spaceKey: project.confluence_space_key }))
+    assertCrossReadConsistent(observed, d)
+    pages.push(buildPageRecord({ detail: d, depth: observed.depth, baseUrl, spaceKey: project.confluence_space_key }))
   }
   pages.sort(byPageId)
 
@@ -422,10 +466,47 @@ function assertPreviousShape(previous, project) {
   ) {
     throw new DiscoveryError('E_PREVIOUS_INVALID', 'previous scan document is structurally invalid')
   }
+  // A document written by another schema version can carry these same field
+  // names with different meaning. Reading it as if it were this version is
+  // exactly the silent acceptance this guard exists to prevent, so both the
+  // envelope and the semantic body must declare the supported version.
+  if (previous.schema_version !== SCHEMA_VERSION || s.schema_version !== SCHEMA_VERSION) {
+    throw new DiscoveryError(
+      'E_PREVIOUS_INVALID',
+      `previous scan schema version ${JSON.stringify(previous.schema_version)} / ` +
+      `${JSON.stringify(s.schema_version)} is not the supported ${JSON.stringify(SCHEMA_VERSION)}`
+    )
+  }
+  const seenPageIds = new Set()
   for (const p of s.pages) {
     if (!isNonEmptyString(p?.page_id) || !Number.isInteger(p?.version) || !isNonEmptyString(p?.lifecycle)) {
       throw new DiscoveryError('E_PREVIOUS_INVALID', 'previous scan contains a page without id, version or lifecycle')
     }
+    // Duplicates collapse silently in `new Map(prev.pages.map(...))` below, so a
+    // previous page could drop out of the comparison with nothing failing.
+    if (seenPageIds.has(p.page_id)) {
+      throw new DiscoveryError('E_PREVIOUS_INVALID', `previous scan lists page ${p.page_id} more than once`)
+    }
+    seenPageIds.add(p.page_id)
+    // Closed for the same reason lifecycleFor is closed: an unrecognised value
+    // must fail, never be compared as though its meaning were known.
+    if (!LIFECYCLES.includes(p.lifecycle)) {
+      throw new DiscoveryError(
+        'E_PREVIOUS_INVALID',
+        `previous scan page ${p.page_id} carries lifecycle ${JSON.stringify(p.lifecycle)}, ` +
+        'which is outside the closed lifecycle model'
+      )
+    }
+  }
+  // The digest is the only thing that proves this document is an intact scan
+  // produced by this implementation rather than an edited or fabricated one. It
+  // is recomputed over the exact body the delta is then read from, so a stale or
+  // forged digest cannot be carried into capture.previous_digest as provenance.
+  if (digestOf(s) !== previous.discovery_digest) {
+    throw new DiscoveryError(
+      'E_PREVIOUS_INVALID',
+      'previous scan discovery_digest does not match a digest recomputed from its own semantic body'
+    )
   }
   if (s.project_id !== project.project_id) {
     throw new DiscoveryError(
