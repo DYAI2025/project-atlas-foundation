@@ -105,11 +105,21 @@ async function main() {
     for (const [lifecycle, count] of [...byLifecycle].sort()) {
       process.stdout.write(`  lifecycle ${lifecycle}: ${count}\n`)
     }
-    if (s.delta !== null) {
+    // The delta is lineage and lives under `capture`, deliberately outside the
+    // digested `semantic` body — see the identity-vs-lineage note in
+    // src/atlas25/discovery.mjs.
+    const delta = doc.capture.delta
+    if (delta !== null) {
       process.stdout.write(
-        `  delta vs ${s.delta.previous_digest}: +${s.delta.added.length} added, ` +
-        `${s.delta.version_changed.length} revised, ${s.delta.lifecycle_changed.length} lifecycle-changed, ` +
-        `${s.delta.absent.length} absent, ${s.delta.unchanged.length} unchanged\n`
+        `  delta vs ${delta.previous_digest}: +${delta.added.length} added, ` +
+        `${delta.version_changed.length} revised, ${delta.lifecycle_changed.length} lifecycle-changed, ` +
+        `${delta.absent.length} absent, ${delta.unchanged.length} unchanged\n`
+      )
+    }
+    if (s.absent.length > 0) {
+      process.stdout.write(
+        `  absent (evidence-based, carried across runs): ` +
+        `${s.absent.map((a) => `${a.page_id}=${a.lifecycle}/${a.evidence}`).join(', ')}\n`
       )
     }
     process.stdout.write(`  written: ${out}\n`)

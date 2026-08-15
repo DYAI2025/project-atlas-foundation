@@ -7,7 +7,9 @@ registered project's Confluence subtree. Given a `project_id`, it resolves the
 project through the writer registry, walks the registered root page and its
 descendants, captures each page's revision (`version.number`) and lifecycle
 state, and writes a deterministic scan document. Given a previous scan it also
-reports an incremental delta. The design, the verified REST contract and the
+reports an incremental delta and carries forward every absence it has directly
+observed, so an arbitrarily long chain of reruns stays coherent. The design, the
+verified REST contract and the
 task-by-task derivation live in
 `docs/plans/2026-08-15-atlas-25-confluence-project-discovery-revision-scan.md`.
 
@@ -50,30 +52,71 @@ This slice writes nothing to gbrain.
 | `active` | detail/descendant `status === "current"` | presence alone |
 | `archived` | `status === "archived"` | absence from the walk |
 | `deleted` | `status === "trashed"` or `status === "deleted"` | absence from the walk |
-| `removed_from_scope` | page was in the previous scan, is absent from the current subtree walk, and a direct read returns `status === "current"` | anything else |
-| `absent` | page was in the previous scan and a direct read returns **HTTP 404** | anything else |
+| `removed_from_scope` | page was previously observed (as a page or as an absent entry), is absent from the current subtree walk, and a direct read returns `status === "current"` | anything else |
+| `absent` | page was previously observed and a direct read returns **HTTP 404** | anything else |
 
 Any other `status` string ⇒ `E_DISCOVERY_LIFECYCLE`, fail closed. No page is ever
 reported as deleted without an API-returned status or an observed 404.
-`historical` and `draft` are deliberately unmapped.
+`historical` and `draft` are deliberately unmapped. A page does not become
+"deleted" by staying gone: a persistent 404 is re-observed as `absent` on every
+run, however many runs that takes.
 
-## Determinism
+## Determinism — current source state vs lineage
 
-The scan document is split in two:
+The scan document is split in two, and the split is the identity contract:
 
-- **`semantic`** — project, source, discovery rule, sorted page list (each with
-  `page_id`, `title`, `version`, `parent_id`, `depth`, `lifecycle`,
-  `source_status`, `confluence_url`), sorted `absent` list, `delta`. Contains
-  **no** wall-clock value.
-- **`capture`** — `captured_at`, `pagination_requests`, `previous_digest`.
-  Metadata only.
+- **`semantic`** — the **current source state**: project, source, discovery rule,
+  sorted page list (each with `page_id`, `title`, `version`, `parent_id`,
+  `depth`, `lifecycle`, `source_status`, `confluence_url`) and the sorted
+  `absent` list of directly observed absences. Contains **no** wall-clock value
+  and **no** reference to any previous scan.
+- **`capture`** — the **lineage**: `captured_at`, `pagination_requests`,
+  `previous_digest` (which predecessor this run was compared against) and
+  `delta` (what that comparison found). Metadata and comparison provenance only.
 
-`discovery_digest = sha256(JSON.stringify(semantic))`. Two runs against unchanged
-source state produce a byte-identical `semantic` and an identical
-`discovery_digest` while `capture.captured_at` differs. **Semantic equality is
-digest equality**; `captured_at` is never identity. Page order is sorted by
-`page_id`, so the order in which Confluence returns cursor pages does not change
-the digest.
+`discovery_digest = sha256(JSON.stringify(semantic))` — an **unkeyed** SHA-256
+content digest. It proves integrity and gives the source state a stable identity;
+it is not a MAC or a signature and proves nothing about who produced a document.
+
+Two runs against unchanged source state produce a byte-identical `semantic` and
+an identical `discovery_digest` while `capture.captured_at` differs. **Semantic
+equality is digest equality**; `captured_at` is never identity. Page order is
+sorted by `page_id`, so the order in which Confluence returns cursor pages does
+not change the digest.
+
+`delta` lives under `capture`, not inside `semantic`, deliberately: a predecessor
+reference is lineage, and lineage inside the digested body chains the source-state
+identity to run history. With `delta.previous_digest` in the digest input, an
+unchanged source acquired a **new** `discovery_digest` on every chained rerun —
+run 3's identity depended on run 2's, run 2's on run 1's, forever. The delta is
+still reported in full; it is just no longer part of what the source *is*.
+
+## Incremental state closure (chained reruns)
+
+`--previous` is not a one-shot comparison. The output of run *n* is the input of
+run *n+1*, so both of these must hold across an arbitrarily long chain:
+
+1. **Identity is source-only.** An unchanged current source state keeps one
+   `discovery_digest` no matter which predecessor it is compared against. Two runs
+   over the same state compared against *different* predecessors produce different
+   `capture.delta` values and the *same* `discovery_digest`.
+2. **An observed absence is carried, not forgotten.** Previously observed state is
+   `semantic.pages` **and** `semantic.absent`. A page that disappeared is stored
+   under `absent`, so a comparison built from `pages` alone dropped it on the next
+   run — it left the scan with no error and no evidence. Each absent entry is
+   re-probed by direct read every run, and its `last_seen_version` carries forward
+   unchanged, so a persistent 404 reproduces a byte-identical record: absence is a
+   fixed point, not a decaying one.
+
+Reappearance is therefore deterministic: a page that was `absent` and is found in
+the subtree again is reported under `delta.lifecycle_changed` as
+`absent → active`, **not** under `delta.added`. Its absence episode is preserved
+as lineage rather than being erased into a first sighting.
+
+Consequently `semantic.absent` entries are validated on read exactly like page
+entries (id, integer `last_seen_version`, `evidence`, lifecycle inside the closed
+model, no id repeated across `pages` and `absent`). Before this closure nothing
+read the list back, so nothing checked it.
 
 ## Cross-read consistency
 
@@ -102,21 +145,33 @@ Two things are deliberately **not** required:
 ## Previous-scan integrity
 
 `--previous` drives the delta and its digest is carried forward as provenance in
-`capture.previous_digest`, so the document is authenticated before any field of
-it is believed. A previous scan is accepted only when **all** of the following
-hold, otherwise `E_PREVIOUS_INVALID`:
+`capture.previous_digest`, so the document's **integrity is checked** before any
+field of it is believed. (Integrity, not authorship: the digest is unkeyed, so it
+detects an edited or truncated body, not who wrote one.) A previous scan is
+accepted only when **all** of the following hold, otherwise `E_PREVIOUS_INVALID`:
 
-- `schema_version` is `1.0` in both the envelope and the `semantic` body;
+- `schema_version` is `1.1` in both the envelope and the `semantic` body;
+- `semantic.pages` and `semantic.absent` are both present as arrays;
 - every page has an id, an integer `version`, and a `lifecycle` inside the
   closed lifecycle model above;
-- no `page_id` appears twice (duplicates would collapse silently into the
-  comparison map and drop a page from the delta with nothing failing);
+- every absent entry has an id, an integer `last_seen_version`, a non-empty
+  `evidence` string, and a `lifecycle` inside the same closed model;
+- no `page_id` appears twice **across `pages` and `absent` together**
+  (duplicates would collapse silently into the comparison map and drop a page
+  from the delta with nothing failing; an id that is both in scope and absent is
+  ambiguous previously-observed state);
 - `sha256(JSON.stringify(previous.semantic))` equals `previous.discovery_digest`
   exactly — an edited body, a stale digest or a forged digest is rejected.
 
-The digest, duplicate and cross-read guards each carry a counterexample test
-that loads a copy of the shipped module with exactly that guard's source removed
-and shows the defect is then accepted.
+`1.1` supersedes `1.0`: the digested `semantic` body no longer contains `delta`
+and now requires `absent`, so the digest covers a different field set than it did
+under `1.0`. A `1.0` document is rejected rather than compared as though the two
+identities meant the same thing.
+
+The digest, duplicate, cross-read, absent-carry-forward and identity-vs-lineage
+mechanisms each carry a counterexample test that loads a copy of the shipped
+module with exactly that mechanism removed — or, for the identity separation,
+with the pre-repair mechanism restored — and shows the defect is then observable.
 
 ## Prerequisites
 
@@ -179,7 +234,7 @@ synthetic fallback.
 | `E_UNKNOWN_PROJECT` | 1 | selector matches no registry project (exact match only — no case folding, no Jira keys) |
 | `E_DISCOVERY_SCOPE` | 1 | registry project not `active`; previous scan for another project or root; duplicate or root-colliding descendant |
 | `E_PREVIOUS_UNREADABLE` | 2 | `--previous` file missing or unparseable |
-| `E_PREVIOUS_INVALID` | 1 | previous scan document is structurally invalid, declares an unsupported `schema_version`, lists a `page_id` twice, carries a lifecycle outside the closed model, or has a `discovery_digest` that does not match a digest recomputed from its own `semantic` body |
+| `E_PREVIOUS_INVALID` | 1 | previous scan document is structurally invalid (including a missing `pages` or `absent` array), declares an unsupported `schema_version`, lists a `page_id` twice across `pages` and `absent`, carries a page or absent entry with a lifecycle outside the closed model, carries an absent entry without id/`last_seen_version`/`evidence`, or has a `discovery_digest` that does not match a digest recomputed from its own `semantic` body |
 | `E_SOURCE_AUTH_MISSING` | 1 | credentials not set (shared contract with ATLAS-65) |
 | `E_DISCOVERY_AUTH_MISSING` | 1 | an internal caller reached the HTTP layer without an authorization header — a local config defect, raised before any request |
 | `E_DISCOVERY_CONFIG` | 1 | configured base URL is not a URL, or a caller-supplied start URL fails the URL gate |

@@ -10,6 +10,42 @@
 
 ---
 
+## AMENDMENT A-1 (2026-08-16) — incremental state closure
+
+**Nothing below this section is deleted.** The Task-4/Task-5/Task-6 snippets in
+this plan record the design **as it was implemented at commit `84e8885`** and are
+kept as history. Two defects in that design were reproduced and repaired
+afterwards; where a snippet below contradicts the list here, the list is
+authoritative and `docs/atlas-25-discovery.md` is the current runbook.
+
+- **Defect A — chained rerun identity.** `delta.previous_digest` sat inside the
+  digested `semantic` body, so the source-state identity was chained to run
+  history: over one *unchanged* source state, run 2 and run 3 produced different
+  `discovery_digest` values, forever. **Repair:** the whole `delta` object moved
+  from `semantic` to `capture` (the lineage container, which is not digested).
+  `semantic` is now current source state only; `capture` carries `captured_at`,
+  `pagination_requests`, `previous_digest` and `delta`. Delta reporting is
+  unchanged in content — only its location moved. Every plan snippet reading
+  `doc.semantic.delta` is now `doc.capture.delta`.
+- **Defect B — absent state forgotten.** `applyPrevious` built its comparison map
+  from `previous.semantic.pages` only, so a page recorded under
+  `previous.semantic.absent` dropped out of tracking on the very next run.
+  **Repair:** previously observed state is `pages` **and** `absent`; an absent
+  entry's `last_seen_version` carries forward, so a persistent 404 re-probes to a
+  byte-identical record. A page that reappears is reported as
+  `lifecycle_changed: absent → active`, not as `added`.
+- **Consequences.** `semantic.absent` is now required and validated on read (id,
+  integer `last_seen_version`, `evidence`, closed-model lifecycle, no id repeated
+  across `pages` and `absent`). `SCHEMA_VERSION` moved `1.0` → `1.1`, because the
+  digested field set changed. The runbook's "authenticated" wording for the
+  unkeyed SHA-256 digest was corrected to "integrity is checked" — it is a content
+  digest, not proof of authorship.
+- **Unchanged:** previous-scan digest integrity (PO finding 1) and
+  descendants/detail cross-read consistency (PO finding 2), including their
+  counterexample tests.
+
+---
+
 ## BASELINE (verified 2026-08-15, before any edit)
 
 | Item | Observed |

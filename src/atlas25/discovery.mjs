@@ -9,6 +9,15 @@
 // lifecycle status and non-progressing cursor aborts the whole scan. There is no
 // partial result and no synthetic fallback. No page body is ever requested here,
 // so no raw Confluence content enters this path (DEC-04).
+//
+// Identity vs lineage (binding): `semantic` is the CURRENT SOURCE STATE — the
+// pages, their revisions, their lifecycle evidence, and the directly observed
+// absence state. `capture` is LINEAGE — when this scan was taken, what it cost,
+// which predecessor it was compared against, and what that comparison found.
+// Only `semantic` is digested. Lineage must never redefine source identity: an
+// unchanged source state has to keep the same discovery_digest no matter which
+// predecessor it happens to be compared against, or every chained rerun mints a
+// new identity forever.
 import { createHash } from 'node:crypto'
 // Credentials are NOT re-implemented here. requireAuth is the single existing
 // credential contract (ATLAS65_CONFLUENCE_* env vars) and keeps its own
@@ -24,7 +33,12 @@ export class DiscoveryError extends Error {
   }
 }
 
-export const SCHEMA_VERSION = '1.0'
+// 1.1 removed `delta` from the digested `semantic` body (it moved to
+// `capture.delta`) and made `absent` a required, validated part of that body.
+// The digest therefore covers a different field set than it did under 1.0, so a
+// 1.0 document must be rejected rather than compared as if the two identities
+// meant the same thing.
+export const SCHEMA_VERSION = '1.1'
 export const DEFAULT_PAGE_LIMIT = 100
 // Hard backstop against a cursor walk that never terminates. Exceeding it is a
 // failure, never a silent truncation.
@@ -360,6 +374,10 @@ function buildPageRecord({ detail, depth, baseUrl, spaceKey }) {
   }
 }
 
+// An UNKEYED SHA-256 over the serialized current source state. It proves content
+// integrity and gives the state a stable identity; it is not a MAC or a signature
+// and proves nothing about who produced the document. Anyone able to edit a scan
+// can recompute a matching digest.
 export function digestOf(semantic) {
   return createHash('sha256').update(JSON.stringify(semantic)).digest('hex')
 }
@@ -440,8 +458,10 @@ export async function discoverProject({
       non_page_descendants: nonPageDescendants
     },
     pages,
-    absent: [],
-    delta: null
+    // Current source state, not history: a plain scan has observed no absence,
+    // so this is empty rather than absent-as-a-field. A scan with `--previous`
+    // fills it from direct reads it actually performed.
+    absent: []
   }
 
   return {
@@ -451,7 +471,8 @@ export async function discoverProject({
     capture: {
       captured_at: capturedAt,
       pagination_requests: walk.requests,
-      previous_digest: null
+      previous_digest: null,
+      delta: null
     }
   }
 }
@@ -461,7 +482,7 @@ function assertPreviousShape(previous, project) {
   if (
     previous === null || typeof previous !== 'object' || Array.isArray(previous) ||
     s === null || typeof s !== 'object' || Array.isArray(s) ||
-    !Array.isArray(s.pages) || typeof previous.discovery_digest !== 'string' ||
+    !Array.isArray(s.pages) || !Array.isArray(s.absent) || typeof previous.discovery_digest !== 'string' ||
     s.source === null || typeof s.source !== 'object'
   ) {
     throw new DiscoveryError('E_PREVIOUS_INVALID', 'previous scan document is structurally invalid')
@@ -494,6 +515,39 @@ function assertPreviousShape(previous, project) {
       throw new DiscoveryError(
         'E_PREVIOUS_INVALID',
         `previous scan page ${p.page_id} carries lifecycle ${JSON.stringify(p.lifecycle)}, ` +
+        'which is outside the closed lifecycle model'
+      )
+    }
+  }
+  // The absent list is previously observed state that the NEXT run re-verifies,
+  // so it is held to the same closed model as the page list. Before the
+  // incremental-state repair it was never validated, because nothing read it —
+  // and nothing read it because an absent page was silently dropped from
+  // tracking after one run.
+  for (const a of s.absent) {
+    if (
+      !isNonEmptyString(a?.page_id) || !Number.isInteger(a?.last_seen_version) ||
+      !isNonEmptyString(a?.lifecycle) || !isNonEmptyString(a?.evidence)
+    ) {
+      throw new DiscoveryError(
+        'E_PREVIOUS_INVALID',
+        'previous scan contains an absent entry without id, last_seen_version, lifecycle or evidence'
+      )
+    }
+    // One id cannot be both in scope and absent in a single observation, and a
+    // repeat would let one row silently overwrite the other in the comparison
+    // map — the same defect the page-list duplicate guard exists to stop.
+    if (seenPageIds.has(a.page_id)) {
+      throw new DiscoveryError(
+        'E_PREVIOUS_INVALID',
+        `previous scan lists page ${a.page_id} more than once across its pages and absent lists`
+      )
+    }
+    seenPageIds.add(a.page_id)
+    if (!LIFECYCLES.includes(a.lifecycle)) {
+      throw new DiscoveryError(
+        'E_PREVIOUS_INVALID',
+        `previous scan absent entry ${a.page_id} carries lifecycle ${JSON.stringify(a.lifecycle)}, ` +
         'which is outside the closed lifecycle model'
       )
     }
@@ -555,7 +609,18 @@ export async function applyPrevious(doc, previous, { env, project, fetchImpl = f
   const { baseUrl, authorization } = requireAuth(env)
 
   const currentById = new Map(doc.semantic.pages.map((p) => [p.page_id, p]))
-  const previousById = new Map(prev.pages.map((p) => [p.page_id, p]))
+  // Previously observed state is the page list AND the absent list. Building this
+  // map from `prev.pages` alone is what let an already-absent page fall out of
+  // tracking on the very next run: it was no longer a page, so nothing compared
+  // it, nothing re-probed it, and it disappeared from the scan with no error and
+  // no evidence — indistinguishable from never having existed.
+  // An absent entry's `last_seen_version` IS its last observed revision, so it
+  // carries forward unchanged and a persistent 404 re-probes to a byte-identical
+  // record: the absent state is a fixed point, not a decaying one.
+  const previousById = new Map(prev.pages.map((p) => [p.page_id, { version: p.version, lifecycle: p.lifecycle }]))
+  for (const a of prev.absent) {
+    previousById.set(a.page_id, { version: a.last_seen_version, lifecycle: a.lifecycle })
+  }
 
   const added = []
   const unchanged = []
@@ -593,23 +658,32 @@ export async function applyPrevious(doc, previous, { env, project, fetchImpl = f
   }
 
   const sortById = (a, b) => (a.page_id < b.page_id ? -1 : a.page_id > b.page_id ? 1 : 0)
+  const delta = {
+    previous_digest: previous.discovery_digest,
+    added: added.sort(),
+    unchanged: unchanged.sort(),
+    version_changed: versionChanged.sort(sortById),
+    lifecycle_changed: lifecycleChanged.sort(sortById),
+    absent: absent.map((a) => a.page_id).sort()
+  }
+  // CURRENT SOURCE STATE only, so the digest stays an identity of the source.
+  // `absent` belongs here: each entry is a fact this run directly observed (a 404
+  // or a status actually returned), not a memory of an older scan. `delta` does
+  // NOT belong here: which predecessor was compared, and what that comparison
+  // found, is lineage. Keeping `delta.previous_digest` inside the digested body
+  // chained identity to run history — an unchanged source acquired a new
+  // discovery_digest on every rerun, without a single byte of the source having
+  // changed. The delta is not dropped, it is reported under `capture`.
   const semantic = {
     ...doc.semantic,
-    absent: absent.sort(sortById),
-    delta: {
-      previous_digest: previous.discovery_digest,
-      added: added.sort(),
-      unchanged: unchanged.sort(),
-      version_changed: versionChanged.sort(sortById),
-      lifecycle_changed: lifecycleChanged.sort(sortById),
-      absent: absent.map((a) => a.page_id).sort()
-    }
+    absent: absent.sort(sortById)
   }
 
   return {
     schema_version: doc.schema_version,
     discovery_digest: digestOf(semantic),
     semantic,
-    capture: { ...doc.capture, previous_digest: previous.discovery_digest }
+    // The lineage container: nothing in `capture` enters the digest.
+    capture: { ...doc.capture, previous_digest: previous.discovery_digest, delta }
   }
 }

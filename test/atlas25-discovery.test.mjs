@@ -725,7 +725,7 @@ test('discoverProject fails closed when the root page itself is unreadable', asy
 // A previous scan that saw four pages: the root, 900000002 (v6), 900000003 (v2)
 // and 900000005 (v1, since removed from the subtree).
 const PREVIOUS_SEMANTIC = {
-  schema_version: '1.0',
+  schema_version: SCHEMA_VERSION,
   project_id: 'PLUMBLINE',
   source: { source_kind: 'confluence', source_id: '900000001', space_key: 'PRODUKTMAN', base_url: BASE },
   discovery: { rule: 'x', page_count: 4, non_page_descendants: 0 },
@@ -735,22 +735,27 @@ const PREVIOUS_SEMANTIC = {
     { page_id: '900000003', title: 'Old', version: 2, parent_id: '900000002', depth: 2, lifecycle: 'active', source_status: 'current', confluence_url: 'u' },
     { page_id: '900000005', title: 'Gone', version: 1, parent_id: '900000001', depth: 1, lifecycle: 'active', source_status: 'current', confluence_url: 'u' }
   ],
-  absent: [],
-  delta: null
+  // No `delta` here: the delta is lineage and lives under `capture`, outside the
+  // digested body. A fixture that still carried it would be asserting the old,
+  // history-chained identity contract.
+  absent: []
 }
 
 // A previous scan is now only accepted if its digest matches its own body, so
 // every fixture derives the digest from the body it actually carries. Hand-typed
 // digests would make each fixture prove nothing except the digest guard.
-function previousScan(semanticOver = {}, envelopeOver = {}) {
-  const semantic = { ...PREVIOUS_SEMANTIC, ...semanticOver }
+function previousEnvelope(semantic, envelopeOver = {}) {
   return {
-    schema_version: '1.0',
+    schema_version: SCHEMA_VERSION,
     discovery_digest: digestOf(semantic),
     semantic,
-    capture: { captured_at: 'then', pagination_requests: 1, previous_digest: null },
+    capture: { captured_at: 'then', pagination_requests: 1, previous_digest: null, delta: null },
     ...envelopeOver
   }
+}
+
+function previousScan(semanticOver = {}, envelopeOver = {}) {
+  return previousEnvelope({ ...PREVIOUS_SEMANTIC, ...semanticOver }, envelopeOver)
 }
 
 const PREVIOUS = previousScan()
@@ -770,7 +775,7 @@ async function discoverWithPrevious(previous, extraDetails = new Map()) {
 test('applyPrevious reports added, unchanged, version_changed and lifecycle_changed', async () => {
   // 900000005 is absent from the subtree AND 404s on a direct read -> "absent".
   const doc = await discoverWithPrevious(PREVIOUS)
-  assert.deepEqual(doc.semantic.delta, {
+  assert.deepEqual(doc.capture.delta, {
     previous_digest: PREVIOUS.discovery_digest,
     added: [],
     unchanged: ['900000001'],
@@ -826,7 +831,7 @@ test('applyPrevious with no previous scan leaves delta null and absent empty', a
   // promise, which is `undefined` — the test would have failed with a TypeError
   // rather than proving the no-previous behaviour.
   const same = await applyPrevious(doc, null, {})
-  assert.equal(same.semantic.delta, null)
+  assert.equal(same.capture.delta, null)
   assert.deepEqual(same.semantic.absent, [])
   assert.equal(same.discovery_digest, doc.discovery_digest)
 })
@@ -869,19 +874,25 @@ test('rerunning against an unchanged previous scan reports every page unchanged 
   const withDelta = await applyPrevious(second, first, {
     env: ENV, project: PROJECT, fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
   })
-  assert.deepEqual(withDelta.semantic.delta.added, [])
-  assert.deepEqual(withDelta.semantic.delta.version_changed, [])
-  assert.deepEqual(withDelta.semantic.delta.lifecycle_changed, [])
-  assert.deepEqual(withDelta.semantic.delta.absent, [])
-  assert.deepEqual(withDelta.semantic.delta.unchanged, ['900000001', '900000002', '900000003'])
-  assert.equal(withDelta.semantic.delta.previous_digest, first.discovery_digest)
+  assert.deepEqual(withDelta.capture.delta.added, [])
+  assert.deepEqual(withDelta.capture.delta.version_changed, [])
+  assert.deepEqual(withDelta.capture.delta.lifecycle_changed, [])
+  assert.deepEqual(withDelta.capture.delta.absent, [])
+  assert.deepEqual(withDelta.capture.delta.unchanged, ['900000001', '900000002', '900000003'])
+  assert.equal(withDelta.capture.delta.previous_digest, first.discovery_digest)
+  // The source did not change, so comparing it against a predecessor must not
+  // change what it IS. Identity is the digest of the current source state alone.
+  assert.equal(withDelta.discovery_digest, second.discovery_digest)
+  assert.equal(withDelta.discovery_digest, first.discovery_digest)
 })
 
 // --- previous-scan integrity (PO finding 1) ---------------------------------
 //
-// "Structurally plausible" is not "produced by this implementation". A previous
-// scan drives the delta AND is carried forward as provenance in
-// capture.previous_digest, so it is authenticated before any field is believed.
+// "Structurally plausible" is not "an intact scan". A previous scan drives the
+// delta AND is carried forward as provenance in capture.previous_digest, so its
+// integrity is checked before any field is believed. The digest is an unkeyed
+// SHA-256 content digest: it detects edited or truncated bodies, it does not
+// authenticate an author.
 
 test('applyPrevious accepts a previous scan whose digest matches its own semantic body', async () => {
   // The positive case, pinned explicitly: the fixture's digest is not a literal,
@@ -890,7 +901,7 @@ test('applyPrevious accepts a previous scan whose digest matches its own semanti
   assert.equal(PREVIOUS.discovery_digest, digestOf(PREVIOUS.semantic))
   const doc = await discoverWithPrevious(PREVIOUS)
   assert.equal(doc.capture.previous_digest, PREVIOUS.discovery_digest)
-  assert.notEqual(doc.semantic.delta, null)
+  assert.notEqual(doc.capture.delta, null)
 })
 
 // A body edited after the fact: the digest still belongs to the ORIGINAL body.
@@ -977,6 +988,237 @@ for (const [where, semanticOver, envelopeOver] of [
     )
   })
 }
+
+// --- previous-scan absent list (incremental state closure) ------------------
+//
+// The absent list is now read back on the next run, so it is validated like the
+// page list instead of being trusted because nothing looked at it.
+
+test('applyPrevious fails closed when the previous scan carries no absent list', async () => {
+  const semantic = { ...PREVIOUS_SEMANTIC }
+  delete semantic.absent
+  await assert.rejects(
+    discoverWithPrevious(previousEnvelope(semantic)),
+    (e) => e instanceof DiscoveryError && e.code === 'E_PREVIOUS_INVALID' && /structurally invalid/.test(e.message)
+  )
+})
+
+for (const [name, entry] of [
+  ['no page_id', { lifecycle: 'absent', evidence: 'http_404_on_direct_read', last_seen_version: 1 }],
+  ['no last_seen_version', { page_id: '900000007', lifecycle: 'absent', evidence: 'http_404_on_direct_read' }],
+  ['a non-integer last_seen_version', { page_id: '900000007', lifecycle: 'absent', evidence: 'x', last_seen_version: 1.5 }],
+  ['no evidence', { page_id: '900000007', lifecycle: 'absent', last_seen_version: 1 }]
+]) {
+  test(`applyPrevious fails closed on a previous absent entry with ${name}`, async () => {
+    await assert.rejects(
+      discoverWithPrevious(previousScan({ absent: [entry] })),
+      (e) =>
+        e instanceof DiscoveryError &&
+        e.code === 'E_PREVIOUS_INVALID' &&
+        /absent entry without id, last_seen_version, lifecycle or evidence/.test(e.message)
+    )
+  })
+}
+
+test('applyPrevious fails closed on a previous absent entry outside the closed lifecycle model', async () => {
+  await assert.rejects(
+    discoverWithPrevious(previousScan({
+      absent: [{ page_id: '900000007', lifecycle: 'vanished', evidence: 'http_404_on_direct_read', last_seen_version: 1 }]
+    })),
+    (e) =>
+      e instanceof DiscoveryError &&
+      e.code === 'E_PREVIOUS_INVALID' &&
+      /outside the closed lifecycle model/.test(e.message) &&
+      /"vanished"/.test(e.message)
+  )
+})
+
+test('applyPrevious fails closed when one page id is listed both as a page and as absent', async () => {
+  // Ambiguous previously-observed state: whichever row wins the comparison map
+  // silently decides the delta. It cannot be both in scope and absent at once.
+  await assert.rejects(
+    discoverWithPrevious(previousScan({
+      absent: [{ page_id: '900000005', lifecycle: 'absent', evidence: 'http_404_on_direct_read', last_seen_version: 1 }]
+    })),
+    (e) =>
+      e instanceof DiscoveryError &&
+      e.code === 'E_PREVIOUS_INVALID' &&
+      /lists page 900000005 more than once across its pages and absent lists/.test(e.message)
+  )
+})
+
+test('applyPrevious fails closed when the previous absent list repeats one page id', async () => {
+  const twice = {
+    page_id: '900000007', lifecycle: 'absent', evidence: 'http_404_on_direct_read', last_seen_version: 1
+  }
+  await assert.rejects(
+    discoverWithPrevious(previousScan({ absent: [twice, { ...twice, last_seen_version: 2 }] })),
+    (e) =>
+      e instanceof DiscoveryError &&
+      e.code === 'E_PREVIOUS_INVALID' &&
+      /lists page 900000007 more than once/.test(e.message)
+  )
+})
+
+// --- incremental state closure: chained reruns ------------------------------
+//
+// One source state, observed three times: a plain scan and two chained
+// incremental scans. Two invariants are at stake and they are separate.
+//   1. Identity comes from the CURRENT SOURCE STATE alone. Which predecessor a
+//      run happened to be compared against is lineage and must not enter the
+//      digest, or every rerun of an unchanged source mints a new identity.
+//   2. An absence, once directly observed, keeps being carried and re-verified.
+//      A page that is gone must not slip out of the scan just because the
+//      predecessor stopped listing it as a page.
+
+const chainScan = (walk, details, capturedAt) => discoverProject({
+  env: ENV, project: PROJECT, capturedAt, fetchImpl: siteFetch({ descendantPages: walk, details })
+})
+const chainPrev = (doc, previous, walk, details) => applyPrevious(doc, previous, {
+  env: ENV, project: PROJECT, fetchImpl: siteFetch({ descendantPages: walk, details })
+})
+
+// Source state S1 — root + 900000002 + 900000005.
+const WALK_WITH_5 = new Map([['0', {
+  results: [
+    descendant({ id: '900000002', parentId: '900000001', depth: 1 }),
+    descendant({ id: '900000005', parentId: '900000001', depth: 1, title: 'Gone later' })
+  ],
+  _links: {}
+}]])
+const DETAILS_WITH_5 = new Map([
+  ['900000001', detail({ id: '900000001', parentId: null, version: { number: 12 }, title: 'Root' })],
+  ['900000002', detail({ id: '900000002', parentId: '900000001', version: { number: 7 } })],
+  ['900000005', detail({ id: '900000005', parentId: '900000001', version: { number: 1 }, title: 'Gone later' })]
+])
+// Source state S2 — 900000005 has left the walk AND 404s on a direct read.
+const WALK_WITHOUT_5 = new Map([['0', {
+  results: [descendant({ id: '900000002', parentId: '900000001', depth: 1 })],
+  _links: {}
+}]])
+const DETAILS_WITHOUT_5 = new Map([
+  ['900000001', detail({ id: '900000001', parentId: null, version: { number: 12 }, title: 'Root' })],
+  ['900000002', detail({ id: '900000002', parentId: '900000001', version: { number: 7 } })]
+])
+
+const ABSENT_5 = {
+  page_id: '900000005',
+  lifecycle: 'absent',
+  evidence: 'http_404_on_direct_read',
+  last_seen_version: 1
+}
+
+test('three chained runs over one unchanged source state hold exactly one discovery identity', async () => {
+  const run1 = await chainScan(WALK_WITH_5, DETAILS_WITH_5, 'T1')
+  const run2 = await chainPrev(await chainScan(WALK_WITH_5, DETAILS_WITH_5, 'T2'), run1, WALK_WITH_5, DETAILS_WITH_5)
+  const run3 = await chainPrev(await chainScan(WALK_WITH_5, DETAILS_WITH_5, 'T3'), run2, WALK_WITH_5, DETAILS_WITH_5)
+
+  // Byte-identical bodies, so this is an identity claim rather than a digest
+  // coincidence.
+  assert.equal(JSON.stringify(run2.semantic), JSON.stringify(run1.semantic))
+  assert.equal(JSON.stringify(run3.semantic), JSON.stringify(run2.semantic))
+  assert.equal(run2.discovery_digest, run1.discovery_digest)
+  assert.equal(run3.discovery_digest, run2.discovery_digest)
+
+  // The predecessor DOCUMENTS differ — different capture, different provenance —
+  // and each run still records which one it used. Their digests coincide only
+  // because identity is now stable, which is precisely the repaired behaviour.
+  assert.notEqual(JSON.stringify(run1.capture), JSON.stringify(run2.capture))
+  assert.equal(run2.capture.previous_digest, run1.discovery_digest)
+  assert.equal(run3.capture.previous_digest, run2.discovery_digest)
+
+  // The delta is not dropped, only relocated out of the digested body.
+  assert.deepEqual(run3.capture.delta.unchanged, ['900000001', '900000002', '900000005'])
+  assert.deepEqual(run3.capture.delta.added, [])
+  assert.deepEqual(run3.capture.delta.version_changed, [])
+  assert.deepEqual(run3.capture.delta.lifecycle_changed, [])
+  assert.deepEqual(run3.capture.delta.absent, [])
+
+  // No lineage may sit inside the digested body — not the field, not the value.
+  assert.equal(Object.hasOwn(run3.semantic, 'delta'), false)
+  assert.equal(JSON.stringify(run3.semantic).includes(run3.capture.previous_digest), false)
+})
+
+test('a different predecessor changes the reported delta but never the discovery identity', async () => {
+  // The sharpest form of the invariant: one current source state, two genuinely
+  // different predecessors (one saw 900000002 at v6, one at v7), so the deltas
+  // must differ and the identity must not.
+  const older = PREVIOUS
+  const newer = previousScan({
+    pages: PREVIOUS_SEMANTIC.pages.map((p) => (p.page_id === '900000002' ? { ...p, version: 7 } : p))
+  })
+  assert.notEqual(older.discovery_digest, newer.discovery_digest)
+
+  const a = await discoverWithPrevious(older)
+  const b = await discoverWithPrevious(newer)
+
+  assert.deepEqual(a.capture.delta.version_changed, [{ page_id: '900000002', from: 6, to: 7 }])
+  assert.deepEqual(b.capture.delta.version_changed, [])
+  assert.notEqual(a.capture.previous_digest, b.capture.previous_digest)
+  assert.equal(JSON.stringify(a.semantic), JSON.stringify(b.semantic))
+  assert.equal(a.discovery_digest, b.discovery_digest)
+})
+
+test('a page observed absent stays represented as absent on every following run', async () => {
+  const run1 = await chainScan(WALK_WITH_5, DETAILS_WITH_5, 'T1')
+  const run2 = await chainPrev(await chainScan(WALK_WITHOUT_5, DETAILS_WITHOUT_5, 'T2'), run1, WALK_WITHOUT_5, DETAILS_WITHOUT_5)
+  const run3 = await chainPrev(await chainScan(WALK_WITHOUT_5, DETAILS_WITHOUT_5, 'T3'), run2, WALK_WITHOUT_5, DETAILS_WITHOUT_5)
+
+  assert.deepEqual(run1.semantic.pages.map((p) => p.page_id), ['900000001', '900000002', '900000005'])
+  assert.deepEqual(run2.semantic.pages.map((p) => p.page_id), ['900000001', '900000002'])
+  assert.deepEqual(run2.semantic.absent, [ABSENT_5])
+
+  // The load-bearing case: run3's predecessor lists 900000005 only under
+  // `absent`, never under `pages`. Reading the page list alone dropped it here,
+  // and the page vanished from the scan with no error and no evidence.
+  assert.deepEqual(run3.semantic.absent, [ABSENT_5])
+  assert.deepEqual(run3.capture.delta.absent, ['900000005'])
+  assert.equal(JSON.stringify(run3.semantic).includes('900000005'), true)
+
+  // Absence is a fixed point: re-probing a persistent 404 reproduces the record
+  // byte for byte, including the revision it was last seen at.
+  assert.equal(JSON.stringify(run3.semantic), JSON.stringify(run2.semantic))
+  assert.equal(run3.discovery_digest, run2.discovery_digest)
+})
+
+test('a page that reappears after an observed absence is a lifecycle transition, not a new page', async () => {
+  const run1 = await chainScan(WALK_WITH_5, DETAILS_WITH_5, 'T1')
+  const run2 = await chainPrev(await chainScan(WALK_WITHOUT_5, DETAILS_WITHOUT_5, 'T2'), run1, WALK_WITHOUT_5, DETAILS_WITHOUT_5)
+  const run3 = await chainPrev(await chainScan(WALK_WITH_5, DETAILS_WITH_5, 'T3'), run2, WALK_WITH_5, DETAILS_WITH_5)
+
+  assert.deepEqual(run3.semantic.pages.map((p) => p.page_id), ['900000001', '900000002', '900000005'])
+  assert.deepEqual(run3.semantic.absent, [])
+  // Known-and-absent, not first-seen. Without the carried absence the page would
+  // be reported as `added` and the fact that it had been absent would be gone.
+  assert.deepEqual(run3.capture.delta.added, [])
+  assert.deepEqual(run3.capture.delta.lifecycle_changed, [{ page_id: '900000005', from: 'absent', to: 'active' }])
+  assert.deepEqual(run3.capture.delta.version_changed, [])
+  // Same source state as run1, so the same identity — the absence episode left
+  // lineage behind, not a different source.
+  assert.equal(run3.discovery_digest, run1.discovery_digest)
+})
+
+test('a persistent disappearance never hardens into "deleted" — only an API status does that', async () => {
+  let doc = await chainScan(WALK_WITH_5, DETAILS_WITH_5, 'T1')
+  for (const capturedAt of ['T2', 'T3', 'T4']) {
+    doc = await chainPrev(await chainScan(WALK_WITHOUT_5, DETAILS_WITHOUT_5, capturedAt), doc, WALK_WITHOUT_5, DETAILS_WITHOUT_5)
+    // Four consecutive 404s are four observations of absence, never an inference
+    // of deletion — no matter how long the page stays gone.
+    assert.deepEqual(doc.semantic.absent, [ABSENT_5])
+    assert.equal(doc.semantic.absent.some((a) => a.lifecycle === 'deleted'), false)
+  }
+  const trashed = new Map([
+    ...DETAILS_WITHOUT_5,
+    ['900000005', detail({ id: '900000005', parentId: '900000001', version: { number: 1 }, status: 'trashed', title: 'Gone later' })]
+  ])
+  const final = await chainPrev(await chainScan(WALK_WITHOUT_5, trashed, 'T5'), doc, WALK_WITHOUT_5, trashed)
+  assert.deepEqual(final.semantic.absent, [{
+    page_id: '900000005',
+    lifecycle: 'deleted',
+    evidence: 'direct_read_status_trashed',
+    last_seen_version: 1
+  }])
+})
 
 // --- cross-read source consistency (PO finding 2) ---------------------------
 
@@ -1125,7 +1367,11 @@ const MODULE_PATH = fileURLToPath(new URL('../src/atlas25/discovery.mjs', import
 const AUTH_MODULE_URL = pathToFileURL(fileURLToPath(new URL('../src/atlas65/confluence-source.mjs', import.meta.url))).href
 const RELATIVE_AUTH_IMPORT = "'../atlas65/confluence-source.mjs'"
 
-async function withoutGuard(fragment, run) {
+// `replacement` is '' for a guard cut. Defect A was not a missing guard but a
+// misplaced field, so proving it load-bearing means RESTORING the old mechanism
+// rather than deleting a check — a cut alone could never put lineage back into
+// the digested body.
+async function withMutatedSource(fragment, replacement, run) {
   const source = await readFile(MODULE_PATH, 'utf8')
   assert.equal(
     source.split(fragment).length - 1, 1,
@@ -1134,9 +1380,9 @@ async function withoutGuard(fragment, run) {
   assert.equal(source.split(RELATIVE_AUTH_IMPORT).length - 1, 1)
   // The copy lives outside the tree, so its relative dependency is rewritten to
   // an absolute file URL. The shipped file itself is never modified.
-  const mutated = source.split(fragment).join('').replace(RELATIVE_AUTH_IMPORT, JSON.stringify(AUTH_MODULE_URL))
-  assert.equal(mutated.includes(fragment), false)
-  assert.equal(source.length - mutated.length > 0, true)
+  const mutated = source.split(fragment).join(replacement).replace(RELATIVE_AUTH_IMPORT, JSON.stringify(AUTH_MODULE_URL))
+  assert.equal(mutated.includes(fragment), replacement.includes(fragment))
+  assert.notEqual(mutated, source)
   const dir = await mkdtemp(join(tmpdir(), 'atlas25-mutant-'))
   try {
     const file = join(dir, 'discovery.mjs')
@@ -1146,6 +1392,8 @@ async function withoutGuard(fragment, run) {
     await rm(dir, { recursive: true, force: true })
   }
 }
+
+const withoutGuard = (fragment, run) => withMutatedSource(fragment, '', run)
 
 async function discoverWithPreviousUsing(mod, previous, details = DETAILS) {
   const doc = await mod.discoverProject({
@@ -1194,7 +1442,7 @@ test('counterexample: without the digest guard, a tampered previous scan is acce
     const doc = await discoverWithPreviousUsing(mod, TAMPERED_PREVIOUS)
     // The forged "version 999" is believed, and the stale digest is carried
     // forward as this scan's provenance. Exactly what the guard prevents.
-    assert.deepEqual(doc.semantic.delta.version_changed, [{ page_id: '900000002', from: 999, to: 7 }])
+    assert.deepEqual(doc.capture.delta.version_changed, [{ page_id: '900000002', from: 999, to: 7 }])
     assert.equal(doc.capture.previous_digest, PREVIOUS.discovery_digest)
   })
 })
@@ -1204,7 +1452,7 @@ test('counterexample: without the duplicate-page_id guard, one of the duplicate 
     const doc = await discoverWithPreviousUsing(mod, DUPLICATE_PREVIOUS)
     // new Map(pages.map(...)) keeps the LAST row; the version-6 row vanishes
     // with nothing reported. No error, no warning, a wrong delta.
-    assert.deepEqual(doc.semantic.delta.version_changed, [{ page_id: '900000002', from: 999, to: 7 }])
+    assert.deepEqual(doc.capture.delta.version_changed, [{ page_id: '900000002', from: 999, to: 7 }])
   })
 })
 
@@ -1232,5 +1480,85 @@ test('counterexample: the pre-fix implementation accepted a status that changed 
     const record = doc.semantic.pages.find((p) => p.page_id === '900000003')
     // The walk observed "archived", the record says active/current.
     assert.deepEqual([record.lifecycle, record.source_status], ['active', 'current'])
+  })
+})
+
+// --- incremental state closure counterexamples ------------------------------
+
+const modScan = (mod, walk, details, capturedAt) => mod.discoverProject({
+  env: ENV, project: PROJECT, capturedAt, fetchImpl: siteFetch({ descendantPages: walk, details })
+})
+const modPrev = (mod, doc, previous, walk, details) => mod.applyPrevious(doc, previous, {
+  env: ENV, project: PROJECT, fetchImpl: siteFetch({ descendantPages: walk, details })
+})
+
+const ABSENT_CARRY_FORWARD = [
+  '  for (const a of prev.absent) {',
+  '    previousById.set(a.page_id, { version: a.last_seen_version, lifecycle: a.lifecycle })',
+  '  }'
+].join('\n')
+
+test('counterexample: without the absent carry-forward, the next run forgets an absent page entirely', async () => {
+  await withoutGuard(ABSENT_CARRY_FORWARD, async (mod) => {
+    const run1 = await modScan(mod, WALK_WITH_5, DETAILS_WITH_5, 'T1')
+    const run2 = await modPrev(mod, await modScan(mod, WALK_WITHOUT_5, DETAILS_WITHOUT_5, 'T2'), run1, WALK_WITHOUT_5, DETAILS_WITHOUT_5)
+    const run3 = await modPrev(mod, await modScan(mod, WALK_WITHOUT_5, DETAILS_WITHOUT_5, 'T3'), run2, WALK_WITHOUT_5, DETAILS_WITHOUT_5)
+    // Recorded once...
+    assert.deepEqual(run2.semantic.absent, [ABSENT_5])
+    // ...and gone on the very next run, with no error and no evidence that a page
+    // the project had observed ever existed.
+    assert.deepEqual(run3.semantic.absent, [])
+    assert.deepEqual(run3.capture.delta.absent, [])
+    assert.equal(JSON.stringify(run3.semantic).includes('900000005'), false)
+  })
+})
+
+test('counterexample: without the absent carry-forward, a reappearing page is misreported as new', async () => {
+  await withoutGuard(ABSENT_CARRY_FORWARD, async (mod) => {
+    const run1 = await modScan(mod, WALK_WITH_5, DETAILS_WITH_5, 'T1')
+    const run2 = await modPrev(mod, await modScan(mod, WALK_WITHOUT_5, DETAILS_WITHOUT_5, 'T2'), run1, WALK_WITHOUT_5, DETAILS_WITHOUT_5)
+    const run3 = await modPrev(mod, await modScan(mod, WALK_WITH_5, DETAILS_WITH_5, 'T3'), run2, WALK_WITH_5, DETAILS_WITH_5)
+    // "added" claims first sighting; the recorded absence episode is lost.
+    assert.deepEqual(run3.capture.delta.added, ['900000005'])
+    assert.deepEqual(run3.capture.delta.lifecycle_changed, [])
+  })
+})
+
+// Defect A was a misplaced field, not a missing check, so the proof RESTORES the
+// pre-repair mechanism instead of deleting a guard: put the delta back inside the
+// digested body and the churn returns.
+const IDENTITY_WITHOUT_LINEAGE = [
+  '  const semantic = {',
+  '    ...doc.semantic,',
+  '    absent: absent.sort(sortById)',
+  '  }'
+].join('\n')
+const IDENTITY_WITH_LINEAGE = [
+  '  const semantic = {',
+  '    ...doc.semantic,',
+  '    absent: absent.sort(sortById),',
+  '    delta',
+  '  }'
+].join('\n')
+
+test('counterexample: with the delta back inside the digested body, an unchanged source churns its identity forever', async () => {
+  await withMutatedSource(IDENTITY_WITHOUT_LINEAGE, IDENTITY_WITH_LINEAGE, async (mod) => {
+    const run1 = await modScan(mod, WALK_WITH_5, DETAILS_WITH_5, 'T1')
+    const run2 = await modPrev(mod, await modScan(mod, WALK_WITH_5, DETAILS_WITH_5, 'T2'), run1, WALK_WITH_5, DETAILS_WITH_5)
+    const run3 = await modPrev(mod, await modScan(mod, WALK_WITH_5, DETAILS_WITH_5, 'T3'), run2, WALK_WITH_5, DETAILS_WITH_5)
+
+    // The source state is provably unchanged across all three runs...
+    assert.equal(JSON.stringify(run2.semantic.pages), JSON.stringify(run3.semantic.pages))
+    assert.deepEqual(run2.semantic.absent, [])
+    assert.deepEqual(run3.semantic.absent, [])
+    // ...and the ONLY difference between the two digested bodies is the
+    // predecessor reference, i.e. pure lineage.
+    assert.equal(
+      JSON.stringify({ ...run2.semantic, delta: null }),
+      JSON.stringify({ ...run3.semantic, delta: null })
+    )
+    // Yet every run mints a new identity. That is the defect.
+    assert.notEqual(run1.discovery_digest, run2.discovery_digest)
+    assert.notEqual(run2.discovery_digest, run3.discovery_digest)
   })
 })
