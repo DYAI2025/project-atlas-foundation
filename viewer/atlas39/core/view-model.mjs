@@ -17,7 +17,10 @@ export const E_VIEW_MODEL_INVALID = 'E_VIEW_MODEL_INVALID'
 
 const CONTRACT_VERSION = '1.0.0'
 const ID_SCHEME = 'projection-local/v1'
-const HIERARCHY_RELATION = 'parent_of'
+// The one relation type that carries hierarchy. Exported so the layout derives
+// its sectors from the same token the depths were derived from, rather than
+// repeating the literal and letting the two drift apart.
+export const HIERARCHY_RELATION = 'parent_of'
 
 export class ViewModelError extends Error {
   constructor(message) {

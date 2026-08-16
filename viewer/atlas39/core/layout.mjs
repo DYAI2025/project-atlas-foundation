@@ -13,6 +13,8 @@
 //
 // Pure: no IO, no clock, no randomness.
 
+import { HIERARCHY_RELATION } from './view-model.mjs'
+
 const PADDING = 88 // room for labels and the focus halo outside the outermost ring
 const MIN_NODE_RADIUS = 11
 const DEGREE_STEP = 1.5
@@ -26,6 +28,66 @@ function nodeRadius(node) {
   const fromDegree = Math.min(node.degree, DEGREE_CAP) * DEGREE_STEP
   const fromRole = node.depth === 0 ? ROOT_BONUS : 0
   return Math.round(MIN_NODE_RADIUS + fromDegree + fromRole)
+}
+
+// Angles come from a radial sector walk, not from "next slot on this ring".
+// Each subtree owns an angular sector proportional to the number of leaves
+// below it, and a child is centred inside its parent's sector — so a child sits
+// radially outward from its parent and its edge is a short spoke instead of a
+// chord across the whole stage. This is a tree layout, not a force or cluster
+// engine: it is a pure function of the parent_of edges.
+function assignAngles(viewModel) {
+  const children = new Map()
+  for (const edge of viewModel.edges) {
+    if (edge.relation_type !== HIERARCHY_RELATION) continue
+    if (!children.has(edge.from)) children.set(edge.from, [])
+    children.get(edge.from).push(edge.to)
+  }
+  for (const list of children.values()) list.sort(byCodeUnit)
+
+  // Subtree leaf count, guarded against a cyclic parent_of chain.
+  const weights = new Map()
+  const weigh = (id, seen) => {
+    if (weights.has(id)) return weights.get(id)
+    if (seen.has(id)) return 1
+    seen.add(id)
+    const kids = children.get(id) ?? []
+    const weight = kids.length === 0 ? 1 : kids.reduce((sum, kid) => sum + weigh(kid, seen), 0)
+    seen.delete(id)
+    weights.set(id, weight)
+    return weight
+  }
+
+  const angles = new Map()
+  const walk = (id, sectorStart, sectorWidth, seen) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    const kids = children.get(id) ?? []
+    const total = kids.reduce((sum, kid) => sum + weigh(kid, new Set()), 0)
+    if (total === 0) return
+    let cursor = sectorStart
+    for (const kid of kids) {
+      const width = (sectorWidth * weigh(kid, new Set())) / total
+      if (!angles.has(kid)) angles.set(kid, cursor + width / 2)
+      walk(kid, cursor, width, seen)
+      cursor += width
+    }
+  }
+
+  const roots = viewModel.nodes.filter((n) => n.depth === 0).map((n) => n.node_id).sort(byCodeUnit)
+  if (roots.length === 1) {
+    walk(roots[0], TOP, 2 * Math.PI, new Set())
+  } else {
+    const total = roots.reduce((sum, id) => sum + weigh(id, new Set()), 0) || roots.length
+    let cursor = TOP
+    for (const id of roots) {
+      const width = (2 * Math.PI * weigh(id, new Set())) / total
+      angles.set(id, cursor + width / 2)
+      walk(id, cursor, width, new Set())
+      cursor += width
+    }
+  }
+  return angles
 }
 
 // Nodes are grouped into concentric levels: depth 0, depth 1, ... and finally
@@ -92,11 +154,17 @@ export function computeLayout(viewModel, viewport) {
       r: nodeRadius(node)
     })
   }
+  const angles = assignAngles(viewModel)
   for (const [index, level] of ringed.entries()) {
     const ringRadius = rings[index].radius
     const count = level.members.length
     for (const [position, node] of level.members.entries()) {
-      const angle = TOP + (2 * Math.PI * position) / count
+      // A hierarchy node inherits the angle of its subtree sector; an unrooted
+      // node has no parent to point away from, so it falls back to an even
+      // share of its own ring.
+      const angle = angles.has(node.node_id)
+        ? angles.get(node.node_id)
+        : TOP + (2 * Math.PI * position) / count
       placements.push({
         node_id: node.node_id,
         label: node.label,
