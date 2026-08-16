@@ -22,6 +22,12 @@ set, and in this slice its output is **not** fed into the ATLAS-65
 projection/import pipeline. The only ATLAS-65 code it reuses is `requireAuth`
 from `src/atlas65/confluence-source.mjs` (the shared credential contract).
 
+`requireAuth` **supplies** a base URL but does not constrain one — it accepts any
+string and only strips trailing slashes. ATLAS-25 therefore validates that base
+itself (see *Configured base URL* below). The check is ATLAS-25-local by design:
+tightening `requireAuth` would silently change what the ATLAS-65 pipeline
+accepts, outside this ticket's scope.
+
 Confluence remains the canonical source; gbrain remains a derived projection.
 This slice writes nothing to gbrain.
 
@@ -168,10 +174,11 @@ and now requires `absent`, so the digest covers a different field set than it di
 under `1.0`. A `1.0` document is rejected rather than compared as though the two
 identities meant the same thing.
 
-The digest, duplicate, cross-read, absent-carry-forward and identity-vs-lineage
-mechanisms each carry a counterexample test that loads a copy of the shipped
-module with exactly that mechanism removed — or, for the identity separation,
-with the pre-repair mechanism restored — and shows the defect is then observable.
+The digest, duplicate, cross-read, absent-carry-forward, identity-vs-lineage and
+base-URL mechanisms each carry a counterexample test that loads a copy of the
+shipped module with exactly that mechanism removed — or, for the identity
+separation and the pre-repair root read, with the pre-repair mechanism restored —
+and shows the defect is then observable.
 
 ## Prerequisites
 
@@ -180,11 +187,61 @@ with the pre-repair mechanism restored — and shows the defect is then observab
   into the repo:
   - `ATLAS65_CONFLUENCE_EMAIL`
   - `ATLAS65_CONFLUENCE_API_TOKEN`
-  - `ATLAS65_CONFLUENCE_BASE_URL` (optional; defaults to the ATLAS-65 default)
+  - `ATLAS65_CONFLUENCE_BASE_URL` (optional; unset **or empty** falls back to the
+    ATLAS-65 default `https://dyai2026.atlassian.net`. When set it must satisfy
+    the base-URL contract below.)
 
 The `ATLAS65_` prefix is reused deliberately so the ATLAS-65 pipeline keeps
 working with one credential contract. Renaming it is a separate, coordinated
 change.
+
+## Configured base URL — the credential boundary
+
+Every ATLAS-25 request carries an `Authorization: Basic …` header, so the
+configured base URL decides **who receives the credential**. It is validated
+once, before the first request is issued, and the run aborts with
+`E_DISCOVERY_CONFIG` if any of the following does not hold:
+
+| Rule | Rejected example |
+|---|---|
+| must parse as a URL | `ht!tp://%%%` |
+| must not carry userinfo | `https://user:token@host` |
+| must use `https` | `http://host` |
+| must not carry a query string | `https://host?x=1` |
+| must not carry a fragment | `https://host#f` |
+| must be an **origin**, i.e. no path | `https://host/wiki` |
+
+The base is an **origin boundary**, and a non-root path is **rejected, not
+normalized away**: silently dropping a configured path would fetch from somewhere
+other than where the operator wrote it. `https://host/` is accepted —
+`requireAuth` strips the trailing slash and the result is the origin. The
+normalized value used everywhere afterwards is `new URL(base).origin`, so there
+is exactly one spelling.
+
+Validation happens **before** `fetchImpl` is invoked even once. That ordering is
+the whole point: the root page detail read is the first credentialed request, and
+it used to be issued straight from the unvalidated base string.
+
+Beyond that, **every** URL this module fetches is re-checked against the
+validated base by `resolveFetchableUrl` before the request goes out — not only
+the paginated ones. A URL assembled by string concatenation is not evidence of a
+target, so it is re-parsed and held to the same scheme / origin / no-userinfo
+rules. That covers:
+
+- the root page detail read,
+- the descendants start URL,
+- every server-supplied cursor URL,
+- every non-root page detail read,
+- every `probeAbsent` direct read.
+
+Rejection messages are diagnostic without reproducing credentials: they name
+`ATLAS65_CONFLUENCE_BASE_URL` and the failed rule, quote at most `scheme://host`,
+and never echo userinfo, query, fragment or an unparseable raw value.
+
+The two layers are not redundant. The per-request check cannot answer for a
+hostile base — a URL built from `http://attacker.invalid` is same-scheme and
+same-origin *with that base* by construction — which is exactly what the
+counterexample tests demonstrate.
 
 ## Commands
 
@@ -237,7 +294,7 @@ synthetic fallback.
 | `E_PREVIOUS_INVALID` | 1 | previous scan document is structurally invalid (including a missing `pages` or `absent` array), declares an unsupported `schema_version`, lists a `page_id` twice across `pages` and `absent`, carries a page or absent entry with a lifecycle outside the closed model, carries an absent entry without id/`last_seen_version`/`evidence`, or has a `discovery_digest` that does not match a digest recomputed from its own `semantic` body |
 | `E_SOURCE_AUTH_MISSING` | 1 | credentials not set (shared contract with ATLAS-65) |
 | `E_DISCOVERY_AUTH_MISSING` | 1 | an internal caller reached the HTTP layer without an authorization header — a local config defect, raised before any request |
-| `E_DISCOVERY_CONFIG` | 1 | configured base URL is not a URL, or a caller-supplied start URL fails the URL gate |
+| `E_DISCOVERY_CONFIG` | 1 | the configured base URL fails the base-URL contract (unparseable, userinfo, non-`https`, query, fragment, or a non-root path) — raised before any request; or a URL this module built or a caller supplied (start URL, root/page detail URL, absent-probe URL) fails the same-scheme / same-origin / no-userinfo gate |
 | `E_DISCOVERY_UNREADABLE` | 1 | network failure, non-2xx HTTP, non-JSON response, or a literal `null` body |
 | `E_DISCOVERY_PAGINATION` | 1 | missing/invalid `_links.next`, `_links` not an object, next link leaving the configured origin/scheme or carrying userinfo, repeated cursor URL, request cap exceeded, response without a `results` array |
 | `E_DISCOVERY_METADATA` | 1 | page missing id/title/status/`version.number`, answering with the wrong id, or a detail read whose `parent_id`/`status` contradicts the descendants observation for the same page |
@@ -246,7 +303,9 @@ synthetic fallback.
 
 `E_DISCOVERY_AUTH_MISSING` and `E_DISCOVERY_CONFIG` were added by the Task-1
 code-quality review (deviation D-2 in the plan) and are documented here rather
-than dropped.
+than dropped. `E_DISCOVERY_CONFIG` was **widened** by the pre-live credential
+boundary repair: it now also covers the configured base URL itself, checked
+before the first request rather than only when a URL is resolved against it.
 
 ## Known limitations
 

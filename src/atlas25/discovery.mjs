@@ -22,6 +22,10 @@ import { createHash } from 'node:crypto'
 // Credentials are NOT re-implemented here. requireAuth is the single existing
 // credential contract (ATLAS65_CONFLUENCE_* env vars) and keeps its own
 // E_SOURCE_AUTH_MISSING code so the runbook stays consistent across pipelines.
+// It SUPPLIES a base URL but does not constrain one: it accepts any string and
+// only strips trailing slashes. ATLAS-25 therefore validates that base itself in
+// resolveConfluenceBase before any request is issued — see there for why the
+// check is local rather than pushed into the shared contract.
 import { requireAuth } from '../atlas65/confluence-source.mjs'
 export { requireAuth }
 
@@ -43,6 +47,70 @@ export const DEFAULT_PAGE_LIMIT = 100
 // Hard backstop against a cursor walk that never terminates. Exceeding it is a
 // failure, never a silent truncation.
 export const MAX_PAGINATION_REQUESTS = 200
+
+export const CONFLUENCE_BASE_URL_ENV = 'ATLAS65_CONFLUENCE_BASE_URL'
+
+// Scheme + host(:port) only — never userinfo, path, query or fragment. Every one
+// of those is a place an operator can paste a token by accident, and an error
+// message is a log line.
+function redactedOrigin(url) {
+  return `${url.protocol}//${url.host}`
+}
+
+// The configured base is the ORIGIN BOUNDARY every ATLAS-25 request is held to,
+// so it is validated ONCE, before a single request is issued — never inferred
+// afterwards from the URLs built out of it. resolveFetchableUrl below can only
+// compare a URL *against* this base; it cannot tell that the base itself is
+// hostile, because a malicious base and a URL built from it are trivially
+// same-origin and same-scheme. The root detail read was the first credentialed
+// fetch and went out with the Authorization header before any gate ran.
+//
+// Deliberately ATLAS-25-local and NOT folded into the shared requireAuth():
+// requireAuth is also the ATLAS-65 credential contract, and tightening it here
+// would silently change what ATLAS-65 accepts, outside this ticket's scope.
+// requireAuth still supplies the credential and the raw base string; this
+// function decides whether that base may be fetched from at all.
+export function resolveConfluenceBase(rawBaseUrl) {
+  const fail = (what) => {
+    throw new DiscoveryError(
+      'E_DISCOVERY_CONFIG',
+      `configured Confluence base url (${CONFLUENCE_BASE_URL_ENV}) ${what}`
+    )
+  }
+  if (typeof rawBaseUrl !== 'string' || rawBaseUrl.length === 0) fail('is missing or not a string')
+
+  let url
+  try {
+    url = new URL(rawBaseUrl)
+  } catch {
+    // The raw value is deliberately NOT echoed. An unparseable base is exactly
+    // the case where a mistyped "https://user:token@host" would be printed into
+    // a log by the very error meant to protect it.
+    fail('is not a parseable URL (value withheld: it may carry credentials)')
+  }
+  // Checked FIRST, so no later message can be produced while userinfo is present.
+  if (url.username !== '' || url.password !== '') fail('carries embedded userinfo credentials')
+  // Plaintext http would put the Basic credential on the wire in clear. There is
+  // no downgrade path and no opt-out: this pipeline reads a credentialed API.
+  if (url.protocol !== 'https:') {
+    fail(`must use https, got ${JSON.stringify(url.protocol)} (${redactedOrigin(url)})`)
+  }
+  // A query or fragment on the base is never part of an origin, and concatenating
+  // a path onto one silently RELOCATES that path: "https://host?x=1" + "/wiki/…"
+  // requests "/" with a query, and "https://host#f" + "/wiki/…" requests "/" with
+  // a fragment. Both looked like a page read and were neither.
+  if (url.search !== '') fail(`must not carry a query string (${redactedOrigin(url)})`)
+  if (url.hash !== '') fail(`must not carry a fragment (${redactedOrigin(url)})`)
+  // REJECTED, not normalized away. Dropping a configured path would fetch from
+  // somewhere other than where the operator wrote it, and a silent reinterpretation
+  // of a security-relevant setting is worse than a startup failure.
+  if (url.pathname !== '/') {
+    fail(`must be an origin without a path, got path ${JSON.stringify(url.pathname)} (${redactedOrigin(url)})`)
+  }
+  // url.origin, not the raw string: one canonical, trailing-slash-free spelling
+  // that every built URL and every later same-origin comparison agrees with.
+  return url.origin
+}
 
 // The single gate for every URL this module will fetch — the start URL and every
 // cursor link go through it, so a caller cannot hand the walk a target that a
@@ -139,6 +207,18 @@ export async function getJson(url, { authorization, fetchImpl = fetch, allow404 
     throw new DiscoveryError('E_DISCOVERY_UNREADABLE', `${url}: response body is literally null`)
   }
   return body
+}
+
+// The single credentialed-read boundary for every request outside paginate. A
+// URL built by pageDetailUrl() is a STRING built by concatenation, and a string
+// is not evidence of a target: it is re-parsed and re-checked against the
+// validated base here, so "no credential leaves the configured origin" is a
+// property of the code path rather than of each call site having remembered.
+// resolveFetchableUrl is reused on purpose — one URL gate, not two that drift.
+// The code is E_DISCOVERY_CONFIG because a URL this module built itself failing
+// the gate is a local defect, never a remote one.
+async function getJsonWithinBase(baseUrl, url, label, options) {
+  return getJson(resolveFetchableUrl(baseUrl, url, label, 'E_DISCOVERY_CONFIG'), options)
 }
 
 export async function paginate({
@@ -391,11 +471,17 @@ export async function discoverProject({
   maxRequests = MAX_PAGINATION_REQUESTS
 }) {
   const auth = requireAuth(env) // throws E_SOURCE_AUTH_MISSING before any network use
-  const { baseUrl, authorization } = auth
+  // Validated BEFORE the first request, never inferred from it afterwards: the
+  // root detail read below is the first credentialed fetch, and it used to go out
+  // against whatever string the environment happened to carry.
+  const baseUrl = resolveConfluenceBase(auth.baseUrl)
+  const { authorization } = auth
   const rootId = String(project.root_page_id)
 
   // 1) The root itself. The descendants endpoint never returns it.
-  const rootRaw = await getJson(pageDetailUrl(baseUrl, rootId), { authorization, fetchImpl })
+  const rootRaw = await getJsonWithinBase(
+    baseUrl, pageDetailUrl(baseUrl, rootId), 'root page url', { authorization, fetchImpl }
+  )
   const rootDetail = assertPageDetailShape(rootRaw, rootId)
 
   // 2) The full subtree, cursor-paginated.
@@ -436,7 +522,9 @@ export async function discoverProject({
   const pages = [buildPageRecord({ detail: rootDetail, depth: 0, baseUrl, spaceKey: project.confluence_space_key })]
   for (const pageId of [...observedById.keys()].sort()) {
     const observed = observedById.get(pageId)
-    const raw = await getJson(pageDetailUrl(baseUrl, pageId), { authorization, fetchImpl })
+    const raw = await getJsonWithinBase(
+      baseUrl, pageDetailUrl(baseUrl, pageId), 'page detail url', { authorization, fetchImpl }
+    )
     const d = assertPageDetailShape(raw, pageId)
     assertCrossReadConsistent(observed, d)
     pages.push(buildPageRecord({ detail: d, depth: observed.depth, baseUrl, spaceKey: project.confluence_space_key }))
@@ -581,7 +669,9 @@ function assertPreviousShape(previous, project) {
 // deleted. It is re-read directly and classified only from what the API returns:
 // an HTTP 404, or an actual status field.
 async function probeAbsent({ pageId, lastSeenVersion, baseUrl, authorization, fetchImpl }) {
-  const raw = await getJson(pageDetailUrl(baseUrl, pageId), { authorization, fetchImpl, allow404: true })
+  const raw = await getJsonWithinBase(
+    baseUrl, pageDetailUrl(baseUrl, pageId), 'absent page probe url', { authorization, fetchImpl, allow404: true }
+  )
   if (raw === null) {
     return {
       page_id: pageId,
@@ -606,7 +696,12 @@ export async function applyPrevious(doc, previous, { env, project, fetchImpl = f
   if (previous === null || previous === undefined) return doc
 
   const prev = assertPreviousShape(previous, project)
-  const { baseUrl, authorization } = requireAuth(env)
+  const auth = requireAuth(env)
+  // Same gate as discoverProject, applied independently: applyPrevious is
+  // separately exported and issues its own credentialed direct reads, so it may
+  // not assume a caller validated the base first.
+  const baseUrl = resolveConfluenceBase(auth.baseUrl)
+  const { authorization } = auth
 
   const currentById = new Map(doc.semantic.pages.map((p) => [p.page_id, p]))
   // Previously observed state is the page list AND the absent list. Building this

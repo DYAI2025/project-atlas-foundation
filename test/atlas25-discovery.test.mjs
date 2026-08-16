@@ -8,6 +8,8 @@ import {
   DiscoveryError,
   resolveNextUrl,
   resolveFetchableUrl,
+  resolveConfluenceBase,
+  CONFLUENCE_BASE_URL_ENV,
   getJson,
   paginate,
   MAX_PAGINATION_REQUESTS,
@@ -20,7 +22,8 @@ import {
   discoverProject,
   digestOf,
   SCHEMA_VERSION,
-  applyPrevious
+  applyPrevious,
+  requireAuth
 } from '../src/atlas25/discovery.mjs'
 
 const BASE = 'https://example.invalid'
@@ -1562,3 +1565,329 @@ test('counterexample: with the delta back inside the digested body, an unchanged
     assert.notEqual(run2.discovery_digest, run3.discovery_digest)
   })
 })
+
+// --- configured base url is a credential boundary (pre-live repair) ----------
+//
+// The reused ATLAS-65 requireAuth() accepts ANY base string and only strips
+// trailing slashes, and ATLAS-25's first credentialed request (the root detail
+// read) was issued from it directly. resolveFetchableUrl could not answer for
+// that: it compares a URL AGAINST the base, and a URL built from a hostile base
+// is same-origin and same-scheme with it by construction. Every test below
+// asserts a fetch COUNT, because "did the Authorization header leave" is the
+// only question that matters here.
+
+// Records every request without ever inspecting a credential value, and refuses
+// to answer, so reaching it is unambiguous evidence and never a passing path.
+function noFetch() {
+  const calls = []
+  const inits = []
+  const impl = async (url, init) => {
+    calls.push(url)
+    inits.push(init)
+    throw new Error('fetch stub reached — the credential boundary did not hold')
+  }
+  impl.calls = calls
+  impl.inits = inits
+  return impl
+}
+
+const envWithBase = (base) => ({ ...ENV, ATLAS65_CONFLUENCE_BASE_URL: base })
+
+test('resolveConfluenceBase accepts a valid https origin and returns it canonically', () => {
+  assert.equal(resolveConfluenceBase(BASE), BASE)
+  assert.equal(resolveConfluenceBase('https://example.invalid/'), BASE)
+  assert.equal(resolveConfluenceBase('https://example.invalid:8443'), 'https://example.invalid:8443')
+})
+
+test('discoverProject succeeds against the DEFAULT base url when none is configured', async () => {
+  // requireAuth's default must satisfy the new gate, or the documented
+  // "BASE_URL is optional" contract would be broken by this repair.
+  const { ATLAS65_CONFLUENCE_BASE_URL: _omitted, ...envWithoutBase } = ENV
+  const fetchImpl = siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  const doc = await discoverProject({ env: envWithoutBase, project: PROJECT, capturedAt: 'x', fetchImpl })
+  assert.equal(doc.semantic.source.base_url, 'https://dyai2026.atlassian.net')
+  assert.match(fetchImpl.calls[0], /^https:\/\/dyai2026\.atlassian\.net\//)
+})
+
+test('discoverProject succeeds against an explicitly configured https base url', async () => {
+  const fetchImpl = siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  const doc = await discoverProject({ env: envWithBase(BASE), project: PROJECT, capturedAt: 'x', fetchImpl })
+  assert.equal(doc.semantic.source.base_url, BASE)
+  assert.equal(doc.semantic.pages.length, 3)
+})
+
+test('discoverProject accepts a configured base url with only a trailing slash', async () => {
+  // requireAuth strips it; the gate must then see a root path, not reject the
+  // most common way an operator writes a site URL.
+  const fetchImpl = siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  const doc = await discoverProject({
+    env: envWithBase('https://example.invalid/'), project: PROJECT, capturedAt: 'x', fetchImpl
+  })
+  assert.equal(doc.semantic.source.base_url, BASE)
+})
+
+// Each row: the rejected base, and what the message must say. `mustNotAppear` is
+// the credential-shaped substring that may never reach a log.
+for (const [name, base, expected, mustNotAppear] of [
+  ['a plaintext http base', 'http://attacker.invalid', /must use https/, null],
+  ['a base carrying embedded userinfo', 'https://leaked-user:s3cr3t@attacker.invalid', /carries embedded userinfo credentials/, 's3cr3t'],
+  ['a base carrying a query string', 'https://attacker.invalid?token=s3cr3t', /must not carry a query string/, 's3cr3t'],
+  ['a base carrying a fragment', 'https://attacker.invalid#s3cr3t', /must not carry a fragment/, 's3cr3t'],
+  ['a base carrying a non-root path', 'https://attacker.invalid/deep/path', /must be an origin without a path/, null],
+  ['an unparseable base', 'ht!tp://%%%', /is not a parseable URL/, null]
+  // NOT in this list: the empty string. requireAuth reads it as "unset" and
+  // substitutes the default, so it never reaches the gate through this path —
+  // pinned separately below rather than asserted here as a rejection it is not.
+]) {
+  test(`discoverProject rejects ${name} BEFORE the first request — fetch count 0`, async () => {
+    const fetchImpl = noFetch()
+    await assert.rejects(
+      discoverProject({ env: envWithBase(base), project: PROJECT, capturedAt: 'x', fetchImpl }),
+      (e) =>
+        e instanceof DiscoveryError &&
+        e.code === 'E_DISCOVERY_CONFIG' &&
+        expected.test(e.message) &&
+        // Diagnostic without reproducing anything credential-shaped.
+        (mustNotAppear === null || !e.message.includes(mustNotAppear)) &&
+        // The env var is named so the operator knows what to fix.
+        e.message.includes(CONFLUENCE_BASE_URL_ENV)
+    )
+    // The load-bearing assertion: the Authorization header never left.
+    assert.equal(fetchImpl.calls.length, 0)
+    assert.deepEqual(fetchImpl.inits, [])
+  })
+
+  test(`applyPrevious rejects ${name} BEFORE any absent probe — fetch count 0`, async () => {
+    // applyPrevious is separately exported and does its own credentialed reads,
+    // so it may not inherit a caller's validation.
+    const doc = await discoverProject({
+      env: ENV, project: PROJECT, capturedAt: 'x',
+      fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+    })
+    const fetchImpl = noFetch()
+    await assert.rejects(
+      applyPrevious(doc, PREVIOUS, { env: envWithBase(base), project: PROJECT, fetchImpl }),
+      (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_CONFIG' && expected.test(e.message)
+    )
+    assert.equal(fetchImpl.calls.length, 0)
+  })
+}
+
+test('an empty ATLAS65_CONFLUENCE_BASE_URL falls back to the default rather than failing', () => {
+  // Pinning the seam: requireAuth treats "" as unset (|| default), so the empty
+  // string never reaches resolveConfluenceBase through the normal path. The
+  // "is missing or not a string" branch above is a direct-call guard.
+  assert.equal(resolveConfluenceBase(requireAuth(envWithBase('')).baseUrl), 'https://dyai2026.atlassian.net')
+  assert.throws(
+    () => resolveConfluenceBase(''),
+    (e) => e instanceof DiscoveryError && e.code === 'E_DISCOVERY_CONFIG'
+  )
+})
+
+// --- every credentialed URL passes the gate, not just the paginated ones -----
+//
+// A URL built by string concatenation is not evidence of a target. These tests
+// force each built URL to CHANGE under the gate's normalization, so the value
+// that reached the stub proves the gate ran on that specific call site.
+
+// Answers every request with a 404 and records the URL. Enough to observe which
+// URL was requested; the scan then fails closed, which is the point.
+function recordingFetch(bodies = new Map()) {
+  const calls = []
+  const impl = async (url) => {
+    calls.push(url)
+    const body = bodies.get(url)
+    if (body === undefined) return { ok: false, status: 404, json: async () => ({}) }
+    return { ok: true, status: 200, json: async () => body }
+  }
+  impl.calls = calls
+  return impl
+}
+
+test('the ROOT detail request passes the URL gate before the fetch — it is normalized, not concatenated', async () => {
+  // "…/pages/900000001/../../../../evil" normalizes to "/wiki/evil". Only the
+  // gate normalizes; a concatenated string would have gone out verbatim.
+  const traversalRoot = { ...PROJECT, root_page_id: '900000001/../../../../evil' }
+  const fetchImpl = recordingFetch()
+  await assert.rejects(
+    discoverProject({ env: ENV, project: traversalRoot, capturedAt: 'x', fetchImpl }),
+    (e) => e instanceof DiscoveryError
+  )
+  assert.deepEqual(fetchImpl.calls, ['https://example.invalid/wiki/evil'])
+})
+
+test('a NON-ROOT detail request passes the URL gate before the fetch', async () => {
+  const walk = new Map([['0', {
+    results: [descendant({ id: '900000002/../../../../x', parentId: '900000001', depth: 1 })],
+    _links: {}
+  }]])
+  const fetchImpl = recordingFetch(new Map([
+    ['https://example.invalid/wiki/api/v2/pages/900000001', detail({ id: '900000001', parentId: null, version: { number: 12 }, title: 'Root' })],
+    ['https://example.invalid/wiki/api/v2/pages/900000001/descendants?limit=100', { results: walk.get('0').results, _links: {} }]
+  ]))
+  await assert.rejects(
+    discoverProject({ env: ENV, project: PROJECT, capturedAt: 'x', fetchImpl }),
+    (e) => e instanceof DiscoveryError
+  )
+  // Root, descendants walk, then the NORMALIZED non-root detail url: the string
+  // pageDetailUrl built ended in "…/pages/900000002/../../../../x".
+  assert.equal(fetchImpl.calls.length, 3)
+  assert.equal(fetchImpl.calls[2], 'https://example.invalid/wiki/x')
+})
+
+test('a probeAbsent direct read passes the URL gate before the fetch', async () => {
+  const previousSemantic = {
+    ...PREVIOUS_SEMANTIC,
+    pages: [
+      ...PREVIOUS_SEMANTIC.pages.filter((p) => p.page_id !== '900000005'),
+      { ...PREVIOUS_SEMANTIC.pages[3], page_id: '900000005/../../../../y' }
+    ]
+  }
+  const doc = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x',
+    fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+  })
+  const fetchImpl = recordingFetch()
+  await applyPrevious(doc, previousEnvelope(previousSemantic), { env: ENV, project: PROJECT, fetchImpl })
+  // The probe is the only request applyPrevious makes, and it is normalized.
+  assert.deepEqual(fetchImpl.calls, ['https://example.invalid/wiki/y'])
+})
+
+test('every URL of a full scan+delta run is on the configured origin, https, and userinfo-free', async () => {
+  // The property assertion behind the individual call-site tests: root detail,
+  // descendants start url, cursor url, each non-root detail and each absent
+  // probe. If any call site ever bypasses the gate again, this fails.
+  const seen = []
+  const wrap = (inner) => {
+    const impl = async (url, init) => { seen.push(url); return inner(url, init) }
+    return impl
+  }
+  const doc = await discoverProject({
+    env: ENV, project: PROJECT, capturedAt: 'x',
+    fetchImpl: wrap(siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS }))
+  })
+  await applyPrevious(doc, PREVIOUS, {
+    env: ENV, project: PROJECT, fetchImpl: wrap(siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS }))
+  })
+  assert.equal(seen.length, 6) // root + 2 cursor pages + 2 details + 1 absent probe
+  for (const raw of seen) {
+    const u = new URL(raw)
+    assert.equal(u.origin, BASE)
+    assert.equal(u.protocol, 'https:')
+    assert.equal(u.username, '')
+    assert.equal(u.password, '')
+    // Fixed point of the gate: the value fetched is the value the gate returns.
+    assert.equal(resolveFetchableUrl(BASE, raw), raw)
+  }
+})
+
+// --- counterexample: the base-url gate is load-bearing -----------------------
+
+const DISCOVER_BASE_GATE = [
+  '  // root detail read below is the first credentialed fetch, and it used to go out',
+  '  // against whatever string the environment happened to carry.',
+  '  const baseUrl = resolveConfluenceBase(auth.baseUrl)'
+].join('\n')
+
+const APPLY_PREVIOUS_BASE_GATE = [
+  '  // separately exported and issues its own credentialed direct reads, so it may',
+  '  // not assume a caller validated the base first.',
+  '  const baseUrl = resolveConfluenceBase(auth.baseUrl)'
+].join('\n')
+
+const UNGATED_BASE = '  const baseUrl = auth.baseUrl'
+
+// Deliberately WITHOUT the userinfo case. Removing the base gate alone leaves
+// getJsonWithinBase's per-request check in place, and that check rejects userinfo
+// on any URL regardless of base — so a userinfo base is stopped by the second
+// layer. Listing it here would claim a defect this mutation does not produce.
+// The pre-repair state had NEITHER layer; that is proved separately below.
+const HOSTILE_BASES = [
+  ['http downgrade', 'http://attacker.invalid'],
+  ['query string', 'https://attacker.invalid?token=s3cr3t'],
+  ['fragment', 'https://attacker.invalid#s3cr3t'],
+  ['non-root path', 'https://attacker.invalid/deep/path']
+]
+
+for (const [name, base] of HOSTILE_BASES) {
+  test(`counterexample: without the base gate, a ${name} base reaches the fetch stub with the credential`, async () => {
+    await withMutatedSource(DISCOVER_BASE_GATE, UNGATED_BASE, async (mod) => {
+      const fetchImpl = noFetch()
+      await assert.rejects(
+        mod.discoverProject({ env: envWithBase(base), project: PROJECT, capturedAt: 'x', fetchImpl }),
+        // Not E_DISCOVERY_CONFIG: nothing stopped it, the STUB did.
+        (e) => /fetch stub reached/.test(e.message) || e.code === 'E_DISCOVERY_UNREADABLE'
+      )
+      // The defect, stated as a number: one credentialed request left.
+      assert.equal(fetchImpl.calls.length, 1)
+      assert.equal(typeof fetchImpl.inits[0].headers.authorization, 'string')
+      // The per-request gate cannot save this: a URL built from a hostile base is
+      // same-origin and same-scheme with that base by construction.
+      assert.equal(new URL(fetchImpl.calls[0]).hostname, 'attacker.invalid')
+    })
+  })
+}
+
+test('counterexample: without the base gate in applyPrevious, an absent probe reaches a hostile host', async () => {
+  await withMutatedSource(APPLY_PREVIOUS_BASE_GATE, UNGATED_BASE, async (mod) => {
+    // The doc is produced against the GOOD base; only applyPrevious is misconfigured.
+    const doc = await mod.discoverProject({
+      env: ENV, project: PROJECT, capturedAt: 'x',
+      fetchImpl: siteFetch({ descendantPages: TWO_PAGE_WALK, details: DETAILS })
+    })
+    const fetchImpl = noFetch()
+    await assert.rejects(
+      mod.applyPrevious(doc, PREVIOUS, {
+        env: envWithBase('http://attacker.invalid'), project: PROJECT, fetchImpl
+      }),
+      (e) => /fetch stub reached/.test(e.message) || e.code === 'E_DISCOVERY_UNREADABLE'
+    )
+    assert.equal(fetchImpl.calls.length, 1)
+    assert.equal(typeof fetchImpl.inits[0].headers.authorization, 'string')
+    assert.equal(new URL(fetchImpl.calls[0]).protocol, 'http:')
+    assert.equal(new URL(fetchImpl.calls[0]).hostname, 'attacker.invalid')
+  })
+})
+
+// The mutation above cuts ONE layer. This one restores the literal pre-repair
+// root read — ungated base AND a bare getJson with no URL boundary at all —
+// which is the state PR #19 actually shipped at ba18bcd. It is the only mutation
+// that reproduces the userinfo leak, because both layers had to be absent.
+const PRE_REPAIR_ROOT_READ = [
+  '  // Validated BEFORE the first request, never inferred from it afterwards: the',
+  '  // root detail read below is the first credentialed fetch, and it used to go out',
+  '  // against whatever string the environment happened to carry.',
+  '  const baseUrl = resolveConfluenceBase(auth.baseUrl)',
+  '  const { authorization } = auth',
+  '  const rootId = String(project.root_page_id)',
+  '',
+  '  // 1) The root itself. The descendants endpoint never returns it.',
+  '  const rootRaw = await getJsonWithinBase(',
+  "    baseUrl, pageDetailUrl(baseUrl, rootId), 'root page url', { authorization, fetchImpl }",
+  '  )'
+].join('\n')
+
+const PRE_REPAIR_ROOT_READ_RESTORED = [
+  '  const { baseUrl, authorization } = auth',
+  '  const rootId = String(project.root_page_id)',
+  '',
+  '  const rootRaw = await getJson(pageDetailUrl(baseUrl, rootId), { authorization, fetchImpl })'
+].join('\n')
+
+for (const [name, base, expectedHost] of [
+  ['embedded userinfo', 'https://leaked-user:s3cr3t@attacker.invalid', 'attacker.invalid'],
+  ['http downgrade', 'http://attacker.invalid', 'attacker.invalid']
+]) {
+  test(`counterexample: the pre-repair root read sends the credential to a ${name} base`, async () => {
+    await withMutatedSource(PRE_REPAIR_ROOT_READ, PRE_REPAIR_ROOT_READ_RESTORED, async (mod) => {
+      const fetchImpl = noFetch()
+      await assert.rejects(
+        mod.discoverProject({ env: envWithBase(base), project: PROJECT, capturedAt: 'x', fetchImpl }),
+        (e) => /fetch stub reached/.test(e.message) || e.code === 'E_DISCOVERY_UNREADABLE'
+      )
+      assert.equal(fetchImpl.calls.length, 1)
+      assert.equal(typeof fetchImpl.inits[0].headers.authorization, 'string')
+      assert.equal(new URL(fetchImpl.calls[0]).hostname, expectedHost)
+    })
+  })
+}

@@ -98,3 +98,29 @@ test('CLI: no stdout or stderr output contains a credential value', () => {
   assert.equal(all.includes('Basic '), false)
   assert.equal(/authorization/i.test(all), false)
 })
+
+// --- configured base url is a credential boundary at the CLI level -----------
+//
+// The unit tests prove no request leaves the process; these prove the operator
+// sees a routable code and never sees the value that was rejected.
+
+for (const [name, base, expected] of [
+  ['a plaintext http base', 'http://attacker.invalid', /must use https/],
+  ['a base with embedded userinfo', 'https://leaked-user:s3cr3t@attacker.invalid', /userinfo/],
+  ['a base with a query string', 'https://attacker.invalid?token=s3cr3t', /query string/],
+  ['a base with a fragment', 'https://attacker.invalid#s3cr3t', /fragment/],
+  ['a base with a non-root path', 'https://attacker.invalid/deep/path', /origin without a path/]
+]) {
+  test(`CLI: ${name} fails closed with E_DISCOVERY_CONFIG (exit 1) and leaks nothing`, () => {
+    const r = run(['--project', 'ATLAS'], { ...offline, ATLAS65_CONFLUENCE_BASE_URL: base })
+    assert.equal(r.status, 1)
+    assert.match(r.stderr, /E_DISCOVERY_CONFIG/)
+    assert.match(r.stderr, expected)
+    const all = `${r.stdout}${r.stderr}`
+    // Neither the rejected secret-shaped value nor the real credential.
+    assert.equal(all.includes('s3cr3t'), false)
+    assert.equal(all.includes('leaked-user'), false)
+    assert.equal(all.includes('u@example.com'), false)
+    assert.equal(all.includes('Basic '), false)
+  })
+}
