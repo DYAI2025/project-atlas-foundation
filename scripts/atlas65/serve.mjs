@@ -10,13 +10,56 @@
 // a single bad read must never kill the server. Localhost only.
 // Failure idiom: process.exitCode + natural termination for the startup path;
 // a successfully started server keeps the process alive by listening.
+//
+// ATLAS-39 additions, all backwards compatible — the defaults below reproduce
+// the ATLAS-65 behaviour exactly:
+//   --viewer <name>   serve viewer/<name>/ instead of viewer/atlas65/ (default
+//                     atlas65). A viewer may ship stylesheets and ES modules, so
+//                     the directory is walked ONCE at startup into a
+//                     url -> absolute path map; request handling is a map lookup
+//                     and nothing else, which makes path traversal impossible by
+//                     construction rather than by sanitising the request.
+//   --request <file>  the read-request document used for contract validation
+//                     (default <dir>/read-request.json), so a viewer can be run
+//                     against the committed evidence directory, which carries a
+//                     snapshot and a provenance sidecar but no request.
 import { createServer } from 'node:http'
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync, statSync } from 'node:fs'
+import { join, extname, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { OUT_DIR, repoRoot } from '../../src/atlas65/paths.mjs'
+
+const ASSET_CONTENT_TYPES = {
+  '.css': 'text/css; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.svg': 'image/svg+xml; charset=utf-8',
+  '.json': 'application/json'
+}
+
+// Walks the viewer directory once and returns the complete set of URLs this
+// server will ever answer with a file. Anything not in the map is a 404: the
+// request path is never joined onto a filesystem path.
+function buildAssetManifest(viewerDir) {
+  const manifest = new Map()
+  const walk = (absolute) => {
+    for (const entry of readdirSync(absolute, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const child = join(absolute, entry.name)
+      if (entry.isDirectory()) {
+        walk(child)
+        continue
+      }
+      if (!entry.isFile()) continue // symlinks and devices are not viewer assets
+      const type = ASSET_CONTENT_TYPES[extname(entry.name)]
+      if (!type) continue
+      manifest.set(`/${relative(viewerDir, child).split(sep).join('/')}`, { path: child, type })
+    }
+  }
+  walk(viewerDir)
+  return manifest
+}
 
 function main() {
   const args = process.argv.slice(2)
@@ -26,13 +69,30 @@ function main() {
   }
   const dir = argValue('--dir', OUT_DIR)
   const port = Number(argValue('--port', '4365'))
+  const viewerName = argValue('--viewer', 'atlas65')
   const CONTRACT_CLI = join(repoRoot, 'src/gbrain-read-contract/cli.mjs')
-  const VIEWER = join(repoRoot, 'viewer/atlas65/index.html')
+  // A viewer name is a directory name, never a path: refusing separators keeps
+  // --viewer from reaching outside viewer/.
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(viewerName)) {
+    process.stderr.write(`atlas65-serve: E_VIEWER_INVALID: --viewer must be a simple directory name (got ${JSON.stringify(viewerName)})\n`)
+    process.exitCode = 1
+    return
+  }
+  const viewerDir = join(repoRoot, 'viewer', viewerName)
+  const VIEWER = join(viewerDir, 'index.html')
+  if (!existsSync(VIEWER)) {
+    process.stderr.write(`atlas65-serve: E_VIEWER_MISSING: no viewer at viewer/${viewerName}/index.html\n`)
+    process.exitCode = 1
+    return
+  }
+  const assets = buildAssetManifest(viewerDir)
 
   // Validates the EXACT bytes that will be served: the caller passes the buffer
   // it intends to send; the contract CLI runs against a tmp copy of that buffer.
+  const requestPath = argValue('--request', join(dir, 'read-request.json'))
+
   function validateBytes(bytes) {
-    const request = join(dir, 'read-request.json')
+    const request = requestPath
     if (!existsSync(request)) return { ok: false, why: 'request missing' }
     const tmp = join(tmpdir(), `atlas65-serve-check-${process.pid}-${randomUUID()}.json`)
     writeFileSync(tmp, bytes)
@@ -45,7 +105,7 @@ function main() {
   }
 
   function validateStartup() {
-    const request = join(dir, 'read-request.json')
+    const request = requestPath
     const snapshot = join(dir, 'graph-snapshot.json')
     const provenance = join(dir, 'provenance.json')
     if (!existsSync(request) || !existsSync(snapshot) || !existsSync(provenance)) {
@@ -88,6 +148,15 @@ function main() {
         res.end(body)
         return
       }
+      // Viewer assets: a lookup in the startup manifest. An unknown URL is a
+      // 404 and never touches the filesystem.
+      const asset = url ? assets.get(url) : undefined
+      if (asset) {
+        const body = readFileSync(asset.path)
+        res.writeHead(200, { 'content-type': asset.type })
+        res.end(body)
+        return
+      }
       res.writeHead(404, { 'content-type': 'text/plain' })
       res.end('not found')
     } catch (e) {
@@ -98,7 +167,9 @@ function main() {
   })
 
   server.listen(port, '127.0.0.1', () => {
-    process.stdout.write(`atlas65-serve: listening on http://127.0.0.1:${port}/ (dir ${dir})\n`)
+    process.stdout.write(
+      `atlas65-serve: listening on http://127.0.0.1:${port}/ (viewer ${viewerName}, dir ${dir}, ${assets.size} assets)\n`
+    )
   })
 }
 

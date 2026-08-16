@@ -163,9 +163,19 @@ export function buildViewModel(snapshot, provenance) {
   indexEdges(snapshot.edges, nodesById)
 
   const edges = snapshot.edges.slice().sort((a, b) => byCodeUnit(a.edge_id, b.edge_id))
-  const rawNodes = snapshot.nodes.slice().sort((a, b) => byCodeUnit(a.node_id, b.node_id))
-  const depths = deriveDepths(rawNodes, edges)
-  const adjacency = buildAdjacency(rawNodes, edges)
+  const identityOrder = snapshot.nodes.slice().sort((a, b) => byCodeUnit(a.node_id, b.node_id))
+  const depths = deriveDepths(identityOrder, edges)
+  const adjacency = buildAdjacency(identityOrder, edges)
+
+  // Nodes are ordered by hierarchy level first, identity second. This single
+  // order drives the navigator grouping, the DOM order of the stage and the
+  // arrow-key traversal, so all three walk the graph top-down instead of by
+  // opaque identifier. Nodes with no hierarchy path sort last, together.
+  const rawNodes = identityOrder.slice().sort((a, b) => {
+    const da = depths.has(a.node_id) ? depths.get(a.node_id) : Number.MAX_SAFE_INTEGER
+    const db = depths.has(b.node_id) ? depths.get(b.node_id) : Number.MAX_SAFE_INTEGER
+    return da === db ? byCodeUnit(a.node_id, b.node_id) : da - db
+  })
   const sidecar = readProvenance(provenance)
 
   let matched = 0

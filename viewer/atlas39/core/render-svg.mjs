@@ -17,8 +17,7 @@
 //
 // Pure: no IO, no clock, no randomness, no DOM.
 
-const LABEL_MAX = 30
-const LABEL_OFFSET = 19 // baseline distance below the node disc
+const LABEL_MAX = 26
 const EDGE_BOW = 0.13 // quadratic control-point offset as a fraction of edge length
 
 const XML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }
@@ -109,9 +108,12 @@ export function renderStage(viewModel, layout, focusState, options = {}) {
   }
   lines.push('</g>')
 
+  // Nodes are emitted in view-model order — hierarchy level first — so the DOM
+  // order a screen reader and the tab sequence walk matches the navigator and
+  // the structure, not the geometry.
   lines.push('<g class="a39-nodes">')
-  for (const [index, placement] of layout.placements.entries()) {
-    const node = viewModel.nodes.find((n) => n.node_id === placement.node_id)
+  for (const [index, node] of viewModel.nodes.entries()) {
+    const placement = positions.get(node.node_id)
     const state = nodeState(focusState, node.node_id)
     // Roving tabindex: exactly one node is in the tab order at a time and the
     // arrow keys move between neighbours, so a large graph never becomes a long
@@ -128,7 +130,8 @@ export function renderStage(viewModel, layout, focusState, options = {}) {
     lines.push(`<circle class="a39-node-halo" cx="${placement.x}" cy="${placement.y}" r="${placement.r + 9}"/>`)
     lines.push(`<circle class="a39-node-disc" cx="${placement.x}" cy="${placement.y}" r="${placement.r}"/>`)
     lines.push(
-      `<text class="a39-node-label" x="${placement.x}" y="${placement.y + placement.r + LABEL_OFFSET}">${escapeXml(truncate(node.label))}</text>`
+      `<text class="a39-node-label" x="${placement.labelX}" y="${placement.labelY}" ` +
+        `text-anchor="${placement.labelAnchor}">${escapeXml(truncate(node.label))}</text>`
     )
     lines.push('</g>')
   }

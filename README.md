@@ -62,6 +62,27 @@ and Confluence roots are registry identities, every `source_ref` is a synthetic
 placeholder, and no page tree is reproduced. Confluence stays the source of truth;
 these files are never project data.
 
+## Semantic Atlas workspace shell (ATLAS-39)
+
+The application shell and design system around the accepted ATLAS-65 graph path:
+navigator, dominant graph stage, evidence inspector and status bar, rendering the
+**real** committed ATLAS projection. One command, no credentials, no pipeline run:
+
+```bash
+npm run atlas39:serve   # -> http://127.0.0.1:4339/
+npm run atlas39:visual  # deterministic golden-SVG visual verification (also part of npm test)
+```
+
+It serves `docs/evidence/atlas-65/` — the artifacts the accepted ATLAS-65 run
+published — through the same validate-then-serve server the pilot uses, so the
+snapshot is still contract-checked on startup and on every request. There is no
+fixture or demo graph: an unavailable or contract-invalid snapshot produces a
+visible failure state, never a substituted one. Zero new dependencies.
+
+Runbook, design tokens, accessibility model and the ATLAS-40 renderer boundary:
+`docs/atlas-39-workspace-shell.md`. The ATLAS-65 pilot viewer
+(`viewer/atlas65/index.html`, `npm run atlas65:serve`) is unchanged.
+
 Related repositories:
 
 - `DYAI2025/gbrain-atlas` — legacy prototype, read-only reference, pinned at `aea0fb0b934780a205db92066786b265de0de22a`. No history migrated.

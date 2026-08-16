@@ -207,7 +207,6 @@
   font-family: var(--font-ui);
   font-size: var(--fs-small);
   font-weight: 500;
-  text-anchor: middle;
   paint-order: stroke;
   stroke: var(--stage-void);
   stroke-width: 3px;
@@ -271,45 +270,45 @@
 </style>
 <rect class="a39-field" x="0" y="0" width="1440" height="900"/>
 <g class="a39-rings" aria-hidden="true">
-<circle class="a39-ring" cx="720" cy="450" r="181"/>
-<circle class="a39-ring" cx="720" cy="450" r="362"/>
+<circle class="a39-ring" cx="720" cy="450" r="177"/>
+<circle class="a39-ring" cx="720" cy="450" r="354"/>
 </g>
 <g class="a39-edges" aria-hidden="true">
-<path class="a39-edge is-idle" d="M 720 450 Q 810 425 877 360" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:14680066" data-relation="parent_of"/>
-<path class="a39-edge is-idle" d="M 720 450 Q 696 541 720 631" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:15073290" data-relation="parent_of"/>
-<path class="a39-edge is-idle" d="M 720 450 Q 653 385 563 360" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:15171611" data-relation="parent_of"/>
-<path class="a39-edge is-idle" d="M 563 360 Q 496 294 406 269" data-edge-id="ATLAS:confluence:14778372:parent_of:15171611:22478849" data-relation="parent_of"/>
+<path class="a39-edge is-idle" d="M 720 450 Q 808 426 873 362" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:14680066" data-relation="parent_of"/>
+<path class="a39-edge is-idle" d="M 720 450 Q 697 539 720 627" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:15073290" data-relation="parent_of"/>
+<path class="a39-edge is-idle" d="M 720 450 Q 655 386 567 362" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:15171611" data-relation="parent_of"/>
+<path class="a39-edge is-idle" d="M 567 362 Q 502 297 413 273" data-edge-id="ATLAS:confluence:14778372:parent_of:15171611:22478849" data-relation="parent_of"/>
 </g>
 <g class="a39-nodes">
-<g class="a39-node is-idle" data-node-id="ATLAS:confluence:14778372:14680066" data-depth="1" role="button" tabindex="0" aria-pressed="false" aria-label="02 – Source of Truth, Governance and Decision Rights, level 1, 1 direct relation">
-<title>02 – Source of Truth, Governance and Decision Rights</title>
-<circle class="a39-node-halo" cx="877" cy="360" r="22"/>
-<circle class="a39-node-disc" cx="877" cy="360" r="13"/>
-<text class="a39-node-label" x="877" y="392">02 – Source of Truth, Governa…</text>
-</g>
-<g class="a39-node is-idle" data-node-id="ATLAS:confluence:14778372:14778372" data-depth="0" role="button" tabindex="-1" aria-pressed="false" aria-label="ATLAS Single Source of Truth, level 0, 3 direct relations">
+<g class="a39-node is-idle" data-node-id="ATLAS:confluence:14778372:14778372" data-depth="0" role="button" tabindex="0" aria-pressed="false" aria-label="ATLAS Single Source of Truth, level 0, 3 direct relations">
 <title>ATLAS Single Source of Truth</title>
-<circle class="a39-node-halo" cx="720" cy="450" r="31"/>
-<circle class="a39-node-disc" cx="720" cy="450" r="22"/>
-<text class="a39-node-label" x="720" y="491">ATLAS Single Source of Truth</text>
+<circle class="a39-node-halo" cx="720" cy="450" r="34"/>
+<circle class="a39-node-disc" cx="720" cy="450" r="25"/>
+<text class="a39-node-label" x="720" y="494" text-anchor="middle">ATLAS Single Source of Tr…</text>
+</g>
+<g class="a39-node is-idle" data-node-id="ATLAS:confluence:14778372:14680066" data-depth="1" role="button" tabindex="-1" aria-pressed="false" aria-label="02 – Source of Truth, Governance and Decision Rights, level 1, 1 direct relation">
+<title>02 – Source of Truth, Governance and Decision Rights</title>
+<circle class="a39-node-halo" cx="873" cy="362" r="24"/>
+<circle class="a39-node-disc" cx="873" cy="362" r="15"/>
+<text class="a39-node-label" x="896" y="353" text-anchor="start">02 – Source of Truth, Gov…</text>
 </g>
 <g class="a39-node is-idle" data-node-id="ATLAS:confluence:14778372:15073290" data-depth="1" role="button" tabindex="-1" aria-pressed="false" aria-label="04 – Target Architecture and System Context, level 1, 1 direct relation">
 <title>04 – Target Architecture and System Context</title>
-<circle class="a39-node-halo" cx="720" cy="631" r="22"/>
-<circle class="a39-node-disc" cx="720" cy="631" r="13"/>
-<text class="a39-node-label" x="720" y="663">04 – Target Architecture and …</text>
+<circle class="a39-node-halo" cx="720" cy="627" r="24"/>
+<circle class="a39-node-disc" cx="720" cy="627" r="15"/>
+<text class="a39-node-label" x="720" y="664" text-anchor="middle">04 – Target Architecture …</text>
 </g>
 <g class="a39-node is-idle" data-node-id="ATLAS:confluence:14778372:15171611" data-depth="1" role="button" tabindex="-1" aria-pressed="false" aria-label="14 – Delivery Model, Program Increment and Sprint Plan, level 1, 2 direct relations">
 <title>14 – Delivery Model, Program Increment and Sprint Plan</title>
-<circle class="a39-node-halo" cx="563" cy="360" r="23"/>
-<circle class="a39-node-disc" cx="563" cy="360" r="14"/>
-<text class="a39-node-label" x="563" y="393">14 – Delivery Model, Program …</text>
+<circle class="a39-node-halo" cx="567" cy="362" r="26"/>
+<circle class="a39-node-disc" cx="567" cy="362" r="17"/>
+<text class="a39-node-label" x="543" y="352" text-anchor="end">14 – Delivery Model, Prog…</text>
 </g>
 <g class="a39-node is-idle" data-node-id="ATLAS:confluence:14778372:22478849" data-depth="2" role="button" tabindex="-1" aria-pressed="false" aria-label="Sprint 2 – Visible Real Semantic Atlas – Sprint Plan, level 2, 1 direct relation">
 <title>Sprint 2 – Visible Real Semantic Atlas – Sprint Plan</title>
-<circle class="a39-node-halo" cx="406" cy="269" r="22"/>
-<circle class="a39-node-disc" cx="406" cy="269" r="13"/>
-<text class="a39-node-label" x="406" y="301">Sprint 2 – Visible Real Seman…</text>
+<circle class="a39-node-halo" cx="413" cy="273" r="24"/>
+<circle class="a39-node-disc" cx="413" cy="273" r="15"/>
+<text class="a39-node-label" x="390" y="264" text-anchor="end">Sprint 2 – Visible Real S…</text>
 </g>
 </g>
 </svg>

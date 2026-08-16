@@ -99,7 +99,6 @@
   font-family: var(--font-ui);
   font-size: var(--fs-small);
   font-weight: 500;
-  text-anchor: middle;
   paint-order: stroke;
   stroke: var(--stage-void);
   stroke-width: 3px;

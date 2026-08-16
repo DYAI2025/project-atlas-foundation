@@ -15,11 +15,13 @@
 
 import { HIERARCHY_RELATION } from './view-model.mjs'
 
-const PADDING = 88 // room for labels and the focus halo outside the outermost ring
-const MIN_NODE_RADIUS = 11
-const DEGREE_STEP = 1.5
+const PADDING = 96 // room for labels and the focus halo outside the outermost ring
+const MIN_NODE_RADIUS = 13
+const DEGREE_STEP = 1.8
 const DEGREE_CAP = 8
-const ROOT_BONUS = 6
+const ROOT_BONUS = 7
+const LABEL_GAP = 11 // distance from the node edge to the label
+const ANCHOR_DEADZONE = 0.34 // |cos| below this reads as "above/below", not "beside"
 const TOP = -Math.PI / 2 // first node of every ring starts at twelve o'clock
 
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
@@ -28,6 +30,30 @@ function nodeRadius(node) {
   const fromDegree = Math.min(node.degree, DEGREE_CAP) * DEGREE_STEP
   const fromRole = node.depth === 0 ? ROOT_BONUS : 0
   return Math.round(MIN_NODE_RADIUS + fromDegree + fromRole)
+}
+
+// Labels are pushed radially outward from the centre and anchored towards the
+// side they sit on. Parking every label directly under its node collides as
+// soon as two nodes share a vertical band — which real Confluence titles, being
+// long, do immediately. Pushing them outward uses the empty space the radial
+// layout already creates.
+function labelPlacement(x, y, r, center) {
+  const dx = x - center.x
+  const dy = y - center.y
+  const distance = Math.hypot(dx, dy)
+  if (distance === 0) {
+    return { labelX: x, labelY: y + r + LABEL_GAP + 8, labelAnchor: 'middle' }
+  }
+  const ux = dx / distance
+  const uy = dy / distance
+  const reach = r + LABEL_GAP
+  return {
+    labelX: Math.round(x + ux * reach),
+    // The vertical nudge puts the baseline on the visual centre line when the
+    // label sits beside the node rather than above or below it.
+    labelY: Math.round(y + uy * reach + (Math.abs(ux) > ANCHOR_DEADZONE ? 4 : uy > 0 ? 11 : -3)),
+    labelAnchor: ux > ANCHOR_DEADZONE ? 'start' : ux < -ANCHOR_DEADZONE ? 'end' : 'middle'
+  }
 }
 
 // Angles come from a radial sector walk, not from "next slot on this ring".
@@ -142,6 +168,7 @@ export function computeLayout(viewModel, viewport) {
   const placements = []
   if (centred) {
     const node = centred.members[0]
+    const r = nodeRadius(node)
     placements.push({
       node_id: node.node_id,
       label: node.label,
@@ -151,7 +178,8 @@ export function computeLayout(viewModel, viewport) {
       ringRadius: 0,
       x: center.x,
       y: center.y,
-      r: nodeRadius(node)
+      r,
+      ...labelPlacement(center.x, center.y, r, center)
     })
   }
   const angles = assignAngles(viewModel)
@@ -165,6 +193,9 @@ export function computeLayout(viewModel, viewport) {
       const angle = angles.has(node.node_id)
         ? angles.get(node.node_id)
         : TOP + (2 * Math.PI * position) / count
+      const x = Math.round(center.x + ringRadius * Math.cos(angle))
+      const y = Math.round(center.y + ringRadius * Math.sin(angle))
+      const r = nodeRadius(node)
       placements.push({
         node_id: node.node_id,
         label: node.label,
@@ -172,9 +203,10 @@ export function computeLayout(viewModel, viewport) {
         degree: node.degree,
         unrooted: level.unrooted,
         ringRadius,
-        x: Math.round(center.x + ringRadius * Math.cos(angle)),
-        y: Math.round(center.y + ringRadius * Math.sin(angle)),
-        r: nodeRadius(node)
+        x,
+        y,
+        r,
+        ...labelPlacement(x, y, r, center)
       })
     }
   }
