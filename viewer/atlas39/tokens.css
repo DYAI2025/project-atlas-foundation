@@ -1,0 +1,102 @@
+/* ATLAS-39 design tokens — the single source of truth for the visual system.
+ *
+ * This is the ONLY ATLAS-39 stylesheet allowed to contain a colour literal.
+ * stage.css and shell.css reference these variables exclusively, which is what
+ * makes the design language changeable in one place and testable as a contract.
+ *
+ * The palette is deliberately low-chroma and single-hued: one calm teal accent
+ * for graph semantics, one warm gold reserved exclusively for keyboard focus so
+ * that focus can never be confused with selection. Depth is carried by layered
+ * surfaces and hairlines rather than by saturation or by large gradients.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, from the void behind the graph up to raised controls. */
+  --surface-void: #05070a;
+  --surface-base: #0a0d13;
+  --surface-1: #0f131a;
+  --surface-2: #141922;
+  --surface-3: #1b2029;
+  --surface-raise: #212836;
+  --surface-sunken: #080b10;
+
+  /* Hairlines. Most separation in this UI is done by a single-pixel line and a
+   * surface step, not by a border box. */
+  --line-hair: rgba(255, 255, 255, 0.055);
+  --line: #222933;
+  --line-strong: #303845;
+
+  /* Text ramp. */
+  --text: #e6ebf2;
+  --text-muted: #97a3b3;
+  --text-faint: #6a7584;
+  --text-invert: #05070a;
+
+  /* One accent hue, used sparingly and always to mean "graph relation". */
+  --accent: #6fc7d6;
+  --accent-soft: #3d8b98;
+  --accent-dim: #234750;
+
+  /* Focus is gold and is used for nothing else. */
+  --focus-ring: #e6c477;
+
+  /* Semantic states. */
+  --warn: #d99a55;
+  --danger: #e0736f;
+  --ok: #7cc0a0;
+
+  /* Graph depth tones: cool and receding as depth increases. Unrooted nodes get
+   * a distinct hue so they can never be misread as a hierarchy level. */
+  --depth-0: #8fd8e4;
+  --depth-1: #6aa8c4;
+  --depth-2: #55809e;
+  --depth-n: #46566a;
+  --depth-none: #8a7aa0;
+
+  /* Stage atmosphere: a single soft radial field, no decorative gradients. */
+  --stage-glow: #121a25;
+  --stage-void: #06080c;
+  --ring-stroke: #19202a;
+
+  /* Elevation. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 10px 30px -12px rgba(0, 0, 0, 0.75);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --scrim: rgba(5, 7, 10, 0.62);
+
+  /* Spacing scale. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  /* Radii. */
+  --r1: 4px;
+  --r2: 8px;
+  --r3: 12px;
+
+  /* Typography. */
+  --font-ui: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --fs-micro: 11px;
+  --fs-small: 12px;
+  --fs-body: 13px;
+  --fs-lead: 15px;
+  --fs-title: 19px;
+  --tracking-label: 0.07em;
+
+  /* Motion. Every transition in this UI is one of these two durations. */
+  --t-fast: 140ms;
+  --t-slow: 220ms;
+  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  /* Shell metrics. */
+  --rail-w: 248px;
+  --inspector-w: 360px;
+  --header-h: 56px;
+  --footer-h: 34px;
+}
