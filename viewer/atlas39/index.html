@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATLAS — Semantic Atlas Workspace</title>
+<link rel="stylesheet" href="./tokens.css">
+<link rel="stylesheet" href="./stage.css">
+<link rel="stylesheet" href="./shell.css">
+</head>
+<body data-inspector="closed">
+
+<a class="a39-skip" href="#stage">Skip to the graph</a>
+
+<header class="a39-header" aria-label="Workspace">
+  <div class="a39-brand">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" fill="none" stroke="currentColor">
+      <circle cx="11" cy="11" r="3" fill="currentColor" stroke="none"/>
+      <circle cx="11" cy="11" r="6.5" stroke-width="1" opacity=".6"/>
+      <circle cx="11" cy="11" r="10" stroke-width="1" opacity=".3"/>
+      <circle cx="11" cy="1.2" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="19.5" cy="15.9" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="2.5" cy="15.9" r="1.4" fill="currentColor" stroke="none"/>
+    </svg>
+    <div>
+      <h1>Semantic Atlas</h1>
+      <div class="a39-sub">Workspace</div>
+    </div>
+  </div>
+
+  <div class="a39-chips">
+    <span class="a39-chip"><span class="a39-label">Project</span><span class="a39-value" id="chip-project">—</span></span>
+    <span class="a39-chip"><span class="a39-label">Confluence root</span><span class="a39-value" id="chip-source">—</span></span>
+  </div>
+
+  <div class="a39-header-actions">
+    <button type="button" class="a39-button a39-inspector-toggle" id="inspector-toggle"
+            aria-expanded="false" aria-controls="inspector">Evidence</button>
+  </div>
+</header>
+
+<nav class="a39-rail" aria-label="Graph navigator">
+  <div class="a39-rail-head">
+    <span class="a39-label">Navigator</span>
+    <label class="a39-visually-hidden" for="filter">Filter nodes by name</label>
+    <input class="a39-filter" id="filter" type="search" placeholder="Filter nodes…" autocomplete="off">
+  </div>
+  <ul class="a39-nodelist" id="nodelist"></ul>
+</nav>
+
+<main class="a39-main" id="stage" tabindex="-1" aria-label="Graph stage">
+  <div class="a39-stage-host" id="stage-host"></div>
+
+  <div class="a39-stage-controls">
+    <button type="button" class="a39-button" id="clear-focus" disabled>Clear focus</button>
+  </div>
+
+  <div class="a39-legend" aria-hidden="true">
+    <div class="a39-legend-row"><span class="a39-swatch" data-depth="0"></span>Root</div>
+    <div class="a39-legend-row"><span class="a39-swatch" data-depth="1"></span>Level 1</div>
+    <div class="a39-legend-row"><span class="a39-swatch" data-depth="2"></span>Level 2</div>
+  </div>
+</main>
+
+<aside class="a39-inspector" id="inspector" aria-label="Evidence inspector">
+  <section class="a39-section" aria-labelledby="inspector-selection">
+    <h2 id="inspector-selection">Selection</h2>
+    <div id="inspector-body">
+      <p class="a39-placeholder">No node focused. Choose one in the navigator, or press Enter on a node in the graph.</p>
+    </div>
+  </section>
+
+  <section class="a39-section" aria-labelledby="inspector-boundary">
+    <h2 id="inspector-boundary">Identifier boundary</h2>
+    <p class="a39-note is-boundary" id="boundary-note">
+      Identifiers in this view are projection-local and are explicitly not canonical entity identifiers.
+      Confluence remains the source of truth.
+    </p>
+  </section>
+</aside>
+
+<footer class="a39-status" aria-label="Snapshot status">
+  <span class="a39-stat"><span class="a39-label">Graph</span><span class="a39-value" id="stat-counts">—</span></span>
+  <span class="a39-stat"><span class="a39-label">Contract</span><span class="a39-value" id="stat-contract">—</span></span>
+  <span class="a39-stat"><span class="a39-label">ID scheme</span><span class="a39-value" id="stat-scheme">—</span></span>
+  <span class="a39-stat"><span class="a39-label">Provenance</span><span class="a39-value" id="stat-provenance">—</span></span>
+  <span class="a39-stat a39-status-spacer"><span class="a39-label">Captured</span><span class="a39-value" id="stat-generated">—</span></span>
+</footer>
+
+<div class="a39-visually-hidden" id="live" role="status" aria-live="polite"></div>
+
+<script type="module" src="./app.mjs"></script>
+</body>
+</html>

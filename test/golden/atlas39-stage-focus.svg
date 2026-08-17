@@ -1,0 +1,314 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="a39-stage" viewBox="0 0 1440 900" width="1440" height="900" role="group" aria-label="Semantic graph of project ATLAS: 5 nodes, 4 relations">
+<defs>
+<radialGradient id="a39-field" cx="50%" cy="46%" r="72%"><stop offset="0%" stop-color="var(--stage-glow)"/><stop offset="100%" stop-color="var(--stage-void)"/></radialGradient>
+</defs>
+<style>
+/* ATLAS-39 design tokens — the single source of truth for the visual system.
+ *
+ * This is the ONLY ATLAS-39 stylesheet allowed to contain a colour literal.
+ * stage.css and shell.css reference these variables exclusively, which is what
+ * makes the design language changeable in one place and testable as a contract.
+ *
+ * The palette is deliberately low-chroma and single-hued: one calm teal accent
+ * for graph semantics, one warm gold reserved exclusively for keyboard focus so
+ * that focus can never be confused with selection. Depth is carried by layered
+ * surfaces and hairlines rather than by saturation or by large gradients.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, from the void behind the graph up to raised controls. */
+  --surface-void: #05070a;
+  --surface-base: #0a0d13;
+  --surface-1: #0f131a;
+  --surface-2: #141922;
+  --surface-3: #1b2029;
+  --surface-raise: #212836;
+  --surface-sunken: #080b10;
+
+  /* Hairlines. Most separation in this UI is done by a single-pixel line and a
+   * surface step, not by a border box. */
+  --line-hair: rgba(255, 255, 255, 0.055);
+  --line: #222933;
+  --line-strong: #303845;
+
+  /* Text ramp. */
+  --text: #e6ebf2;
+  --text-muted: #97a3b3;
+  --text-faint: #6a7584;
+  --text-invert: #05070a;
+
+  /* One accent hue, used sparingly and always to mean "graph relation". */
+  --accent: #6fc7d6;
+  --accent-soft: #3d8b98;
+  --accent-dim: #234750;
+
+  /* Focus is gold and is used for nothing else. */
+  --focus-ring: #e6c477;
+
+  /* Semantic states. */
+  --warn: #d99a55;
+  --danger: #e0736f;
+  --ok: #7cc0a0;
+
+  /* Graph depth tones: cool and receding as depth increases. Unrooted nodes get
+   * a distinct hue so they can never be misread as a hierarchy level. */
+  --depth-0: #8fd8e4;
+  --depth-1: #6aa8c4;
+  --depth-2: #55809e;
+  --depth-n: #46566a;
+  --depth-none: #8a7aa0;
+
+  /* Stage atmosphere: a single soft radial field, no decorative gradients. */
+  --stage-glow: #121a25;
+  --stage-void: #06080c;
+  --ring-stroke: #19202a;
+
+  /* Elevation. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 10px 30px -12px rgba(0, 0, 0, 0.75);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --scrim: rgba(5, 7, 10, 0.62);
+
+  /* Spacing scale. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  /* Radii. */
+  --r1: 4px;
+  --r2: 8px;
+  --r3: 12px;
+
+  /* Typography. */
+  --font-ui: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --fs-micro: 11px;
+  --fs-small: 12px;
+  --fs-body: 13px;
+  --fs-lead: 15px;
+  --fs-title: 19px;
+  --tracking-label: 0.07em;
+
+  /* Motion. Every transition in this UI is one of these two durations. */
+  --t-fast: 140ms;
+  --t-slow: 220ms;
+  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  /* Shell metrics. */
+  --rail-w: 248px;
+  --inspector-w: 360px;
+  --header-h: 56px;
+  --footer-h: 34px;
+}
+
+/* ATLAS-39 graph stage.
+ *
+ * Scoped to the markup emitted by viewer/atlas39/core/render-svg.mjs. This file
+ * plus tokens.css is what the golden SVG inlines, so the golden opens as a real
+ * image and any visual change to the stage has to be regenerated deliberately.
+ * Keeping the shell chrome in a separate file means editing the header or the
+ * inspector never churns the visual baseline.
+ *
+ * No colour literals here — the design system owns colour (see tokens.css).
+ */
+
+.a39-stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.a39-field {
+  fill: url(#a39-field);
+}
+
+/* Depth rings: the hierarchy drawn as space rather than as a legend. */
+.a39-ring {
+  fill: none;
+  stroke: var(--ring-stroke);
+  stroke-width: 1;
+}
+
+.a39-ring.is-unrooted {
+  stroke: var(--depth-none);
+  stroke-dasharray: 3 8;
+  opacity: 0.45;
+}
+
+.a39-edge {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  transition: stroke var(--t-fast) var(--ease), stroke-width var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease);
+}
+
+.a39-edge.is-idle {
+  opacity: 0.85;
+}
+
+.a39-edge.is-active {
+  stroke: var(--accent);
+  stroke-width: 2;
+  opacity: 1;
+}
+
+.a39-edge.is-dim {
+  opacity: 0.16;
+}
+
+.a39-node {
+  cursor: pointer;
+  transition: opacity var(--t-slow) var(--ease);
+}
+
+.a39-node-halo {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 0;
+  transition: stroke var(--t-slow) var(--ease), stroke-width var(--t-slow) var(--ease);
+}
+
+.a39-node-disc {
+  fill: var(--surface-3);
+  stroke: var(--depth-n);
+  stroke-width: 1.5;
+  transition: fill var(--t-fast) var(--ease), stroke var(--t-fast) var(--ease),
+    stroke-width var(--t-fast) var(--ease);
+}
+
+.a39-node[data-depth="0"] .a39-node-disc {
+  stroke: var(--depth-0);
+}
+
+.a39-node[data-depth="1"] .a39-node-disc {
+  stroke: var(--depth-1);
+}
+
+.a39-node[data-depth="2"] .a39-node-disc {
+  stroke: var(--depth-2);
+}
+
+.a39-node[data-depth="none"] .a39-node-disc {
+  stroke: var(--depth-none);
+  stroke-dasharray: 3 4;
+}
+
+/* paint-order puts the stroke behind the glyphs, so a label stays readable
+ * wherever it crosses an edge without needing an opaque plate behind it. */
+.a39-node-label {
+  fill: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  paint-order: stroke;
+  stroke: var(--stage-void);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: fill var(--t-fast) var(--ease);
+}
+
+.a39-node.is-focus .a39-node-halo {
+  stroke: var(--accent-soft);
+  stroke-width: 2;
+  opacity: 0.55;
+}
+
+.a39-node.is-focus .a39-node-disc {
+  fill: var(--accent-dim);
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.a39-node.is-focus .a39-node-label,
+.a39-node.is-neighbour .a39-node-label {
+  fill: var(--text);
+}
+
+.a39-node.is-neighbour .a39-node-disc {
+  stroke-width: 2.25;
+}
+
+.a39-node.is-dim {
+  opacity: 0.2;
+}
+
+/* The gold ring is the keyboard-focus indicator and is never used for anything
+ * else, so "where am I" and "what is selected" stay visually distinct. The
+ * default outline is replaced rather than removed. */
+.a39-node:focus {
+  outline: none;
+}
+
+.a39-node:focus-visible .a39-node-halo {
+  stroke: var(--focus-ring);
+  stroke-width: 2.5;
+  opacity: 1;
+}
+
+.a39-node:focus-visible .a39-node-label {
+  fill: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .a39-edge,
+  .a39-node,
+  .a39-node-halo,
+  .a39-node-disc,
+  .a39-node-label {
+    transition: none;
+  }
+}
+
+</style>
+<rect class="a39-field" x="0" y="0" width="1440" height="900"/>
+<g class="a39-rings" aria-hidden="true">
+<circle class="a39-ring" cx="720" cy="450" r="177"/>
+<circle class="a39-ring" cx="720" cy="450" r="354"/>
+</g>
+<g class="a39-edges" aria-hidden="true">
+<path class="a39-edge is-dim" d="M 720 450 Q 808 426 873 362" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:14680066" data-relation="parent_of"/>
+<path class="a39-edge is-dim" d="M 720 450 Q 697 539 720 627" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:15073290" data-relation="parent_of"/>
+<path class="a39-edge is-active" d="M 720 450 Q 655 386 567 362" data-edge-id="ATLAS:confluence:14778372:parent_of:14778372:15171611" data-relation="parent_of"/>
+<path class="a39-edge is-active" d="M 567 362 Q 502 297 413 273" data-edge-id="ATLAS:confluence:14778372:parent_of:15171611:22478849" data-relation="parent_of"/>
+</g>
+<g class="a39-nodes">
+<g class="a39-node is-neighbour" data-node-id="ATLAS:confluence:14778372:14778372" data-depth="0" role="button" tabindex="-1" aria-pressed="false" aria-label="ATLAS Single Source of Truth, level 0, 3 direct relations">
+<title>ATLAS Single Source of Truth</title>
+<circle class="a39-node-halo" cx="720" cy="450" r="34"/>
+<circle class="a39-node-disc" cx="720" cy="450" r="25"/>
+<text class="a39-node-label" x="720" y="494" text-anchor="middle">ATLAS Single Source of Tr…</text>
+</g>
+<g class="a39-node is-dim" data-node-id="ATLAS:confluence:14778372:14680066" data-depth="1" role="button" tabindex="-1" aria-pressed="false" aria-label="02 – Source of Truth, Governance and Decision Rights, level 1, 1 direct relation">
+<title>02 – Source of Truth, Governance and Decision Rights</title>
+<circle class="a39-node-halo" cx="873" cy="362" r="24"/>
+<circle class="a39-node-disc" cx="873" cy="362" r="15"/>
+<text class="a39-node-label" x="896" y="353" text-anchor="start">02 – Source of Truth, Gov…</text>
+</g>
+<g class="a39-node is-dim" data-node-id="ATLAS:confluence:14778372:15073290" data-depth="1" role="button" tabindex="-1" aria-pressed="false" aria-label="04 – Target Architecture and System Context, level 1, 1 direct relation">
+<title>04 – Target Architecture and System Context</title>
+<circle class="a39-node-halo" cx="720" cy="627" r="24"/>
+<circle class="a39-node-disc" cx="720" cy="627" r="15"/>
+<text class="a39-node-label" x="720" y="664" text-anchor="middle">04 – Target Architecture …</text>
+</g>
+<g class="a39-node is-focus" data-node-id="ATLAS:confluence:14778372:15171611" data-depth="1" role="button" tabindex="0" aria-pressed="true" aria-label="14 – Delivery Model, Program Increment and Sprint Plan, level 1, 2 direct relations">
+<title>14 – Delivery Model, Program Increment and Sprint Plan</title>
+<circle class="a39-node-halo" cx="567" cy="362" r="26"/>
+<circle class="a39-node-disc" cx="567" cy="362" r="17"/>
+<text class="a39-node-label" x="543" y="352" text-anchor="end">14 – Delivery Model, Prog…</text>
+</g>
+<g class="a39-node is-neighbour" data-node-id="ATLAS:confluence:14778372:22478849" data-depth="2" role="button" tabindex="-1" aria-pressed="false" aria-label="Sprint 2 – Visible Real Semantic Atlas – Sprint Plan, level 2, 1 direct relation">
+<title>Sprint 2 – Visible Real Semantic Atlas – Sprint Plan</title>
+<circle class="a39-node-halo" cx="413" cy="273" r="24"/>
+<circle class="a39-node-disc" cx="413" cy="273" r="15"/>
+<text class="a39-node-label" x="390" y="264" text-anchor="end">Sprint 2 – Visible Real S…</text>
+</g>
+</g>
+</svg>
