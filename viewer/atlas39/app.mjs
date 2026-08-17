@@ -14,6 +14,10 @@
 import { buildViewModel, selectFocus } from './core/view-model.mjs'
 import { computeLayout } from './core/layout.mjs'
 import { renderStage } from './core/render-svg.mjs'
+import { stageMarkupViolation } from './core/stage-mount.mjs'
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const stageParser = new DOMParser()
 
 const el = (id) => document.getElementById(id)
 
@@ -250,18 +254,48 @@ function stageViewport() {
   }
 }
 
+// Mounts the renderer's markup string without ever using an HTML sink.
+// See core/stage-mount.mjs for why this is two barriers rather than one:
+// an allowlist scan that refuses, then an inert XML parse whose root must be a
+// real SVG element before anything is imported into the live document.
+function mountStage(markup) {
+  const violation = stageMarkupViolation(markup)
+  if (violation) return violation
+  const parsed = stageParser.parseFromString(markup, 'image/svg+xml')
+  const root = parsed.documentElement
+  // A parse failure yields a <parsererror> in the XHTML namespace, so this one
+  // positive check covers malformed markup as well as a wrong root element.
+  if (!root || root.namespaceURI !== SVG_NS || root.localName !== 'svg') {
+    return 'the stage markup did not parse as an SVG document'
+  }
+  dom.stageHost.replaceChildren(document.importNode(root, true))
+  return null
+}
+
 function paintStage() {
   const vm = state.viewModel
   const layout = computeLayout(vm, stageViewport())
-  dom.stageHost.innerHTML = renderStage(vm, layout, selectFocus(vm, state.focusId), {})
+  const refusal = mountStage(renderStage(vm, layout, selectFocus(vm, state.focusId), {}))
+  if (refusal) {
+    showFailure(
+      'Stage refused',
+      `The renderer produced markup the shell will not mount: ${refusal}.`,
+      'E_STAGE_MARKUP_REFUSED'
+    )
+    return false
+  }
   if (state.restoreStageFocus) {
     state.restoreStageFocus = false
     dom.stageHost.querySelector('.a39-node[tabindex="0"]')?.focus()
   }
+  return true
 }
 
 function render() {
-  paintStage()
+  // A refused stage has already painted the failure state over every region;
+  // repainting the navigator and inspector on top of it would re-introduce
+  // exactly the "there is a graph here" impression the refusal exists to deny.
+  if (!paintStage()) return
   paintNavigator()
   paintInspector()
   dom.clearFocus.disabled = state.focusId === null

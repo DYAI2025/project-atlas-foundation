@@ -11,7 +11,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, copyFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, copyFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -109,6 +109,33 @@ test('no request path can escape the viewer directory', async () => {
   } finally {
     child.kill()
   }
+})
+
+// Traversal covers paths that point OUTSIDE the viewer directory. This covers
+// the other half: a file that really is inside it, but whose extension is not
+// in ASSET_CONTENT_TYPES. It must not be reachable, so the served surface stays
+// the manifest rather than the directory.
+test('a file inside the viewer directory with a non-allowlisted extension is not served', async () => {
+  const intruder = join(repoRoot, 'viewer/atlas39/disallowed.txt')
+  // Written BEFORE startup on purpose: the manifest is built once at startup,
+  // so a file created afterwards would be excluded for the wrong reason.
+  writeFileSync(intruder, 'this must never be served\n')
+  let child
+  try {
+    ;({ child } = await startServer(ATLAS39_ARGS, 43907))
+    for (const path of ['/disallowed.txt', '/disallowed', '/viewer/atlas39/disallowed.txt']) {
+      const res = await fetch(`http://127.0.0.1:43907${path}`, { redirect: 'manual' })
+      assert.equal(res.status, 404, `${path} -> ${res.status}`)
+    }
+    // Non-vacuous: the same server, in the same run, still serves an
+    // allowlisted asset — the 404s above are the filter, not a dead server.
+    const allowed = await fetch('http://127.0.0.1:43907/app.mjs')
+    assert.equal(allowed.status, 200)
+  } finally {
+    child?.kill()
+    rmSync(intruder, { force: true })
+  }
+  assert.equal(existsSync(intruder), false, 'the temporary file must be removed')
 })
 
 test('an unknown viewer refuses startup instead of serving nothing', () => {

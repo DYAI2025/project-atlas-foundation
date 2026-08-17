@@ -24,7 +24,7 @@
 //                     against the committed evidence directory, which carries a
 //                     snapshot and a provenance sidecar but no request.
 import { createServer } from 'node:http'
-import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync } from 'node:fs'
 import { join, extname, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'

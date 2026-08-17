@@ -55,6 +55,7 @@ paints a failure state naming the error code and draws no graph.
 viewer/atlas39/core/view-model.mjs   snapshot + provenance -> view model   (pure, fail-closed)
 viewer/atlas39/core/layout.mjs       view model -> stage geometry          (pure, deterministic)
 viewer/atlas39/core/render-svg.mjs   geometry + focus -> SVG markup        <-- ATLAS-40 replaces THIS
+viewer/atlas39/core/stage-mount.mjs  markup -> allowlist verdict           (pure, fail-closed)
 viewer/atlas39/app.mjs               fetch, mount, events, focus           (no graph logic)
 viewer/atlas39/{tokens,stage,shell}.css   design system
 ```
@@ -62,6 +63,28 @@ viewer/atlas39/{tokens,stage,shell}.css   design system
 `core/` is loaded byte-identically by the browser and by `node --test`. ATLAS-40
 replaces `render-svg.mjs` alone: the view model, the layout, the navigator, the
 inspector, the keyboard model and the whole shell stay as they are.
+
+### Mounting the renderer output
+
+The renderer boundary is a markup *string* — that is what makes the golden SVG a
+statement about what the browser actually draws. The shell never hands that
+string to `innerHTML`. It crosses two independent barriers:
+
+1. `core/stage-mount.mjs` enumerates every element and attribute the stage
+   renderer may emit and **refuses** anything else — a `<script>`, an `on*`
+   handler, an `xlink:href`, a comment, an unquoted attribute. Nothing is
+   stripped; a violation paints `E_STAGE_MARKUP_REFUSED` and draws no graph.
+   Being pure and DOM-free, it is provable under `node --test` without a
+   headless browser.
+2. `app.mjs` parses the checked markup with `DOMParser` as `image/svg+xml` — an
+   inert document that runs no script and fetches nothing — requires the root to
+   be an `<svg>` in the SVG namespace, and imports that node with
+   `replaceChildren(document.importNode(root, true))`.
+
+Barrier 1 exists because barrier 0 (XML-escaping every data-derived value in
+`render-svg.mjs`) is one regression away from being wrong.
+`test/atlas39-stage-mount.test.mjs` simulates exactly that regression and shows
+the mount refusing it.
 
 The layout is a deterministic radial tree — depth becomes distance from the
 centre, each subtree owns an angular sector proportional to its leaf count, and

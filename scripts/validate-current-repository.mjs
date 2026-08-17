@@ -80,9 +80,11 @@ const REQUIRED_FILES = [
   'viewer/atlas39/core/view-model.mjs',
   'viewer/atlas39/core/layout.mjs',
   'viewer/atlas39/core/render-svg.mjs',
+  'viewer/atlas39/core/stage-mount.mjs',
   'config/atlas39-read-request.json',
   'scripts/atlas39/render-golden.mjs',
   'test/atlas39-shell.test.mjs',
+  'test/atlas39-stage-mount.test.mjs',
   'test/atlas39-visual.test.mjs',
   'test/golden/atlas39-stage-overview.svg',
   'test/golden/atlas39-stage-focus.svg',
@@ -541,8 +543,11 @@ try {
 } catch (error) {
   atlas39DigestError = error.message
 }
-const runbookDigest = atlas39Runbook.match(/\b[0-9a-f]{64}\b/)?.[0] ?? null
-const visualTestDigest = atlas39VisualTest.match(/\b[0-9a-f]{64}\b/)?.[0] ?? null
+// Both sides are bound to their own explicit label rather than to "the first
+// 64-hex run in the file": a digest mentioned anywhere else in either document
+// must not be able to satisfy — or to break — this check.
+const runbookDigest = atlas39Runbook.match(/\|\s*Snapshot sha256\s*\|\s*`([0-9a-f]{64})`\s*\|/)?.[1] ?? null
+const visualTestDigest = atlas39VisualTest.match(/ACCEPTED_SNAPSHOT_SHA256\s*=\s*'([0-9a-f]{64})'/)?.[1] ?? null
 check(
   'the runbook and the visual test pin the same accepted-snapshot digest',
   runbookDigest !== null && runbookDigest === visualTestDigest,

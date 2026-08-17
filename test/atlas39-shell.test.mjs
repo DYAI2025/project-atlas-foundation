@@ -21,7 +21,7 @@ const stageCss = read('stage.css')
 const shellCss = read('shell.css')
 const app = read('app.mjs')
 
-const AUTHORED = ['index.html', 'tokens.css', 'stage.css', 'shell.css', 'app.mjs', 'core/view-model.mjs', 'core/layout.mjs', 'core/render-svg.mjs']
+const AUTHORED = ['index.html', 'tokens.css', 'stage.css', 'shell.css', 'app.mjs', 'core/view-model.mjs', 'core/layout.mjs', 'core/render-svg.mjs', 'core/stage-mount.mjs']
 
 test('the shell declares semantic landmarks, each with an accessible name', () => {
   for (const [tag, name] of [
