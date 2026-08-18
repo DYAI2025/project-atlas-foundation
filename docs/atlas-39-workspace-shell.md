@@ -1,5 +1,12 @@
 # ATLAS-39 — Semantic Atlas Workspace Shell
 
+> **Superseded in part by ATLAS-40 slice 1.** The graph stage is now drawn with
+> WebGL, not SVG. Everything in this document about the shell, the design system,
+> the data path, the failure rules and the accessibility baseline still holds;
+> the statements about the SVG renderer and about what the golden files prove are
+> corrected inline below. See `docs/atlas-40-webgl-renderer.md` for the renderer
+> that is actually running.
+
 ## What this is
 
 The application shell and design system around the accepted ATLAS-65 graph
@@ -10,6 +17,10 @@ evidence inspector, status bar.
 
 It does **not** contain the WebGL renderer, the force/cluster engine, the
 minimap, saved views or semantic zoom. Those are ATLAS-40.
+
+*(ATLAS-40 slice 1 has since delivered the WebGL renderer plus search, zoom, pan
+and node focus into this same shell. The force/cluster engine, minimap, saved
+views and semantic zoom remain open.)*
 
 ## One command
 
@@ -54,7 +65,7 @@ paints a failure state naming the error code and draws no graph.
 ```
 viewer/atlas39/core/view-model.mjs   snapshot + provenance -> view model   (pure, fail-closed)
 viewer/atlas39/core/layout.mjs       view model -> stage geometry          (pure, deterministic)
-viewer/atlas39/core/render-svg.mjs   geometry + focus -> SVG markup        <-- ATLAS-40 replaces THIS
+viewer/atlas39/core/render-svg.mjs   geometry + focus -> SVG markup        <-- ATLAS-40 replaced THIS
 viewer/atlas39/core/stage-mount.mjs  markup -> allowlist verdict           (pure, fail-closed)
 viewer/atlas39/app.mjs               fetch, mount, events, focus           (no graph logic)
 viewer/atlas39/{tokens,stage,shell}.css   design system
@@ -64,7 +75,20 @@ viewer/atlas39/{tokens,stage,shell}.css   design system
 replaces `render-svg.mjs` alone: the view model, the layout, the navigator, the
 inspector, the keyboard model and the whole shell stay as they are.
 
-### Mounting the renderer output
+**This prediction held.** ATLAS-40 slice 1 replaced `render-svg.mjs` with
+`core/render-webgl.mjs` and touched neither `view-model.mjs` nor `layout.mjs`;
+the goldens rendered from them are byte-identical to before. `render-svg.mjs` and
+`stage-mount.mjs` are retained for the golden geometry gate and are no longer on
+the browser path.
+
+### Mounting the renderer output *(ATLAS-39 only — no longer how the shell works)*
+
+The two barriers below describe the SVG mount. **They are not on the ATLAS-40
+success path**, because a WebGL renderer produces geometry rather than markup and
+the shell no longer mounts a markup string at all. The property they existed to
+protect — nothing derived from Confluence data becomes executable DOM — is
+preserved by construction in ATLAS-40 and is documented in
+`docs/atlas-40-webgl-renderer.md`.
 
 The renderer boundary is a markup *string* — that is what makes the golden SVG a
 statement about what the browser actually draws. The shell never hands that
@@ -141,6 +165,14 @@ in a browser and you are looking at the stage. Because the renderer is a pure
 function of `(snapshot, viewport, focus)`, byte comparison is a genuine visual
 regression gate, which is why this ticket adds **no headless-browser
 dependency** and requires no CI change.
+
+> **Corrected by ATLAS-40 slice 1.** The browser now draws WebGL, so the goldens
+> are no longer rendered by "the exact modules the browser loads" and are no
+> longer a statement about what the browser paints. They remain a
+> dependency-free regression gate over what both renderers share — the view
+> model and the deterministic layout — and both still add no dependency and no
+> CI change. What the browser paints is covered by the headed acceptance run
+> described in `docs/atlas-40-webgl-renderer.md`.
 
 What the golden gate does **not** cover, and what was checked manually instead
 at 1440×900 in Chrome: font rasterisation, painted pixels, and browser layout of

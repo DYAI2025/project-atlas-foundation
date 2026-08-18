@@ -244,6 +244,17 @@ body {
   color: var(--text-faint);
 }
 
+/* A search that found nothing says so in three places at once — the field, the
+ * navigator list and the live region — because a silently empty list reads as
+ * "this project has no such page" rather than "your search matched nothing". */
+.a39-filter[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+body[data-search="nomatch"] .a39-empty {
+  color: var(--danger);
+}
+
 .a39-nodelist {
   list-style: none;
   margin: 0;
@@ -313,6 +324,121 @@ body {
 .a39-stage-host {
   position: absolute;
   inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+body[data-panning="true"] .a39-stage-host {
+  cursor: grabbing;
+}
+
+/* ---------- ATLAS-40 WebGL surface + accessible overlay ----------
+ * The canvas paints the graph and carries no semantics at all; the overlay
+ * carries every semantic and every interaction. They are the same size and the
+ * same coordinate space, and each overlay button is positioned and sized from
+ * the very same projected scene the GPU drew — so the highlight a user sees and
+ * the region that answers a click are one circle, not two that drift apart.
+ */
+
+.a39-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+}
+
+.a39-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Only the node buttons are interactive; empty stage space belongs to the pan
+   * gesture underneath. */
+  pointer-events: none;
+}
+
+.a39-gnode {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(var(--gr) * 2);
+  height: calc(var(--gr) * 2);
+  transform: translate(calc(var(--gx) - var(--gr)), calc(var(--gy) - var(--gr)));
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  overflow: visible;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: box-shadow var(--t-fast) var(--ease);
+}
+
+.a39-gnode:hover {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* The gold ring is the keyboard-focus indicator and is never used for anything
+ * else. It traces the same circle as the painted halo because the button IS
+ * that circle. */
+.a39-gnode:focus {
+  outline: none;
+}
+
+.a39-gnode:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.a39-gnode-label {
+  position: absolute;
+  left: calc(var(--gr) + var(--lx));
+  top: calc(var(--gr) + var(--ly));
+  /* Clamped to the room actually available between the label's anchor and the
+   * stage border, so a long Confluence title is ellipsised rather than clipped. */
+  max-width: var(--lw);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  pointer-events: none;
+  text-shadow: 0 0 3px var(--stage-void), 0 0 3px var(--stage-void);
+  transition: color var(--t-fast) var(--ease), opacity var(--t-slow) var(--ease);
+}
+
+.a39-gnode[data-anchor="start"] .a39-gnode-label {
+  transform: translateY(-50%);
+  text-align: left;
+}
+
+.a39-gnode[data-anchor="end"] .a39-gnode-label {
+  transform: translate(-100%, -50%);
+  text-align: right;
+}
+
+.a39-gnode[data-anchor="middle"] .a39-gnode-label {
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+.a39-gnode.is-focus .a39-gnode-label,
+.a39-gnode.is-neighbour .a39-gnode-label,
+.a39-gnode:focus-visible .a39-gnode-label {
+  color: var(--text);
+}
+
+.a39-gnode.is-dim .a39-gnode-label {
+  opacity: 0.25;
+}
+
+.a39-zoom {
+  min-width: 4.5ch;
+  text-align: center;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
 }
 
 .a39-stage-controls {

@@ -62,11 +62,13 @@ and Confluence roots are registry identities, every `source_ref` is a synthetic
 placeholder, and no page tree is reproduced. Confluence stays the source of truth;
 these files are never project data.
 
-## Semantic Atlas workspace shell (ATLAS-39)
+## Semantic Atlas workspace (ATLAS-39 shell, ATLAS-40 WebGL renderer)
 
 The application shell and design system around the accepted ATLAS-65 graph path:
 navigator, dominant graph stage, evidence inspector and status bar, rendering the
-**real** committed ATLAS projection. One command, no credentials, no pipeline run:
+**real** committed ATLAS projection. The graph itself is drawn with WebGL and
+supports search, zoom, pan and node focus. One command, no credentials, no
+pipeline run:
 
 ```bash
 npm run atlas39:serve   # -> http://127.0.0.1:4339/
@@ -79,8 +81,10 @@ snapshot is still contract-checked on startup and on every request. There is no
 fixture or demo graph: an unavailable or contract-invalid snapshot produces a
 visible failure state, never a substituted one. Zero new dependencies.
 
-Runbook, design tokens, accessibility model and the ATLAS-40 renderer boundary:
-`docs/atlas-39-workspace-shell.md`. The ATLAS-65 pilot viewer
+Shell runbook, design tokens and accessibility model:
+`docs/atlas-39-workspace-shell.md`. WebGL renderer, the scene boundary that
+replaced the SVG markup boundary, zoom/pan/search behaviour and the ATLAS-40
+scope still open: `docs/atlas-40-webgl-renderer.md`. The ATLAS-65 pilot viewer
 (`viewer/atlas65/index.html`, `npm run atlas65:serve`) is unchanged.
 
 Related repositories:

@@ -145,12 +145,28 @@ test('the allowlist is an enumeration, not a wildcard', () => {
   assert.equal(STAGE_ATTRIBUTES.has('style'), false)
 })
 
-test('the shell mounts through the guard and uses no HTML injection sink', () => {
+// ATLAS-40 replaced the SVG renderer with a WebGL one, so the shell no longer
+// mounts a markup string at all — there is no markup on the success path to
+// scan. The property this test has always been about is unchanged and is now
+// checked in its stronger form: nothing derived from Confluence data may reach
+// an HTML sink, and the shell must still run a fail-closed guard before drawing.
+//
+// The SVG renderer and this mount guard remain in the tree as the pure geometry
+// and markup-safety reference the golden visual gate is built on. They are NOT
+// the browser renderer any more, and the assertions below pin that fact so the
+// two paths cannot quietly swap back.
+test('the shell mounts no markup and uses no HTML injection sink', () => {
   for (const sink of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'createContextualFragment']) {
     assert.equal(app.includes(sink), false, `app.mjs still uses ${sink}`)
   }
-  assert.match(app, /stageMarkupViolation/)
-  assert.match(app, /parseFromString\(markup, 'image\/svg\+xml'\)/)
-  assert.match(app, /dom\.stageHost\.replaceChildren\(document\.importNode\(root, true\)\)/)
-  assert.match(app, /E_STAGE_MARKUP_REFUSED/)
+  // The markup path is genuinely gone from the shell, not merely unused.
+  for (const removed of ['stageMarkupViolation', 'DOMParser', 'parseFromString', 'importNode']) {
+    assert.equal(app.includes(removed), false, `app.mjs still carries the SVG mount path (${removed})`)
+  }
+  // What replaced it: a fail-closed guard over the data scene, and an overlay
+  // built exclusively from element APIs and textContent.
+  assert.match(app, /sceneViolation/)
+  assert.match(app, /E_STAGE_SCENE_REFUSED/)
+  assert.match(app, /document\.createElement\('button'\)/)
+  assert.match(app, /label\.textContent = node\.label/)
 })

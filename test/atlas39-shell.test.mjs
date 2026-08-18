@@ -21,7 +21,15 @@ const stageCss = read('stage.css')
 const shellCss = read('shell.css')
 const app = read('app.mjs')
 
-const AUTHORED = ['index.html', 'tokens.css', 'stage.css', 'shell.css', 'app.mjs', 'core/view-model.mjs', 'core/layout.mjs', 'core/render-svg.mjs', 'core/stage-mount.mjs']
+// Every authored viewer source. The ATLAS-40 renderer modules are listed here
+// deliberately: the "no remote resource" and "no fixture fallback" rules below
+// are the reason a reader can trust the graph on screen, and a new renderer that
+// those rules stopped covering would be a silent hole in exactly that guarantee.
+const AUTHORED = [
+  'index.html', 'tokens.css', 'stage.css', 'shell.css', 'app.mjs',
+  'core/view-model.mjs', 'core/layout.mjs', 'core/render-svg.mjs', 'core/stage-mount.mjs',
+  'core/transform.mjs', 'core/scene.mjs', 'core/scene-guard.mjs', 'core/search.mjs', 'core/render-webgl.mjs'
+]
 
 test('the shell declares semantic landmarks, each with an accessible name', () => {
   for (const [tag, name] of [
@@ -71,13 +79,33 @@ test('tokens.css is the only stylesheet carrying a colour literal', () => {
   assert.ok((tokens.match(/#[0-9a-fA-F]{6}\b/g) || []).length > 20, 'tokens.css should define the palette')
 })
 
+// ATLAS-40: the accessible overlay positions each node button from per-element
+// custom properties the shell assigns at runtime. They are deliberately NOT in
+// tokens.css — they carry one node's geometry, and a :root default would
+// silently stand in for a value the shell failed to set, putting every node at
+// the same place. The exemption is paid for by the test directly below it.
+const RUNTIME_PROPERTIES = ['--gx', '--gy', '--gr', '--lx', '--ly', '--lw']
+
 test('every design token used by the stage or shell is defined in tokens.css', () => {
   const defined = new Set([...tokens.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]))
   const used = new Set(
     [...`${stageCss}\n${shellCss}`.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((m) => m[1])
   )
-  const undefinedTokens = [...used].filter((name) => !defined.has(name)).sort()
+  const undefinedTokens = [...used]
+    .filter((name) => !RUNTIME_PROPERTIES.includes(name))
+    .filter((name) => !defined.has(name))
+    .sort()
   assert.deepEqual(undefinedTokens, [])
+})
+
+test('every runtime custom property the stylesheets read is actually set by the shell', () => {
+  const used = new Set(
+    [...`${stageCss}\n${shellCss}`.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((m) => m[1])
+  )
+  for (const name of RUNTIME_PROPERTIES) {
+    assert.equal(used.has(name), true, `${name} is exempted from tokens.css but no stylesheet reads it`)
+    assert.match(app, new RegExp(`setProperty\\('${name}'`), `${name} is read in CSS but never set by app.mjs`)
+  }
 })
 
 test('reduced motion is honoured in both the stage and the shell', () => {

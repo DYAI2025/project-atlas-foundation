@@ -1,15 +1,19 @@
 // ATLAS-39 core / 3 of 3: geometry + focus state -> SVG markup.
 //
-// THIS IS THE RENDERER BOUNDARY. ATLAS-40 replaces this one module with a
-// WebGL renderer; nothing above it (view model, layout) and nothing around it
-// (the workspace shell, the inspector, the keyboard model) needs to change,
-// because the contract is narrow on purpose:
+// SUPERSEDED AS THE BROWSER RENDERER BY ATLAS-40. The workspace shell now draws
+// the stage with core/render-webgl.mjs; app.mjs no longer imports this module
+// and the browser never mounts this markup. The prediction below came true: the
+// swap needed no change to the view model, the layout, the navigator, the
+// inspector or the keyboard model.
 //
 //     renderStage(viewModel, layout, focusState, options) -> markup string
 //
-// The shell mounts the string; `node --test` byte-compares the same string to a
-// golden file. Same function, same output, so the golden is a real statement
-// about what the browser draws rather than a parallel implementation.
+// It is kept, and still fully tested, for one job: the golden SVG files under
+// test/golden/ are rendered by this function from the real committed evidence,
+// so a byte comparison remains a dependency-free regression gate over the parts
+// both renderers share — the view model and the deterministic layout. It is NOT
+// evidence about what the browser paints any more; that is the WebGL renderer's
+// business and is covered by the ATLAS-40 acceptance run.
 //
 // The renderer emits CSS classes and data attributes, never colours: the design
 // system lives in tokens.css / stage.css. Passing `styleCss` inlines that

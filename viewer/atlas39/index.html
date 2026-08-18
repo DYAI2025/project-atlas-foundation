@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ATLAS — Semantic Atlas Workspace</title>
+<!-- Inline so the browser's automatic /favicon.ico request never reaches the
+     server, which correctly 404s anything outside its asset manifest and would
+     otherwise put a permanent error in the console of every session. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Ccircle cx='11' cy='11' r='10' fill='%230a0d13'/%3E%3Ccircle cx='11' cy='11' r='3' fill='%236fc7d6'/%3E%3Ccircle cx='11' cy='11' r='6.5' fill='none' stroke='%236fc7d6' stroke-width='1' opacity='.6'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="./tokens.css">
 <link rel="stylesheet" href="./stage.css">
 <link rel="stylesheet" href="./shell.css">
@@ -42,8 +46,10 @@
 <nav class="a39-rail" aria-label="Graph navigator">
   <div class="a39-rail-head">
     <span class="a39-label">Navigator</span>
-    <label class="a39-visually-hidden" for="filter">Filter nodes by name</label>
-    <input class="a39-filter" id="filter" type="search" placeholder="Filter nodes…" autocomplete="off">
+    <label class="a39-visually-hidden" for="filter">Search nodes by name or Confluence page id</label>
+    <input class="a39-filter" id="filter" type="search" placeholder="Search nodes…" autocomplete="off"
+           aria-describedby="filter-hint" aria-invalid="false">
+    <p class="a39-visually-hidden" id="filter-hint">Press Enter to focus the first match, Escape to clear the search.</p>
   </div>
   <ul class="a39-nodelist" id="nodelist"></ul>
 </nav>
@@ -51,7 +57,11 @@
 <main class="a39-main" id="stage" tabindex="-1" aria-label="Graph stage">
   <div class="a39-stage-host" id="stage-host"></div>
 
-  <div class="a39-stage-controls">
+  <div class="a39-stage-controls" role="group" aria-label="Graph view controls">
+    <button type="button" class="a39-button" id="zoom-out" aria-label="Zoom out">−</button>
+    <span class="a39-zoom" id="zoom-level">100%</span>
+    <button type="button" class="a39-button" id="zoom-in" aria-label="Zoom in">+</button>
+    <button type="button" class="a39-button" id="reset-view" disabled>Reset view</button>
     <button type="button" class="a39-button" id="clear-focus" disabled>Clear focus</button>
   </div>
 
@@ -83,6 +93,7 @@
   <span class="a39-stat"><span class="a39-label">Graph</span><span class="a39-value" id="stat-counts">—</span></span>
   <span class="a39-stat"><span class="a39-label">Contract</span><span class="a39-value" id="stat-contract">—</span></span>
   <span class="a39-stat"><span class="a39-label">ID scheme</span><span class="a39-value" id="stat-scheme">—</span></span>
+  <span class="a39-stat"><span class="a39-label">Renderer</span><span class="a39-value" id="stat-renderer">—</span></span>
   <span class="a39-stat"><span class="a39-label">Provenance</span><span class="a39-value" id="stat-provenance">—</span></span>
   <span class="a39-stat a39-status-spacer"><span class="a39-label">Captured</span><span class="a39-value" id="stat-generated">—</span></span>
 </footer>
