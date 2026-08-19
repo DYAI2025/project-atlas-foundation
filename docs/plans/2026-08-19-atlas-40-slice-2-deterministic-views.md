@@ -136,7 +136,11 @@ Making D8 literally true by construction requires the single-expression change `
 
 The defect: after a drag crosses the movement threshold, `endPan` clears `gesture` but leaves `suppressClick === true`. A `pointercancel` delivers no click, so the flag stays armed with nothing to spend it on.
 
-The `pointerdown` handler re-arms `suppressClick = false`, which **masks** the stale flag for any click preceded by a left-button `pointerdown` inside `#stage-host`. It does **not** mask it when that handler early-returns (`event.button !== 0`, or a target inside `.a39-stage-controls`), nor for any click that arrives without a preceding `pointerdown`.
+The `pointerdown` handler re-arms `suppressClick = false`, which **masks** the stale flag for any click preceded by a left-button `pointerdown` inside `#stage-host`. It does **not** mask it when that handler early-returns on `event.button !== 0`, nor for any click that arrives without a preceding `pointerdown` — a keyboard-activated (Enter/Space) click on a stage node button is the concrete case.
+
+**Corrected 2026-08-19 (review of Task 2).** The first draft of this paragraph also named "a target inside `.a39-stage-controls`" as a route past the re-arm. That route is **not reachable** and the claim overstated the exposure: `index.html:58-60` makes `.a39-stage-controls` a *sibling* of `#stage-host`, not a descendant, and every pointer and click listener in `wirePointer()` is bound to `dom.stageHost` (`app.mjs:646, 653, 660, 682-683`). A pointer event on the controls therefore never reaches those listeners at all — neither the `pointerdown` early-return at `app.mjs:655` nor the capture-phase `click` handler at `app.mjs:646` is on that path — so a stale flag can be neither preserved nor spent there. The two routes above are the real ones.
+
+A further route belongs to Task 9's measurement rather than to this repair: the module keys the disarm on the *cause* (`event.type === 'pointercancel'`), not on the invariant "a suppression that no click will ever spend must not outlive the gesture". A pan ended by `pointerup` that yields no synthesised click would leave the identical stale flag. Whether a real browser synthesises a click after a *touch* pan on a surface with `touch-action: none` (`shell.css:329`) is **unmeasured** — Task 9 measures it alongside the pointercancel route and reports either way. No code change is made for it in this slice on an assumption.
 
 Task 9 must therefore report honestly: the *state* defect is proven by a pure test; whether a **user-visible** swallow reproduces in a real browser is measured, not assumed, and reported either way.
 
@@ -333,6 +337,7 @@ Create `test/atlas40-gesture.test.mjs`:
 // "suppressClick = true". That is exactly why this shipped.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createDragGesture, DRAG_THRESHOLD } from '../viewer/atlas39/core/gesture.mjs'
 
 const down = (over = {}) => ({ type: 'pointerdown', pointerId: 1, button: 0, clientX: 100, clientY: 100, ...over })
@@ -347,6 +352,11 @@ function panned() {
   const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4, clientY: 100 }))
   assert.equal(step.panning, true, 'the fixture did not actually start a pan')
   assert.equal(step.began, true)
+  // dx/dy are the whole numeric output of this module — what the shell feeds to
+  // panBy. Asserting only `.panning` would let a build that reports no movement,
+  // or movement at right angles to the pointer, ship green.
+  assert.equal(step.dx, DRAG_THRESHOLD * 4, 'the crossing step must report the full movement since the press')
+  assert.equal(step.dy, 0, 'a purely horizontal drag reported vertical movement')
   return g
 }
 
@@ -358,6 +368,46 @@ test('a movement below the threshold is a click, not a pan', () => {
   assert.equal(g.isClickSuppressed(), false, 'a click gesture must never suppress its own click')
   g.end(up())
   assert.equal(g.consumeClick(), false)
+})
+
+test('the threshold is 4 screen pixels, and exactly that far already pans', () => {
+  // The value and the boundary are both hand-written here on purpose. Every
+  // other test spells the threshold symbolically, so without this table a
+  // tenfold change to an accepted, human-visually-signed-off interaction
+  // constant — or a `<` quietly becoming `<=` — passes with nothing red.
+  assert.equal(DRAG_THRESHOLD, 4, 'the accepted drag threshold changed')
+  const g = createDragGesture()
+  g.start(down())
+  const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD }))
+  assert.equal(step.panning, true, 'a movement of exactly the threshold must pan (the comparison is strict <)')
+  assert.equal(step.dx, DRAG_THRESHOLD)
+  assert.equal(step.dy, 0)
+})
+
+test('the threshold option is honoured, so a caller can pass its own', () => {
+  const g = createDragGesture({ threshold: DRAG_THRESHOLD * 5 })
+  g.start(down())
+  const below = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4 }))
+  assert.equal(below.panning, false, 'the default threshold was used instead of the option')
+  const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 5 }))
+  assert.equal(step.panning, true)
+  assert.equal(step.dx, DRAG_THRESHOLD * 5, 'a refused step must not consume the movement it refused')
+  assert.equal(step.dy, 0)
+})
+
+test('each pan step reports the delta since the previous point, and begins exactly once', () => {
+  const g = createDragGesture()
+  g.start(down())
+  const first = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4, clientY: 100 }))
+  assert.equal(first.began, true)
+  assert.equal(first.dx, DRAG_THRESHOLD * 4)
+  assert.equal(first.dy, 0)
+  const second = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4 + 3, clientY: 93 }))
+  assert.equal(second.panning, true)
+  // The shell takes the pointer capture on `began`; a second true would re-take it.
+  assert.equal(second.began, false, 'began must be true only on the step that crossed the threshold')
+  assert.equal(second.dx, 3, 'the delta is measured from the previous point, not from the press origin')
+  assert.equal(second.dy, -7)
 })
 
 test('a threshold-crossing drag suppresses exactly the click it produced', () => {
@@ -418,13 +468,18 @@ test('end() reports the pointer id so the shell releases the capture it took', (
 
 test('the gesture carries no clock, randomness or DOM', () => {
   const source = readFileSync(new URL('../viewer/atlas39/core/gesture.mjs', import.meta.url), 'utf8')
-  for (const forbidden of ['Date.', 'Math.random', 'document', 'window', 'requestAnimationFrame']) {
+  const forbiddenTokens = [
+    'Date.', 'new Date', 'Math.random', 'performance',
+    'document', 'window', 'globalThis', 'navigator', 'localStorage',
+    'requestAnimationFrame'
+  ]
+  for (const forbidden of forbiddenTokens) {
     assert.equal(source.includes(forbidden), false, `gesture.mjs references ${forbidden}`)
   }
 })
 ```
 
-Add `import { readFileSync } from 'node:fs'` at the top for the last test.
+This block is the file verbatim; the `readFileSync` import the purity test needs is inside it.
 
 **Step 2: Run test to verify it fails**
 
@@ -444,7 +499,7 @@ Create `viewer/atlas39/core/gesture.mjs`:
 // could only assert that the source still contained the right words. That was
 // enough to stop the wiring being deleted and not enough to notice it was
 // wrong: after a pan crossed the movement threshold, a `pointercancel` — a
-// touch the browser takes over, a window losing the pointer, a device
+// touch the browser takes over, a page that loses the pointer, a device
 // disconnecting — left the click suppression armed. A cancelled pointer never
 // delivers the click that suppression was waiting for, so the flag stayed
 // armed with nothing to spend it on.
@@ -549,23 +604,34 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
 ```
 node --test test/atlas40-gesture.test.mjs
 ```
-Expected: PASS, 9/9.
+Expected: PASS, 12/12.
+
+**Corrected 2026-08-19 (review of Task 2).** The first draft expected 9/9. Three tests were added by that review, and the reason is worth carrying: nine tests asserted `.panning`, `.began`, `.ended`, `.wasPanning`, `.pointerId` and the suppression flags, and not one of them ever read `dx` or `dy` — the module's only numeric output and the entire payload Task 6 feeds to `panBy`. `DRAG_THRESHOLD`'s value and the strict `<` at the boundary were likewise unpinned, so a tenfold change to a human-visually-accepted interaction constant passed green. That is the same weakness D9 indicts slice 1 for, relocated: the state was testable, the number that moves the graph was not tested.
 
 **Step 5: Counterexample proof (do not commit the mutation)**
 
-Prove the regression test actually holds the repair:
+Prove the regression test actually holds the repair. `git add` first: without it the restore and the verification below are both vacuous (see the correction under this step).
 
 ```bash
+# stage the pristine file so `git checkout --` and `git diff` have something to restore/compare against
+git add viewer/atlas39/core/gesture.mjs test/atlas40-gesture.test.mjs
+shasum -a 256 viewer/atlas39/core/gesture.mjs           # record the pristine hash
+
 # revert only the repair line
 perl -0pi -e "s/      if \(event\.type === 'pointercancel'\) suppressClick = false\n//" viewer/atlas39/core/gesture.mjs
 node --test test/atlas40-gesture.test.mjs; echo "MUTANT EXIT=$?"
 git checkout -- viewer/atlas39/core/gesture.mjs
 node --test test/atlas40-gesture.test.mjs; echo "RESTORED EXIT=$?"
+shasum -a 256 viewer/atlas39/core/gesture.mjs           # must equal the pristine hash
 ```
 
 Expected: `MUTANT EXIT=1` with the failing test named
 `REGRESSION: pointercancel after a threshold-crossing drag does not swallow the next click`,
-then `RESTORED EXIT=0`. **Record both exit codes and the failing test name verbatim in the PR evidence.** Confirm the file is clean afterwards with `git diff --stat viewer/atlas39/core/gesture.mjs` (expected: empty).
+then `RESTORED EXIT=0` and the same `shasum` as before the mutation. **Record both exit codes, the failing test name and both hashes verbatim in the PR evidence.**
+
+**Corrected 2026-08-19 (review of Task 2).** The first draft had no `git add` and verified the restore with `git diff --stat viewer/atlas39/core/gesture.mjs` (expected: empty). Both are vacuous at this point in the plan: Step 5 runs *before* Step 6's commit, so the file is still **untracked**. `git checkout -- <untracked path>` fails with `error: pathspec ... did not match any file(s) known to git` and leaves the mutation in place, while `git diff --stat` over an untracked path prints nothing — an empty output that reads as confirmation and proves nothing. Staging first puts the pristine bytes in the index so the restore is real, and the `shasum` pair is the verification, because it cannot be satisfied by an empty output.
+
+While mutating, also confirm the tests hold the rest of the module's contract. Each of these must exit 1 (measured 2026-08-19 against the 12-test suite): `dx: 0, dy: 0` on the pan step; `dx: dy, dy: dx`; a crossing step that reports no delta; `DRAG_THRESHOLD = 40`; `<` becoming `<=`; `let began = true`. Every one of those survived the 9-test suite.
 
 **Step 6: Commit**
 
@@ -1674,17 +1740,24 @@ Expected: PASS, 11/11.
 **Step 5: Counterexample proof (do not commit the mutation)**
 
 ```bash
+# stage first: Step 5 runs before Step 6's commit, so without this the file is
+# untracked and both the restore and its check below are vacuous
+git add viewer/atlas39/core/legend.mjs test/atlas40-legend.test.mjs
+shasum -a 256 viewer/atlas39/core/legend.mjs           # record the pristine hash
+
 # hardcode a row the graph does not contain
 perl -0pi -e "s/  const entries = \[\.\.\.counts\.values\(\)\]\.sort\(/  counts.set('X', { relationType: 'similar_to', origin: 'inferred', count: 1 })\n  const entries = [...counts.values()].sort(/" viewer/atlas39/core/legend.mjs
 node --test test/atlas40-legend.test.mjs; echo "MUTANT EXIT=$?"
 git checkout -- viewer/atlas39/core/legend.mjs
 node --test test/atlas40-legend.test.mjs; echo "RESTORED EXIT=$?"
-git diff --stat viewer/atlas39/core/legend.mjs
+shasum -a 256 viewer/atlas39/core/legend.mjs           # must equal the pristine hash
 ```
 
 Expected: `MUTANT EXIT=1` failing at least
 `COUNTEREXAMPLE: a relation type that is not in the graph is never displayed`,
-then `RESTORED EXIT=0` and an empty `git diff --stat`. Record verbatim.
+then `RESTORED EXIT=0` and the same `shasum` as before the mutation. Record verbatim.
+
+**Corrected 2026-08-19 (review of Task 2).** This step carried the same defect as Task 2's Step 5 and is repaired the same way: `git checkout -- <untracked path>` fails and leaves the mutation in place, and `git diff --stat` over an untracked path prints an empty result that reads as confirmation while proving nothing. Tasks 3 and 4 do **not** need this enabler — their Step 5 is the plain commit, with no mutation to restore from.
 
 **Step 6: Commit**
 
@@ -2689,6 +2762,7 @@ New checks, at minimum:
 | 22 | at every viewport: no `.a39-gnode` label is clipped, the canvas does not overlap the shell chrome, and the new control group does not overlap the zoom group |
 | 23 | fail-closed paths unchanged: invalid snapshot → visible panel, no graph, view + saved-view controls all `disabled`; no WebGL → `E_WEBGL_UNAVAILABLE`, nothing substituted |
 | 24 | console / pageerror / requestfailed / non-2xx buckets are all empty |
+| 25 | the **second** stale-suppression route (added by the Task-2 review, D9): drag across the threshold with a **touch** pointer (`touch-action: none` is set at `shell.css:329`, so the browser may or may not synthesise a click), release with `pointerup`, then activate a *different* node button **from the keyboard** (Tab to it, press Enter — no `pointerdown` precedes that click, so the `pointerdown` re-arm cannot mask a stale flag). Assert the keyboard-activated node becomes focused. Report which of the two happened: the click was swallowed (a second real route, to be repaired by keying the disarm on the invariant rather than on `pointercancel`), or it was not (the pan's own `pointerup` click spent the suppression as designed). **Measure it; do not assume either outcome.** |
 
 **Step 3: Reproduce the pointercancel defect against the pre-fix build (counterexample)**
 

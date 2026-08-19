@@ -25,6 +25,11 @@ function panned() {
   const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4, clientY: 100 }))
   assert.equal(step.panning, true, 'the fixture did not actually start a pan')
   assert.equal(step.began, true)
+  // dx/dy are the whole numeric output of this module — what the shell feeds to
+  // panBy. Asserting only `.panning` would let a build that reports no movement,
+  // or movement at right angles to the pointer, ship green.
+  assert.equal(step.dx, DRAG_THRESHOLD * 4, 'the crossing step must report the full movement since the press')
+  assert.equal(step.dy, 0, 'a purely horizontal drag reported vertical movement')
   return g
 }
 
@@ -36,6 +41,46 @@ test('a movement below the threshold is a click, not a pan', () => {
   assert.equal(g.isClickSuppressed(), false, 'a click gesture must never suppress its own click')
   g.end(up())
   assert.equal(g.consumeClick(), false)
+})
+
+test('the threshold is 4 screen pixels, and exactly that far already pans', () => {
+  // The value and the boundary are both hand-written here on purpose. Every
+  // other test spells the threshold symbolically, so without this table a
+  // tenfold change to an accepted, human-visually-signed-off interaction
+  // constant — or a `<` quietly becoming `<=` — passes with nothing red.
+  assert.equal(DRAG_THRESHOLD, 4, 'the accepted drag threshold changed')
+  const g = createDragGesture()
+  g.start(down())
+  const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD }))
+  assert.equal(step.panning, true, 'a movement of exactly the threshold must pan (the comparison is strict <)')
+  assert.equal(step.dx, DRAG_THRESHOLD)
+  assert.equal(step.dy, 0)
+})
+
+test('the threshold option is honoured, so a caller can pass its own', () => {
+  const g = createDragGesture({ threshold: DRAG_THRESHOLD * 5 })
+  g.start(down())
+  const below = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4 }))
+  assert.equal(below.panning, false, 'the default threshold was used instead of the option')
+  const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 5 }))
+  assert.equal(step.panning, true)
+  assert.equal(step.dx, DRAG_THRESHOLD * 5, 'a refused step must not consume the movement it refused')
+  assert.equal(step.dy, 0)
+})
+
+test('each pan step reports the delta since the previous point, and begins exactly once', () => {
+  const g = createDragGesture()
+  g.start(down())
+  const first = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4, clientY: 100 }))
+  assert.equal(first.began, true)
+  assert.equal(first.dx, DRAG_THRESHOLD * 4)
+  assert.equal(first.dy, 0)
+  const second = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4 + 3, clientY: 93 }))
+  assert.equal(second.panning, true)
+  // The shell takes the pointer capture on `began`; a second true would re-take it.
+  assert.equal(second.began, false, 'began must be true only on the step that crossed the threshold')
+  assert.equal(second.dx, 3, 'the delta is measured from the previous point, not from the press origin')
+  assert.equal(second.dy, -7)
 })
 
 test('a threshold-crossing drag suppresses exactly the click it produced', () => {
@@ -96,7 +141,12 @@ test('end() reports the pointer id so the shell releases the capture it took', (
 
 test('the gesture carries no clock, randomness or DOM', () => {
   const source = readFileSync(new URL('../viewer/atlas39/core/gesture.mjs', import.meta.url), 'utf8')
-  for (const forbidden of ['Date.', 'Math.random', 'document', 'window', 'requestAnimationFrame']) {
+  const forbiddenTokens = [
+    'Date.', 'new Date', 'Math.random', 'performance',
+    'document', 'window', 'globalThis', 'navigator', 'localStorage',
+    'requestAnimationFrame'
+  ]
+  for (const forbidden of forbiddenTokens) {
     assert.equal(source.includes(forbidden), false, `gesture.mjs references ${forbidden}`)
   }
 })
