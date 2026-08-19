@@ -20,6 +20,15 @@
 //
 // Pure: no IO, no clock, no randomness, no DOM.
 
+// VIEW_MODES is exported with no production reader in the ten planned tasks:
+// measured across the whole worktree, its only readers are `normalizeView`
+// below and this task's own suite (Task 4 imports `normalizeView` and
+// `E_VIEW_MODE`; Task 6 imports `DEFAULT_VIEW`, `applyView`, `isInView` and
+// `viewCaption`). It is exported anyway so that a mode control enumerates the
+// modes this build supports from here instead of re-spelling them in the shell,
+// where the two lists could disagree. Keeping an export that only tests read is
+// the same call Task 2 left open for `isPanning()`/`isClickSuppressed()`, and it
+// is named as one open PO decision in the plan rather than settled here.
 export const VIEW_MODES = Object.freeze(['overview', 'neighbourhood'])
 export const DEFAULT_VIEW = Object.freeze({ mode: 'overview', anchorId: null })
 
@@ -129,6 +138,18 @@ export function isInView(applied, nodeId) {
 /**
  * The sentence the shell shows and announces. It counts what is drawn against
  * what exists, so a scoped view can never read as "this is the whole graph".
+ *
+ * Both plurals agree with the number they follow, which is the TOTAL, not the
+ * shown count: an anchor with no neighbours draws one node out of five and must
+ * still read "1 of 5 nodes".
+ *
+ * The label clause refuses an empty string as well as a non-string. That is
+ * unreachable today, and by a foreign invariant rather than by anything this
+ * module controls: `view-model.mjs:38` defines `isText` as a non-empty string
+ * and line 68 refuses any node whose `label` is not `isText`, so the shell's
+ * anchorLabel() can only hand over a non-empty string or null. It is guarded and
+ * pinned anyway, because the day that invariant moves this function would render
+ * `Direct neighbourhood of “” — …` and nothing else would say so.
  */
 export function viewCaption(scope, anchorLabel = null) {
   const nodes = `${scope.shownNodes} of ${scope.totalNodes} ${scope.totalNodes === 1 ? 'node' : 'nodes'}`

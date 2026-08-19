@@ -168,7 +168,7 @@ Minimap · performance/benchmark/LOD/instancing/culling · semantic zoom · edge
 - `test/atlas40-saved-view.test.mjs`
 - `test/atlas40-legend.test.mjs`
 - `test/atlas40-gesture.test.mjs`
-- `test/helpers/purity.mjs` — the one purity guard every pure-core suite is scanned with. Added to the inventory 2026-08-19 after the second review of Task 3, which measured Task 3's re-spelled copy of the guard disagreeing with Task 2's in both directions. It is a test helper, not a suite: `npm test` globs `test/**/*.test.mjs`, so it is imported and never run on its own.
+- `test/helpers/purity.mjs` — the one purity guard every pure-core suite is scanned with. Added to the inventory 2026-08-19 after the second review of Task 3, which measured Task 3's re-spelled copy of the guard disagreeing with Task 2's in both directions. It is a test helper, not a suite: `npm test` globs `test/**/*.test.mjs`, so it is imported and never run on its own. **Corrected 2026-08-19 (third review of Task 3):** it is spelled out verbatim in **Task 3, Step 0**. Until that round it was the only entry in this inventory with no verbatim block anywhere in the plan — measured as 0 exact whole-file occurrences against 1 for each of the other four created code files — so the scope contract named a file whose implementation it did not contain.
 - `docs/plans/2026-08-19-atlas-40-slice-2-deterministic-views.md` — **this file.** Added to the inventory 2026-08-19 after the Task-1 review. It is the scope contract the PR's scope proof is measured against, so it has to exist in the branch it governs; every plan already in `docs/plans/`, 2026-08-06 through 2026-08-13, is tracked — measured before the Task-1 commit, `git ls-files docs/plans | wc -l` = 11, and 12 with this file — so leaving this one untracked would have been a new convention, not the existing one. It is committed with Task 1, the first commit that cites it.
 
 **Modify**
@@ -383,6 +383,7 @@ import {
 import {
   stripComments,
   purityViolations,
+  PurityScanError,
   FORBIDDEN_TOKENS,
   FORBIDDEN_IDENTIFIERS,
   MODULE_SPECIFIER
@@ -836,6 +837,19 @@ const STRING_MARKER_MUTANT = [
   'export const MARKS = [OPEN_MARK, CLOSE_MARK, leakProbe]'
 ].join('\n')
 
+// The exact mutation that defeated the string-aware scanner, in the same class:
+// a scanner that knows strings but not REGULAR EXPRESSION literals consumes the
+// `\/` of `/\//` as an ordinary escaped backslash, then reads the closing `/`
+// plus the following `/` as the start of a line comment and deletes the rest of
+// the line. Measured on the predecessor of the current scanner, verbatim:
+// stripComments("const SLASH_RE = /\\//; const t = document.title") returned
+// "const SLASH_RE = /\\", and purityViolations() of that same text returned [].
+// End to end, appended as one line to viewer/atlas39/core/view-state.mjs with
+// `grep -c document.title` = 1 proving the probe was on disk, that suite stayed
+// green at exit 0, 18/18 — a clock and a DOM read walking past a guard named
+// for refusing both.
+const REGEX_MARKER_MUTANT = 'export const SLASH_RE = /\\//; export const stamp = () => document.title + Date.now()'
+
 test('the gesture carries no clock, randomness or DOM', () => {
   const source = readFileSync(new URL('../viewer/atlas39/core/gesture.mjs', import.meta.url), 'utf8')
   const code = stripComments(source)
@@ -859,7 +873,7 @@ test('the gesture carries no clock, randomness or DOM', () => {
   assert.deepEqual(purityViolations(source), [], 'the purity rules disagree with each other')
 })
 
-test('the purity guard cannot be switched off by a string literal, and sees imports and randomness', () => {
+test('the purity guard cannot be switched off by a string or a regular expression literal, and sees imports and randomness', () => {
   // Without this test the guard proves only that four PRE-EXISTING regions
   // survived the strip, which says nothing about a newly added region the strip
   // ate. These assertions are about the guard's own capability.
@@ -923,10 +937,40 @@ test('the purity guard cannot be switched off by a string literal, and sees impo
     purityViolations('const t = setTimeout(fn, 0)').includes('setTimeout'),
     'setTimeout passed the purity guard'
   )
+
+  // 6. A regular expression literal is code too, and the one ending in an
+  //    escaped slash is what defeated the scanner that knew only strings. The
+  //    literal survives the strip whole, and everything after it on the same
+  //    line is still scanned.
+  const scannedRegex = stripComments(REGEX_MARKER_MUTANT)
+  assert.match(scannedRegex, /const SLASH_RE = \/\\\/\//, 'the scanner truncated the regular expression literal')
+  assert.match(scannedRegex, /document\.title/, 'a regex literal switched the scan off for the rest of the line')
+  assert.ok(
+    purityViolations(REGEX_MARKER_MUTANT).includes('document.'),
+    'a DOM read behind a regular expression literal passed the purity guard'
+  )
+  assert.ok(
+    purityViolations(REGEX_MARKER_MUTANT).includes('Date.'),
+    'a clock behind a regular expression literal passed the purity guard'
+  )
+
+  // 7. Where the scanner cannot classify a slash it refuses instead of
+  //    guessing, because guessing is what deleted the line above. A regex
+  //    literal cannot span a line, so one that does not close on its own is a
+  //    text this scanner must not strip.
+  assert.throws(
+    () => stripComments('const broken = /abc\nconst t = document.title'),
+    PurityScanError,
+    'an unclassifiable slash was guessed at instead of refused'
+  )
 })
 ```
 
 This block is the file verbatim; the `readFileSync` import the purity test needs is inside it.
+
+**Corrected 2026-08-19 (third review of Task 3).** The block above gained the `PurityScanError` import, a `REGEX_MARKER_MUTANT` constant and four assertions, and the guard-on-the-guard test is renamed to `the purity guard cannot be switched off by a string or a regular expression literal, and sees imports and randomness`. Still 22 tests: `node --test test/atlas40-gesture.test.mjs` exits **0** at `tests 22 / pass 22 / fail 0`. The guard those assertions pin is the shared one in `test/helpers/purity.mjs`, whose verbatim block and measured repair are in Task 3, Step 0 — the scanner knew string literals but not regular-expression ones, which is the same class of hole a third time. With only the regex branch of the repaired scanner disabled (`if (false && ch === '/' && regexCanStart())`), this suite exits **1** at `pass 21 / fail 1`, red on `the scanner truncated the regular expression literal`.
+
+The **pristine `test/atlas40-gesture.test.mjs` hash the Step-4a campaign restores to therefore moves** from `f680d1089d0ba973f3e7d92af20456a26f2885841ee0dd9955176213da3af7c6` to `d6a38df5cddf6be318e1e501fcc17aaa8ef2ee6c04aea78707367f04ab2549a9`; `viewer/atlas39/core/gesture.mjs` is untouched and stays `f7f96be96d85dd39b727f13410b9b797e6ecc9364deb46904fc5e5aed4dea6be`. The Step-4a table was not re-run in full this round, so three of its rows were re-measured against the changed suite as a spot check rather than the numbers being carried forward on the argument that only assertions were added — the string-marker probe appended to `gesture.mjs` gave exit 1, `pass 21 / fail 1`; deleting `if (event.type === 'pointercancel') suppressClick = false` gave exit 1, `pass 20 / fail 2`; `isPanning()` → `return active !== null` gave exit 1, `pass 17 / fail 5`. All three equal the values the table records, and `gesture.mjs` restored to the hash above after each.
 
 **Step 2: Run test to verify it fails**
 
@@ -1299,7 +1343,270 @@ git commit -m "ATLAS-40: make the pointer drag a pure state machine and stop poi
 
 **Files:**
 - Create: `viewer/atlas39/core/view-state.mjs`
+- Create: `test/helpers/purity.mjs` (Step 0 — shared with Task 2, whose suite pins its capability)
 - Test: `test/atlas40-view-state.test.mjs`
+
+**Step 0: the shared purity guard**
+
+Create `test/helpers/purity.mjs`:
+
+```js
+// ATLAS-40 slice 2: the purity guard the pure core modules are scanned with.
+//
+// One copy, imported by every suite that guards a module in
+// viewer/atlas39/core/. It lives here because it was already re-derived once:
+// the gesture suite built and measured this scanner, the view-state suite then
+// re-spelled a raw `source.includes(token)` list of its own, and the two
+// disagreed in both directions.
+//
+// Scan the CODE, not the English. The guarded modules carry long, load-bearing
+// comments, and 'window', 'document', 'navigator', 'performance' and 'process'
+// are ordinary words inside them — a raw substring scan over the whole file
+// fires on vocabulary rather than on capability use, and it already did once:
+// the comment "a window losing the pointer" tripped the guard while the code
+// was pure. Measured again on the view-state suite's re-spelling, on a
+// byte-identical pure module: "The trade-off is documented in the runbook."
+// hits `document`, "a window onto the graph" hits `window`, a sentence ending
+// "reading process." hits `process.`, "never a crypto digest" hits `crypto` —
+// four ordinary comments, four red suites. In the other direction that same
+// list is blind to `const clock = Date` + `clock.now()`, to
+// `navigator.userAgent`, to `queueMicrotask` and to `eval`, all four of which
+// the denylists below name on a word boundary.
+//
+// Removing the comments with two regexes over raw text was itself defeatable,
+// and measured to be: `source.replace(/\/\*[\s\S]*?\*\//g, '')` cannot tell a
+// block-comment delimiter from an ordinary string literal, so appending
+// `const OPEN_MARK = '/*'` … `const CLOSE_MARK = '*/'` around a probe that
+// really referenced document, window and navigator deleted the probe BEFORE the
+// denylists ever saw it, and the suite stayed green. The comment stripper is
+// therefore a small scanner that knows where literals begin and end.
+//
+// Knowing strings alone was not enough, and the hole was the same class again:
+// a scanner blind to REGULAR EXPRESSION literals reads `/\//` as `/\` followed
+// by a line comment and deletes the rest of the line. Measured on the
+// string-aware predecessor: stripComments("const SLASH_RE = /\\//; const t =
+// document.title") returned "const SLASH_RE = /\\" and purityViolations() of
+// the same text returned []. End to end, appending
+// `export const SLASH_RE = /\//` plus a `document.title + Date.now()` probe to
+// viewer/atlas39/core/view-state.mjs left that suite green at 18/18 with the
+// probe provably on disk. So the scanner now classifies a `/` before it decides
+// anything, and refuses rather than guesses when it cannot.
+//
+// This helper's own capability is pinned by test in
+// test/atlas40-gesture.test.mjs ("the purity guard cannot be switched off by a
+// string or a regular expression literal, and sees imports and randomness"),
+// over the exact two mutations that defeated its predecessors.
+
+/** Thrown instead of guessing. A scan that cannot classify a `/` deletes nothing. */
+export class PurityScanError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'PurityScanError'
+  }
+}
+
+const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/
+
+/**
+ * The keywords after which a `/` opens a regular expression instead of dividing.
+ * Without them `return /x/.test(s)` would be read as a division and the regex
+ * body scanned as code.
+ */
+const REGEX_AFTER_KEYWORDS = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void',
+  'case', 'do', 'else', 'yield', 'await', 'throw'
+])
+
+/** End index (exclusive) of the string or template literal opened at `start`. */
+function literalEnd(source, start) {
+  const quote = source[start]
+  let i = start + 1
+  while (i < source.length) {
+    const ch = source[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === quote) return i + 1
+    i += 1
+  }
+  // Unterminated: keep the rest verbatim. Deleting it is the one thing this
+  // scanner must never do on input it does not understand.
+  return source.length
+}
+
+/**
+ * End index (exclusive) of the regular-expression literal that starts at
+ * `start`, or -1 when the text from `start` is not one. A regex literal cannot
+ * span a line, and a `/` inside a `[...]` character class does not close it.
+ */
+function regexLiteralEnd(source, start) {
+  let i = start + 1
+  let inClass = false
+  while (i < source.length) {
+    const ch = source[i]
+    if (ch === '\n') return -1
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (inClass) {
+      if (ch === ']') inClass = false
+    } else if (ch === '[') {
+      inClass = true
+    } else if (ch === '/') {
+      i += 1
+      while (i < source.length && IDENTIFIER_CHAR.test(source[i])) i += 1
+      return i
+    }
+    i += 1
+  }
+  return -1
+}
+
+const lineOf = (source, index) => source.slice(0, index).split('\n').length
+
+/**
+ * Removes `//` and block comments, and only those. String, template and
+ * regular-expression literals are code, so a comment delimiter inside any of
+ * them is text and cannot switch the scan off.
+ *
+ * What it knows, stated exactly rather than as "the way a JavaScript reader
+ * does" — the previous wording claimed a completeness this has never had:
+ *
+ * - `//` and `/*` are checked before a regular expression is considered, which
+ *   is what a JavaScript lexer does and not a shortcut: neither sequence can
+ *   open a regex literal.
+ * - A `/` in any other position is a regex literal when a regex could start
+ *   there, decided from the last significant character — an operand end
+ *   (identifier, `)`, `]`, `}`, a closing quote) means division, anything else
+ *   means regex, and an identifier is looked up in REGEX_AFTER_KEYWORDS.
+ * - A regex literal that does not close on its own line is refused with a
+ *   PurityScanError. Nothing is deleted on a guess.
+ *
+ * The one residual: a regex literal written directly after `)` or `}` — the
+ * `if (x) /re/.test(y)` and statement-position shapes — is read as a division,
+ * because telling those apart needs the parenthesis's own keyword. The body is
+ * then emitted verbatim, so nothing is hidden by it unless that body contains a
+ * literal `//` or `/*`. No guarded module contains either shape; this is written
+ * down so the next hole in this file is found by reading rather than by
+ * measuring it.
+ */
+export function stripComments(source) {
+  let out = ''
+  let i = 0
+  // The last significant character emitted, and the identifier it ended, are
+  // all that separates a division from a regular expression.
+  let prev = ''
+  let prevWord = ''
+
+  const keep = (text) => {
+    out += text
+    for (const ch of text) {
+      if (/\s/.test(ch)) continue
+      prev = ch
+      prevWord = IDENTIFIER_CHAR.test(ch) ? prevWord + ch : ''
+    }
+  }
+
+  const regexCanStart = () => {
+    if (prev === '') return true
+    if (prev === ')' || prev === ']' || prev === '}') return false
+    if (prev === "'" || prev === '"' || prev === '`') return false
+    if (IDENTIFIER_CHAR.test(prev)) return REGEX_AFTER_KEYWORDS.has(prevWord)
+    return true
+  }
+
+  while (i < source.length) {
+    const ch = source[i]
+    const next = source[i + 1]
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const end = literalEnd(source, i)
+      keep(source.slice(i, end))
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      i += 2
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1
+      i += 2
+      continue
+    }
+    if (ch === '/' && regexCanStart()) {
+      const end = regexLiteralEnd(source, i)
+      if (end === -1) {
+        throw new PurityScanError(
+          `unterminated regular expression literal at line ${lineOf(source, i)}: ` +
+            'the purity scanner refuses to guess where it ends'
+        )
+      }
+      keep(source.slice(i, end))
+      i = end
+      continue
+    }
+    keep(ch)
+    i += 1
+  }
+  return out
+}
+
+/** Property-access spellings, which prose does not produce. */
+export const FORBIDDEN_TOKENS = [
+  'Date.', 'new Date', 'Math.random', 'performance.',
+  'document.', 'window.', 'globalThis', 'navigator.', 'localStorage',
+  'requestAnimationFrame', 'crypto.'
+]
+
+/**
+ * Bare identifiers, matched on word boundaries over already comment-free code.
+ * Property-access spellings alone cannot see `typeof document`, `fetch(...)`,
+ * `setTimeout(...)`, a static `import` or `crypto.getRandomValues` — the last
+ * two being the most direct ways to make a core module impure, and both
+ * invisible to the first two versions of this guard.
+ */
+export const FORBIDDEN_IDENTIFIERS = [
+  'window', 'document', 'navigator', 'performance', 'globalThis',
+  'localStorage', 'sessionStorage', 'indexedDB', 'process', 'fetch',
+  'setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask',
+  'requestAnimationFrame', 'Date', 'XMLHttpRequest', 'WebSocket', 'require',
+  'import', 'crypto', 'eval', 'Worker'
+]
+
+/** `import … from '…'` and `export … from '…'` both spell this. */
+export const MODULE_SPECIFIER = /\bfrom\s*['"]/
+
+/** Every rule above, applied to one source text. Returns what it found. */
+export function purityViolations(source) {
+  const code = stripComments(source)
+  const found = []
+  for (const token of FORBIDDEN_TOKENS) if (code.includes(token)) found.push(token)
+  for (const identifier of FORBIDDEN_IDENTIFIERS) {
+    if (new RegExp(`\\b${identifier}\\b`).test(code)) found.push(identifier)
+  }
+  if (MODULE_SPECIFIER.test(code)) found.push("from '<specifier>'")
+  return found
+}
+```
+
+**Corrected 2026-08-19 (third review of Task 3).** This Step block is new, and it repairs a convention break rather than a code defect. `test/helpers/purity.mjs` was added to the §2 Create inventory by the second review of Task 3 but carried no verbatim block anywhere in this plan, which every other created file has. Measured before this correction by counting exact whole-file occurrences inside the plan: 1 for `viewer/atlas39/core/view-state.mjs`, 1 for `test/atlas40-view-state.test.mjs`, 1 for `viewer/atlas39/core/gesture.mjs`, 1 for `test/atlas40-gesture.test.mjs`, and **0** for `test/helpers/purity.mjs`. Because both suites now import the guard instead of spelling it, the plan — the audited scope contract Task 10's scope proof is measured against — no longer contained the guard's implementation anywhere. It does now, and the block above is the file verbatim.
+
+The file also changed in this round, and the hole is the same class for the third time: the scanner knew string and template literals but not **regular expression** literals, so it consumed the `\/` of `/\//` as an ordinary escaped backslash and then read the closing `/` plus the following `/` as the start of a line comment, deleting the rest of the line before the denylists ever saw it. Measured directly on the predecessor, verbatim:
+
+```
+INPUT  : "const SLASH_RE = /\\//; const t = document.title"
+STRIPPED: "const SLASH_RE = /\\"
+VIOLATIONS: []
+```
+
+End to end against the real module: appending `export const SLASH_RE = /\//; export const stamp = () => document.title + Date.now()` as **one line** to `viewer/atlas39/core/view-state.mjs`, with `grep -c 'document.title'` = 1 proving the probe was on disk, `node --test test/atlas40-view-state.test.mjs` exited **0** at `tests 18 / pass 18 / fail 0` — a clock and a DOM read walking straight past a guard named `the module carries no clock, randomness or DOM`. With the repaired scanner and the identical probe still on disk, the same command exits **1** at `tests 18 / pass 17 / fail 1`, red on that test. (The same probe split over two lines is caught by both scanners, because a line comment only eats its own line; the one-line spelling is the mutation that matters.)
+
+The doc comment goes with it. "Removes `//` and block comments the way a JavaScript reader does" claimed a completeness this scanner has never had — a JavaScript reader knows regex literals — so the replacement states exactly what it knows, what it decides from the last significant character, and the one residual it does not close: a regex literal written directly after `)` or `}` is read as a division, because telling those apart needs the parenthesis's own keyword. Where it cannot classify a `/` at all it now throws `PurityScanError` instead of guessing, because guessing is what deleted the line.
+
+The repair adds capability without changing what the guard already saw: `stripComments` output over the two guarded modules is **byte-identical** under the old and the new scanner — `e1149e3bb25a217eb2320a9b550f28353cd02c2fff17b1001803897686295df0` for `viewer/atlas39/core/gesture.mjs` and `823525c61378a2889288e5d7c75ef24aff75bb7fd8ce65dfb4a2c66858062149` for `viewer/atlas39/core/view-state.mjs` in both. It is pinned in Task 2's guard-on-the-guard test, next to the `STRING_MARKER_MUTANT` that pins its predecessor.
 
 **Step 1: Write the failing test**
 
@@ -1556,6 +1863,18 @@ test('normalizeView answers without a graph, and an overview never keeps an anch
     view: { mode: 'neighbourhood', anchorId: 'not-in-any-graph' }
   })
   assert.equal(normalizeView(null).code, E_VIEW_MODE)
+  // The anchor's TYPE is checked here and nowhere else. Task 4's
+  // validateSavedView calls normalizeView with `raw.view.anchor_id ?? null`
+  // taken straight from JSON.parse and type-checks that field nowhere, so this
+  // half of the guard is all that stands between a stored `"anchor_id": 42` and
+  // a view carrying a number as an anchor. Measured: mutated to
+  // `view.anchorId == null || view.anchorId.length === 0` — which still refuses
+  // null and '' — the whole suite stayed green at 18/18 while normalizeView
+  // returned `{ok:true, view:{mode:'neighbourhood', anchorId:42}}`. The saved
+  // view would then be refused one step later as E_SAVED_VIEW_STALE_NODE, whose
+  // reason tells the user a number that was never a node id is a missing page,
+  // where D4's table assigns an unusable field to E_SAVED_VIEW_INVALID.
+  assert.equal(normalizeView({ mode: 'neighbourhood', anchorId: 42 }).code, E_VIEW_ANCHOR)
   // An overview carries no anchor, whatever it was handed. Task 4 persists
   // view.anchorId as anchor_id, so an anchor kept here would be written into a
   // saved overview and could later refuse that view for a stale node it does not
@@ -1612,6 +1931,14 @@ test('the caption counts what is drawn and what exists, and nothing else', () =>
     viewCaption(applied.scope, '14 – Delivery Model, Program Increment and Sprint Plan'),
     'Direct neighbourhood of “14 – Delivery Model, Program Increment and Sprint Plan” — 2 of 5 nodes, 1 of 4 relations.'
   )
+  // An empty label names nothing, so it is not announced as a name. Unreachable
+  // through the shell — view-model.mjs:38 defines isText as a non-empty string
+  // and line 68 refuses any node whose label is not isText, so anchorLabel() can
+  // only return a non-empty string or null — but dropping `anchorLabel.length >
+  // 0` survived the whole suite at 18/18 and rendered `Direct neighbourhood of
+  // “” — …`. Pinned so the clause is not "simplified" away once that invariant
+  // moves.
+  assert.equal(viewCaption(applied.scope, ''), 'Direct neighbourhood — 2 of 5 nodes, 1 of 4 relations.')
 })
 
 test('the caption says “1 node” and “1 relation”, never “1 nodes”', () => {
@@ -1625,6 +1952,20 @@ test('the caption says “1 node” and “1 relation”, never “1 nodes”', 
   assert.equal(
     viewCaption({ mode: 'neighbourhood', shownNodes: 1, totalNodes: 1, shownEdges: 0, totalEdges: 1 }, 'A'),
     'Direct neighbourhood of “A” — 1 of 1 node, 0 of 1 relation.'
+  )
+  // Both scopes above set shownNodes === totalNodes === 1, so neither can tell
+  // the two operands apart: `scope.totalNodes === 1` mutated to
+  // `scope.shownNodes === 1` survived them at exit 0, 18/18. The plural agrees
+  // with the number it follows, which is the TOTAL — and the mutant is
+  // reachable, because an anchor with no neighbours (buildAdjacency initialises
+  // every node to an empty Set, so the model permits an isolated node) draws
+  // exactly one node out of five and would read "1 of 5 node". The twin mutation
+  // on the edge branch is already killed by the SPRINT scope in the test above,
+  // where shownEdges is 1 and totalEdges is 4; the node branch had no such
+  // scope anywhere in this file.
+  assert.equal(
+    viewCaption({ mode: 'neighbourhood', shownNodes: 1, totalNodes: 5, shownEdges: 0, totalEdges: 4 }, 'A'),
+    'Direct neighbourhood of “A” — 1 of 5 nodes, 0 of 4 relations.'
   )
 })
 
@@ -1662,6 +2003,21 @@ test('the module carries no clock, randomness or DOM', () => {
   assert.deepEqual(purityViolations(source), [], 'the purity rules disagree with each other')
 })
 ```
+
+**Corrected 2026-08-19 (third review of Task 3).** Still **18** tests: three assertions were added to existing tests, and **the module below changed too** — in two comment blocks and nothing else. `/usr/bin/diff` between the previous module and this one is 21 added lines, every one of them inside a comment; no statement changed. The three mutations below were measured against the module at `985d8b228f1b1002eb7d148fae91cfd5b15238b41d9e42be6a1c4455eda9ddb7`, restored and re-verified with `shasum -a 256` after every row, never with an empty `diff`. The second review's table further down was measured at `ea6a063bd17f21b98d5fce41cd0d60ef01bf4fbc67b27f70c62b6dd6bad347d0` and was **not** re-run this round; it is recorded as measured then, against the module those rows name.
+
+1. **The node pluralization operand was unpinned, and a surviving mutant writes an ungrammatical caption.** `scope.totalNodes === 1` mutated to `scope.shownNodes === 1` scored exit 0, 18/18. The twin mutation on the edge branch is killed at exit 1, 16/18 by the SPRINT scope (`shownEdges` 1, `totalEdges` 4), so the gap was specific to the node branch: no scope in the file had `shownNodes === 1` while `totalNodes !== 1`, and both hand-built scopes in the pluralization test set `shownNodes === totalNodes === 1`, which cannot tell the two operands apart. It is reachable, not academic: `buildAdjacency` (`view-model.mjs:129-130`) initialises every node to an empty Set, so the model permits an isolated node, and an anchor with no neighbours draws one node of five — `Direct neighbourhood of “A” — 1 of 5 node, 0 of 4 relations.` under the mutant. One assertion closes it.
+2. **The anchor's type check was unpinned, and it is the only type check between a stored `anchor_id` and Task 4's contract.** `typeof view.anchorId !== 'string' || view.anchorId.length === 0` mutated to `view.anchorId == null || view.anchorId.length === 0` — which still refuses `null` and `''`, the only two values the suite reached the guard with — scored exit 0, 18/18, and `normalizeView({mode:'neighbourhood', anchorId:42})` then returned `{"ok":true,"view":{"mode":"neighbourhood","anchorId":42}}`. Task 4's `validateSavedView` calls `normalizeView({ mode: raw.view.mode, anchorId: raw.view.anchor_id ?? null })` with a value taken straight from `JSON.parse` and type-checks that field nowhere else, so with the mutant a stored `"anchor_id": 42` parses, and `restoreSavedView` refuses it one step later as `E_SAVED_VIEW_STALE_NODE` — telling the user that a number which was never a node id is a missing page, where D4's table assigns a missing or unusable field to `E_SAVED_VIEW_INVALID`. One assertion closes it.
+3. **The empty-label clause was unpinned.** Replacing `typeof anchorLabel === 'string' && anchorLabel.length > 0` with `typeof anchorLabel === 'string'` survived at exit 0, 18/18 and renders `Direct neighbourhood of “” — …`. It is unreachable through the shell today, and the reason is a foreign invariant rather than anything this module controls: `view-model.mjs:38` defines `isText` as a non-empty string and line 68 refuses any node whose `label` is not `isText`, so Task 6's `anchorLabel()` can only return a non-empty string or null. That dependency is now written down at the function and pinned by one assertion, so the clause is not "simplified" away once the label invariant moves.
+
+| Mutation | Must go red | Measured |
+| --- | --- | --- |
+| `scope.totalNodes === 1 ? 'node'` → `scope.shownNodes === 1 ? 'node'` | `the caption says “1 node” and “1 relation”, never “1 nodes”` | exit 1, 17/18 |
+| `typeof view.anchorId !== 'string'` → `view.anchorId == null` | `normalizeView answers without a graph, and an overview never keeps an anchor` | exit 1, 17/18 |
+| drop `anchorLabel.length > 0` | `the caption counts what is drawn and what exists, and nothing else` | exit 1, 17/18 |
+| `scope.totalEdges === 1 ? 'relation'` → `scope.shownEdges === 1 ? 'relation'` (the twin, re-measured) | both caption tests | exit 1, 16/18 |
+
+**Open PO decision raised by this round (named once, decided by the PO, not by the implementer):** `VIEW_MODES` is exported with **no production reader**. Measured across the whole worktree, excluding `.git` and `node_modules`, its only readers are `normalizeView`'s own use inside the module and three lines in `test/atlas40-view-state.test.mjs`; Task 4 imports `normalizeView` and `E_VIEW_MODE`, Task 6 imports `DEFAULT_VIEW`, `applyView`, `isInView` and `viewCaption`. This is the same situation Task 2 raised for `isPanning()`/`isClickSuppressed()` and left to the PO, and Task 3 had settled it silently. Either keep the export, so a mode control enumerates the modes this build supports from one place instead of re-spelling them in the shell where the two lists could disagree, or delete it together with the two assertions that read it. It is one decision, not two. The module now records the open decision at the declaration, so the asymmetry with Task 2 is deliberate either way.
 
 **Corrected 2026-08-19 (second review of Task 3).** Expected 15/15 until this round; the block above is now **18** tests, and **the module below changed too** — three repairs to it, each answering a measured finding. Both blocks are the files verbatim.
 
@@ -1738,6 +2094,15 @@ Create `viewer/atlas39/core/view-state.mjs`:
 //
 // Pure: no IO, no clock, no randomness, no DOM.
 
+// VIEW_MODES is exported with no production reader in the ten planned tasks:
+// measured across the whole worktree, its only readers are `normalizeView`
+// below and this task's own suite (Task 4 imports `normalizeView` and
+// `E_VIEW_MODE`; Task 6 imports `DEFAULT_VIEW`, `applyView`, `isInView` and
+// `viewCaption`). It is exported anyway so that a mode control enumerates the
+// modes this build supports from here instead of re-spelling them in the shell,
+// where the two lists could disagree. Keeping an export that only tests read is
+// the same call Task 2 left open for `isPanning()`/`isClickSuppressed()`, and it
+// is named as one open PO decision in the plan rather than settled here.
 export const VIEW_MODES = Object.freeze(['overview', 'neighbourhood'])
 export const DEFAULT_VIEW = Object.freeze({ mode: 'overview', anchorId: null })
 
@@ -1847,6 +2212,18 @@ export function isInView(applied, nodeId) {
 /**
  * The sentence the shell shows and announces. It counts what is drawn against
  * what exists, so a scoped view can never read as "this is the whole graph".
+ *
+ * Both plurals agree with the number they follow, which is the TOTAL, not the
+ * shown count: an anchor with no neighbours draws one node out of five and must
+ * still read "1 of 5 nodes".
+ *
+ * The label clause refuses an empty string as well as a non-string. That is
+ * unreachable today, and by a foreign invariant rather than by anything this
+ * module controls: `view-model.mjs:38` defines `isText` as a non-empty string
+ * and line 68 refuses any node whose `label` is not `isText`, so the shell's
+ * anchorLabel() can only hand over a non-empty string or null. It is guarded and
+ * pinned anyway, because the day that invariant moves this function would render
+ * `Direct neighbourhood of “” — …` and nothing else would say so.
  */
 export function viewCaption(scope, anchorLabel = null) {
   const nodes = `${scope.shownNodes} of ${scope.totalNodes} ${scope.totalNodes === 1 ? 'node' : 'nodes'}`

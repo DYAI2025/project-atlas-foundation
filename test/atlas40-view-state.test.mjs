@@ -248,6 +248,18 @@ test('normalizeView answers without a graph, and an overview never keeps an anch
     view: { mode: 'neighbourhood', anchorId: 'not-in-any-graph' }
   })
   assert.equal(normalizeView(null).code, E_VIEW_MODE)
+  // The anchor's TYPE is checked here and nowhere else. Task 4's
+  // validateSavedView calls normalizeView with `raw.view.anchor_id ?? null`
+  // taken straight from JSON.parse and type-checks that field nowhere, so this
+  // half of the guard is all that stands between a stored `"anchor_id": 42` and
+  // a view carrying a number as an anchor. Measured: mutated to
+  // `view.anchorId == null || view.anchorId.length === 0` — which still refuses
+  // null and '' — the whole suite stayed green at 18/18 while normalizeView
+  // returned `{ok:true, view:{mode:'neighbourhood', anchorId:42}}`. The saved
+  // view would then be refused one step later as E_SAVED_VIEW_STALE_NODE, whose
+  // reason tells the user a number that was never a node id is a missing page,
+  // where D4's table assigns an unusable field to E_SAVED_VIEW_INVALID.
+  assert.equal(normalizeView({ mode: 'neighbourhood', anchorId: 42 }).code, E_VIEW_ANCHOR)
   // An overview carries no anchor, whatever it was handed. Task 4 persists
   // view.anchorId as anchor_id, so an anchor kept here would be written into a
   // saved overview and could later refuse that view for a stale node it does not
@@ -304,6 +316,14 @@ test('the caption counts what is drawn and what exists, and nothing else', () =>
     viewCaption(applied.scope, '14 – Delivery Model, Program Increment and Sprint Plan'),
     'Direct neighbourhood of “14 – Delivery Model, Program Increment and Sprint Plan” — 2 of 5 nodes, 1 of 4 relations.'
   )
+  // An empty label names nothing, so it is not announced as a name. Unreachable
+  // through the shell — view-model.mjs:38 defines isText as a non-empty string
+  // and line 68 refuses any node whose label is not isText, so anchorLabel() can
+  // only return a non-empty string or null — but dropping `anchorLabel.length >
+  // 0` survived the whole suite at 18/18 and rendered `Direct neighbourhood of
+  // “” — …`. Pinned so the clause is not "simplified" away once that invariant
+  // moves.
+  assert.equal(viewCaption(applied.scope, ''), 'Direct neighbourhood — 2 of 5 nodes, 1 of 4 relations.')
 })
 
 test('the caption says “1 node” and “1 relation”, never “1 nodes”', () => {
@@ -317,6 +337,20 @@ test('the caption says “1 node” and “1 relation”, never “1 nodes”', 
   assert.equal(
     viewCaption({ mode: 'neighbourhood', shownNodes: 1, totalNodes: 1, shownEdges: 0, totalEdges: 1 }, 'A'),
     'Direct neighbourhood of “A” — 1 of 1 node, 0 of 1 relation.'
+  )
+  // Both scopes above set shownNodes === totalNodes === 1, so neither can tell
+  // the two operands apart: `scope.totalNodes === 1` mutated to
+  // `scope.shownNodes === 1` survived them at exit 0, 18/18. The plural agrees
+  // with the number it follows, which is the TOTAL — and the mutant is
+  // reachable, because an anchor with no neighbours (buildAdjacency initialises
+  // every node to an empty Set, so the model permits an isolated node) draws
+  // exactly one node out of five and would read "1 of 5 node". The twin mutation
+  // on the edge branch is already killed by the SPRINT scope in the test above,
+  // where shownEdges is 1 and totalEdges is 4; the node branch had no such
+  // scope anywhere in this file.
+  assert.equal(
+    viewCaption({ mode: 'neighbourhood', shownNodes: 1, totalNodes: 5, shownEdges: 0, totalEdges: 4 }, 'A'),
+    'Direct neighbourhood of “A” — 1 of 5 nodes, 0 of 4 relations.'
   )
 })
 

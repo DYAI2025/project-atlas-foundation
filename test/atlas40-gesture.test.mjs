@@ -22,6 +22,7 @@ import {
 import {
   stripComments,
   purityViolations,
+  PurityScanError,
   FORBIDDEN_TOKENS,
   FORBIDDEN_IDENTIFIERS,
   MODULE_SPECIFIER
@@ -475,6 +476,19 @@ const STRING_MARKER_MUTANT = [
   'export const MARKS = [OPEN_MARK, CLOSE_MARK, leakProbe]'
 ].join('\n')
 
+// The exact mutation that defeated the string-aware scanner, in the same class:
+// a scanner that knows strings but not REGULAR EXPRESSION literals consumes the
+// `\/` of `/\//` as an ordinary escaped backslash, then reads the closing `/`
+// plus the following `/` as the start of a line comment and deletes the rest of
+// the line. Measured on the predecessor of the current scanner, verbatim:
+// stripComments("const SLASH_RE = /\\//; const t = document.title") returned
+// "const SLASH_RE = /\\", and purityViolations() of that same text returned [].
+// End to end, appended as one line to viewer/atlas39/core/view-state.mjs with
+// `grep -c document.title` = 1 proving the probe was on disk, that suite stayed
+// green at exit 0, 18/18 — a clock and a DOM read walking past a guard named
+// for refusing both.
+const REGEX_MARKER_MUTANT = 'export const SLASH_RE = /\\//; export const stamp = () => document.title + Date.now()'
+
 test('the gesture carries no clock, randomness or DOM', () => {
   const source = readFileSync(new URL('../viewer/atlas39/core/gesture.mjs', import.meta.url), 'utf8')
   const code = stripComments(source)
@@ -498,7 +512,7 @@ test('the gesture carries no clock, randomness or DOM', () => {
   assert.deepEqual(purityViolations(source), [], 'the purity rules disagree with each other')
 })
 
-test('the purity guard cannot be switched off by a string literal, and sees imports and randomness', () => {
+test('the purity guard cannot be switched off by a string or a regular expression literal, and sees imports and randomness', () => {
   // Without this test the guard proves only that four PRE-EXISTING regions
   // survived the strip, which says nothing about a newly added region the strip
   // ate. These assertions are about the guard's own capability.
@@ -561,5 +575,31 @@ test('the purity guard cannot be switched off by a string literal, and sees impo
   assert.ok(
     purityViolations('const t = setTimeout(fn, 0)').includes('setTimeout'),
     'setTimeout passed the purity guard'
+  )
+
+  // 6. A regular expression literal is code too, and the one ending in an
+  //    escaped slash is what defeated the scanner that knew only strings. The
+  //    literal survives the strip whole, and everything after it on the same
+  //    line is still scanned.
+  const scannedRegex = stripComments(REGEX_MARKER_MUTANT)
+  assert.match(scannedRegex, /const SLASH_RE = \/\\\/\//, 'the scanner truncated the regular expression literal')
+  assert.match(scannedRegex, /document\.title/, 'a regex literal switched the scan off for the rest of the line')
+  assert.ok(
+    purityViolations(REGEX_MARKER_MUTANT).includes('document.'),
+    'a DOM read behind a regular expression literal passed the purity guard'
+  )
+  assert.ok(
+    purityViolations(REGEX_MARKER_MUTANT).includes('Date.'),
+    'a clock behind a regular expression literal passed the purity guard'
+  )
+
+  // 7. Where the scanner cannot classify a slash it refuses instead of
+  //    guessing, because guessing is what deleted the line above. A regex
+  //    literal cannot span a line, so one that does not close on its own is a
+  //    text this scanner must not strip.
+  assert.throws(
+    () => stripComments('const broken = /abc\nconst t = document.title'),
+    PurityScanError,
+    'an unclassifiable slash was guessed at instead of refused'
   )
 })

@@ -26,40 +26,151 @@
 // `const OPEN_MARK = '/*'` … `const CLOSE_MARK = '*/'` around a probe that
 // really referenced document, window and navigator deleted the probe BEFORE the
 // denylists ever saw it, and the suite stayed green. The comment stripper is
-// therefore a small scanner that knows where strings begin and end.
+// therefore a small scanner that knows where literals begin and end.
+//
+// Knowing strings alone was not enough, and the hole was the same class again:
+// a scanner blind to REGULAR EXPRESSION literals reads `/\//` as `/\` followed
+// by a line comment and deletes the rest of the line. Measured on the
+// string-aware predecessor: stripComments("const SLASH_RE = /\\//; const t =
+// document.title") returned "const SLASH_RE = /\\" and purityViolations() of
+// the same text returned []. End to end, appending
+// `export const SLASH_RE = /\//` plus a `document.title + Date.now()` probe to
+// viewer/atlas39/core/view-state.mjs left that suite green at 18/18 with the
+// probe provably on disk. So the scanner now classifies a `/` before it decides
+// anything, and refuses rather than guesses when it cannot.
 //
 // This helper's own capability is pinned by test in
 // test/atlas40-gesture.test.mjs ("the purity guard cannot be switched off by a
-// string literal, and sees imports and randomness"), over the exact mutation
-// that defeated its predecessor.
+// string or a regular expression literal, and sees imports and randomness"),
+// over the exact two mutations that defeated its predecessors.
+
+/** Thrown instead of guessing. A scan that cannot classify a `/` deletes nothing. */
+export class PurityScanError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'PurityScanError'
+  }
+}
+
+const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/
 
 /**
- * Removes `//` and block comments the way a JavaScript reader does: string and
- * template literals are code, so comment delimiters inside them are text, and
- * text that merely looks like a comment delimiter cannot switch the scan off.
+ * The keywords after which a `/` opens a regular expression instead of dividing.
+ * Without them `return /x/.test(s)` would be read as a division and the regex
+ * body scanned as code.
+ */
+const REGEX_AFTER_KEYWORDS = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void',
+  'case', 'do', 'else', 'yield', 'await', 'throw'
+])
+
+/** End index (exclusive) of the string or template literal opened at `start`. */
+function literalEnd(source, start) {
+  const quote = source[start]
+  let i = start + 1
+  while (i < source.length) {
+    const ch = source[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === quote) return i + 1
+    i += 1
+  }
+  // Unterminated: keep the rest verbatim. Deleting it is the one thing this
+  // scanner must never do on input it does not understand.
+  return source.length
+}
+
+/**
+ * End index (exclusive) of the regular-expression literal that starts at
+ * `start`, or -1 when the text from `start` is not one. A regex literal cannot
+ * span a line, and a `/` inside a `[...]` character class does not close it.
+ */
+function regexLiteralEnd(source, start) {
+  let i = start + 1
+  let inClass = false
+  while (i < source.length) {
+    const ch = source[i]
+    if (ch === '\n') return -1
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (inClass) {
+      if (ch === ']') inClass = false
+    } else if (ch === '[') {
+      inClass = true
+    } else if (ch === '/') {
+      i += 1
+      while (i < source.length && IDENTIFIER_CHAR.test(source[i])) i += 1
+      return i
+    }
+    i += 1
+  }
+  return -1
+}
+
+const lineOf = (source, index) => source.slice(0, index).split('\n').length
+
+/**
+ * Removes `//` and block comments, and only those. String, template and
+ * regular-expression literals are code, so a comment delimiter inside any of
+ * them is text and cannot switch the scan off.
+ *
+ * What it knows, stated exactly rather than as "the way a JavaScript reader
+ * does" — the previous wording claimed a completeness this has never had:
+ *
+ * - `//` and `/*` are checked before a regular expression is considered, which
+ *   is what a JavaScript lexer does and not a shortcut: neither sequence can
+ *   open a regex literal.
+ * - A `/` in any other position is a regex literal when a regex could start
+ *   there, decided from the last significant character — an operand end
+ *   (identifier, `)`, `]`, `}`, a closing quote) means division, anything else
+ *   means regex, and an identifier is looked up in REGEX_AFTER_KEYWORDS.
+ * - A regex literal that does not close on its own line is refused with a
+ *   PurityScanError. Nothing is deleted on a guess.
+ *
+ * The one residual: a regex literal written directly after `)` or `}` — the
+ * `if (x) /re/.test(y)` and statement-position shapes — is read as a division,
+ * because telling those apart needs the parenthesis's own keyword. The body is
+ * then emitted verbatim, so nothing is hidden by it unless that body contains a
+ * literal `//` or `/*`. No guarded module contains either shape; this is written
+ * down so the next hole in this file is found by reading rather than by
+ * measuring it.
  */
 export function stripComments(source) {
   let out = ''
-  let quote = null
   let i = 0
+  // The last significant character emitted, and the identifier it ended, are
+  // all that separates a division from a regular expression.
+  let prev = ''
+  let prevWord = ''
+
+  const keep = (text) => {
+    out += text
+    for (const ch of text) {
+      if (/\s/.test(ch)) continue
+      prev = ch
+      prevWord = IDENTIFIER_CHAR.test(ch) ? prevWord + ch : ''
+    }
+  }
+
+  const regexCanStart = () => {
+    if (prev === '') return true
+    if (prev === ')' || prev === ']' || prev === '}') return false
+    if (prev === "'" || prev === '"' || prev === '`') return false
+    if (IDENTIFIER_CHAR.test(prev)) return REGEX_AFTER_KEYWORDS.has(prevWord)
+    return true
+  }
+
   while (i < source.length) {
     const ch = source[i]
     const next = source[i + 1]
-    if (quote !== null) {
-      out += ch
-      if (ch === '\\') {
-        out += next ?? ''
-        i += 2
-        continue
-      }
-      if (ch === quote) quote = null
-      i += 1
-      continue
-    }
     if (ch === "'" || ch === '"' || ch === '`') {
-      quote = ch
-      out += ch
-      i += 1
+      const end = literalEnd(source, i)
+      keep(source.slice(i, end))
+      i = end
       continue
     }
     if (ch === '/' && next === '/') {
@@ -72,7 +183,19 @@ export function stripComments(source) {
       i += 2
       continue
     }
-    out += ch
+    if (ch === '/' && regexCanStart()) {
+      const end = regexLiteralEnd(source, i)
+      if (end === -1) {
+        throw new PurityScanError(
+          `unterminated regular expression literal at line ${lineOf(source, i)}: ` +
+            'the purity scanner refuses to guess where it ends'
+        )
+      }
+      keep(source.slice(i, end))
+      i = end
+      continue
+    }
+    keep(ch)
     i += 1
   }
   return out
