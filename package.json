@@ -16,7 +16,9 @@
     "atlas65:snapshot": "node scripts/atlas65/generate-snapshot.mjs --project ATLAS",
     "atlas65:serve": "node scripts/atlas65/serve.mjs",
     "atlas65:e2e": "node scripts/atlas65/e2e.mjs --project ATLAS",
-    "atlas25:discover": "node scripts/atlas25/discover.mjs --project ATLAS"
+    "atlas39:serve": "node scripts/atlas65/serve.mjs --viewer atlas39 --dir docs/evidence/atlas-65 --request config/atlas39-read-request.json --port 4339",
+    "atlas39:golden": "node scripts/atlas39/render-golden.mjs",
+    "atlas39:visual": "node scripts/atlas39/render-golden.mjs --check"
   },
   "devDependencies": {
     "ajv": "8.20.0"

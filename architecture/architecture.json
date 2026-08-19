@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "project": {
+    "name": "Project ATLAS Foundation",
+    "domain": "governed-knowledge-graph",
+    "repo": "DYAI2025/project-atlas-foundation",
+    "timestamp": "2026-08-19T22:40:00+02:00",
+    "description": "A provenance-first, fail-closed foundation for projecting explicitly governed knowledge into inspectable graph experiences without treating the projection as the canonical source of truth."
+  },
+  "visualization": {
+    "preferredStyle": 7,
+    "diagramType": "architecture",
+    "audience": "developers, platform architects, knowledge teams, AI governance teams",
+    "outputs": ["isometric-svg", "fireworks-spec", "markdown-snapshot"]
+  },
+  "architecture_status": {
+    "current": "A bounded local pilot is implemented: live Confluence capture, deterministic projection into pinned GBrain/PGLite, persisted readback, gbrain-read/v1 validation, provenance sidecar, local validate-then-serve, and the WebGL Semantic Atlas workspace.",
+    "target": "The production ATLAS canonical control plane, PostgreSQL/RLS isolation, separated approval/publication identities, reconciliation and VPS deployment remain target architecture and must not be inferred from the local pilot."
+  },
+  "repoInventory": {
+    "runtime": ["src/atlas65", "src/gbrain-read-contract", "src/local-contract", "src/registry"],
+    "viewer": ["viewer/atlas39", "viewer/atlas65"],
+    "contracts": ["contracts/gbrain-read/v1", "contracts/local-adapter/v1"],
+    "governance": ["architecture", "docs/governance", "docs/policies", "config/project-registry.json"],
+    "quality": ["test", ".github/workflows/ci.yml", ".github/workflows/secret-scan.yml", "scripts/validate-current-repository.mjs", "scripts/secret-scan.mjs"],
+    "evidence": ["docs/evidence/atlas-65", "reports"],
+    "excluded_from_architecture_semantics": ["fixtures", "historical-import artifacts", "generated reports", "out", "node_modules", ".git"]
+  },
+  "nodes": [
+    {"id":"knowledge-author","label":"Knowledge author / human source owner","type":"entry","status":"current","role":"Creates and approves source knowledge outside the projection runtime."},
+    {"id":"confluence","label":"Confluence source set","type":"external","status":"current","role":"Canonical source for the bounded pilot capture; page identity, revision and hierarchy are verified.","evidence":["src/atlas65/confluence-source.mjs","docs/atlas-65-local-e2e.md"]},
+    {"id":"project-registry","label":"Project registry & scope gate","type":"security","status":"current","role":"Resolves explicit project identifiers and denies unknown, ambiguous or cross-project scope.","evidence":["config/project-registry.json","src/registry"]},
+    {"id":"capture","label":"Verified source capture","type":"api","status":"current","role":"All-or-nothing capture of the declared source set; no partial success path.","evidence":["src/atlas65/confluence-source.mjs"]},
+    {"id":"projection","label":"Deterministic projection","type":"api","status":"current","role":"Maps pages and explicit Confluence hierarchy into GBrain pages/links while carrying provenance.","evidence":["src/atlas65/projection.mjs"]},
+    {"id":"gbrain-local","label":"Pinned GBrain + local PGLite","type":"data","status":"current","role":"Derived, rebuildable local persistence for the pilot; not the canonical ATLAS store.","evidence":["docs/atlas-65-local-e2e.md","third_party/upstreams.lock.json"]},
+    {"id":"readback","label":"Persisted readback","type":"api","status":"current","role":"Builds the graph only from what came back out of persisted state; cannot refetch source data.","evidence":["src/atlas65/snapshot.mjs"]},
+    {"id":"read-contract","label":"gbrain-read/v1 contract & scope validation","type":"security","status":"current","role":"Fail-closed contract boundary for graph snapshots; rejects invalid scope, inferred edges and malformed identifiers.","evidence":["contracts/gbrain-read/v1","src/gbrain-read-contract"]},
+    {"id":"provenance","label":"Provenance sidecar","type":"data","status":"current","role":"Carries source page, revision, URL and capture metadata for display; missing evidence remains visibly missing.","evidence":["src/atlas65/snapshot.mjs"]},
+    {"id":"validated-server","label":"Validate-then-serve boundary","type":"api","status":"current","role":"Serves accepted snapshot bytes locally and refuses invalid/torn state instead of substituting data.","evidence":["docs/atlas-65-local-e2e.md"]},
+    {"id":"semantic-atlas","label":"Semantic Atlas workspace","type":"ui","status":"current","role":"Local graph experience with navigator, evidence inspector, search, focus, zoom and pan.","evidence":["viewer/atlas39","docs/atlas-39-workspace-shell.md"]},
+    {"id":"webgl-stage","label":"WebGL graph renderer","type":"ui","status":"current","role":"GPU-rendered graph stage with explicit renderer failure states.","evidence":["viewer/atlas39/core/render-webgl.mjs","docs/atlas-40-webgl-renderer.md"]},
+    {"id":"accessible-overlay","label":"Accessible DOM interaction layer","type":"ui","status":"current","role":"Keyboard and assistive-technology semantics share the same projected geometry as the WebGL scene.","evidence":["viewer/atlas39/app.mjs"]},
+    {"id":"developer","label":"Developer / evaluator","type":"entry","status":"current","role":"Runs the accepted local evidence viewer or the full credentialed pilot pipeline."},
+    {"id":"ci-gates","label":"CI, repository validation & secret scan","type":"security","status":"current","role":"Tests contracts, architecture invariants, viewer behavior, repository consistency and reachable-history secret hygiene.","evidence":[".github/workflows/ci.yml",".github/workflows/secret-scan.yml","test"]},
+    {"id":"target-core","label":"ATLAS canonical control plane","type":"api","status":"target","role":"Target: canonical project registry, source revisions, proposals, approval evidence, audit and projection checkpoints.","evidence":["architecture-decision.json","architecture/c4-context.mmd"]},
+    {"id":"target-postgres","label":"PostgreSQL + project_id + RLS","type":"data","status":"target","role":"Target: canonical persistence with project isolation and separate service roles.","evidence":["architecture-decision.json","architecture/c4-container.mmd"]},
+    {"id":"target-approval","label":"Separated approval & publication identities","type":"security","status":"target","role":"Target: human knowledge decision and publication authority remain technically separate.","evidence":["architecture/approval-boundary.md","architecture/c4-context.mmd"]},
+    {"id":"target-projection","label":"Reconciled production GBrain projection","type":"data","status":"target","role":"Target: idempotent derived projection with checkpoints, lag measurement and reconciliation.","evidence":["architecture-decision.json"]},
+    {"id":"target-consumers","label":"Production read consumers","type":"ui","status":"target","role":"Target: graph UI, MCP and search consumers over the derived read side.","evidence":["architecture/c4-container.mmd"]}
+  ],
+  "edges": [
+    {"from":"knowledge-author","to":"confluence","relation":"workflow","label":"authors / governs"},
+    {"from":"confluence","to":"capture","relation":"data-flow","label":"declared live pages + revisions"},
+    {"from":"project-registry","to":"capture","relation":"risk-control","label":"explicit project scope"},
+    {"from":"capture","to":"projection","relation":"data-flow","label":"verified capture"},
+    {"from":"projection","to":"gbrain-local","relation":"data-flow","label":"pages + explicit hierarchy"},
+    {"from":"gbrain-local","to":"readback","relation":"data-flow","label":"persisted state only"},
+    {"from":"readback","to":"read-contract","relation":"risk-control","label":"snapshot validation"},
+    {"from":"readback","to":"provenance","relation":"data-flow","label":"source evidence"},
+    {"from":"read-contract","to":"validated-server","relation":"risk-control","label":"accepted bytes only"},
+    {"from":"provenance","to":"validated-server","relation":"data-flow","label":"evidence metadata"},
+    {"from":"validated-server","to":"semantic-atlas","relation":"api-call","label":"local snapshot + provenance"},
+    {"from":"semantic-atlas","to":"webgl-stage","relation":"workflow","label":"renders scene"},
+    {"from":"semantic-atlas","to":"accessible-overlay","relation":"workflow","label":"operable semantics"},
+    {"from":"developer","to":"semantic-atlas","relation":"user-flow","label":"explores graph"},
+    {"from":"ci-gates","to":"read-contract","relation":"risk-control","label":"contract regression tests"},
+    {"from":"ci-gates","to":"semantic-atlas","relation":"risk-control","label":"viewer, accessibility & security tests"},
+    {"from":"capture","to":"target-core","relation":"neutral","label":"pilot evidence informs target; never authorizes production"},
+    {"from":"target-core","to":"target-postgres","relation":"data-flow","label":"canonical governed state"},
+    {"from":"target-approval","to":"target-core","relation":"risk-control","label":"proposal decision + publication separation"},
+    {"from":"target-postgres","to":"target-projection","relation":"data-flow","label":"approved revisions only"},
+    {"from":"target-projection","to":"target-consumers","relation":"data-flow","label":"rebuildable read projection"}
+  ],
+  "changes": [
+    {"date":"2026-08-19","kind":"documentation-drift","statement":"The existing C4 container diagram still labels the local pilot lane as not implemented, while ATLAS-65 plus the ATLAS-39/40 workspace are now implemented. This model separates the as-built pilot from the unimplemented production target."},
+    {"date":"2026-08-19","kind":"public-positioning","statement":"The repository is public but no root LICENSE or LICENSE.md was observed. Public visibility is not presented as an open-source license."}
+  ]
+}

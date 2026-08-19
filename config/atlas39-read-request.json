@@ -1,0 +1,9 @@
+{
+  "contract_version": "1.0.0",
+  "request_id": "atlas39-workspace-shell",
+  "project": {
+    "selector_kind": "project_id",
+    "selector_value": "ATLAS"
+  },
+  "operation": "read_graph"
+}

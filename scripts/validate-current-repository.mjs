@@ -65,7 +65,45 @@ const REQUIRED_FILES = [
   'security/secret-scan.pin.json',
   'scripts/secret-scan.mjs',
   'test/secret-scan.test.mjs',
-  '.github/workflows/secret-scan.yml'
+  '.github/workflows/secret-scan.yml',
+  // ATLAS-39: the workspace shell, its design system, its committed read
+  // request and its visual baseline are first-class repository artifacts, so a
+  // missing one is a repository finding. Deliberately existence only — the
+  // shell contract (landmarks, tokens, reduced motion, focus treatment, the
+  // no-fallback rule) is owned by test/atlas39-shell.test.mjs and the visual
+  // baseline by test/atlas39-visual.test.mjs, and neither is duplicated here.
+  'viewer/atlas39/index.html',
+  'viewer/atlas39/tokens.css',
+  'viewer/atlas39/stage.css',
+  'viewer/atlas39/shell.css',
+  'viewer/atlas39/app.mjs',
+  'viewer/atlas39/core/view-model.mjs',
+  'viewer/atlas39/core/layout.mjs',
+  'viewer/atlas39/core/render-svg.mjs',
+  'viewer/atlas39/core/stage-mount.mjs',
+  'config/atlas39-read-request.json',
+  'scripts/atlas39/render-golden.mjs',
+  'test/atlas39-shell.test.mjs',
+  'test/atlas39-stage-mount.test.mjs',
+  'test/atlas39-visual.test.mjs',
+  'test/golden/atlas39-stage-overview.svg',
+  'test/golden/atlas39-stage-focus.svg',
+
+  // ATLAS-40 slice 1: the WebGL renderer that replaced render-svg.mjs on the
+  // browser success path, plus the pure modules the swap needed. The behaviour
+  // is owned by the atlas40-* suites and is not duplicated here.
+  'viewer/atlas39/core/render-webgl.mjs',
+  'viewer/atlas39/core/scene.mjs',
+  'viewer/atlas39/core/scene-guard.mjs',
+  'viewer/atlas39/core/transform.mjs',
+  'viewer/atlas39/core/search.mjs',
+  'docs/atlas-40-webgl-renderer.md',
+  'test/atlas40-render-webgl.test.mjs',
+  'test/atlas40-scene.test.mjs',
+  'test/atlas40-scene-guard.test.mjs',
+  'test/atlas40-transform.test.mjs',
+  'test/atlas40-shell.test.mjs',
+  'docs/atlas-39-workspace-shell.md'
 ]
 
 for (const f of REQUIRED_FILES) {
@@ -452,6 +490,142 @@ for (const [index, declared] of (Array.isArray(declaredDiagrams)
   if (!usable) continue
   check(`${label} resolves to an existing file: ${declared}`, await isFile(declared))
 }
+
+// 16) ATLAS-39 WORKSPACE_SHELL: the run command a developer or the PO is told to
+//     use must be the command the repository actually ships, and the visual
+//     baseline's provenance claim must be the same in the runbook and in the
+//     test that enforces it. Both are cross-artifact consistency questions that
+//     no single test file can answer, which is why they live here rather than
+//     being duplicated into the ATLAS-39 suites.
+//     Reads are guarded so a missing or malformed file becomes a finding instead
+//     of an uncaught error that would skip the VALIDATION FAILED verdict.
+let atlas39Package = null
+let atlas39PackageError = ''
+try {
+  atlas39Package = JSON.parse(await readFile('package.json', 'utf8'))
+} catch (error) {
+  atlas39PackageError = error.message
+}
+const atlas39Scripts = atlas39Package?.scripts ?? {}
+check(
+  'package.json declares the ATLAS-39 workspace commands',
+  typeof atlas39Scripts['atlas39:serve'] === 'string' &&
+    typeof atlas39Scripts['atlas39:golden'] === 'string' &&
+    typeof atlas39Scripts['atlas39:visual'] === 'string',
+  atlas39PackageError || `found: ${JSON.stringify(Object.keys(atlas39Scripts))}`
+)
+check(
+  'atlas39:serve runs the ATLAS-39 viewer against the committed accepted evidence',
+  typeof atlas39Scripts['atlas39:serve'] === 'string' &&
+    atlas39Scripts['atlas39:serve'].includes('--viewer atlas39') &&
+    atlas39Scripts['atlas39:serve'].includes('--dir docs/evidence/atlas-65') &&
+    atlas39Scripts['atlas39:serve'].includes('--request config/atlas39-read-request.json'),
+  `found: ${JSON.stringify(atlas39Scripts['atlas39:serve'])}`
+)
+// The ATLAS-65 pilot must keep its own untouched entry point: ATLAS-39 reuses
+// the server, it does not repurpose the accepted command.
+check(
+  'the ATLAS-65 serve command is unchanged by ATLAS-39',
+  atlas39Scripts['atlas65:serve'] === 'node scripts/atlas65/serve.mjs',
+  `found: ${JSON.stringify(atlas39Scripts['atlas65:serve'])}`
+)
+
+let atlas39Request = null
+let atlas39RequestError = ''
+try {
+  atlas39Request = JSON.parse(await readFile('config/atlas39-read-request.json', 'utf8'))
+} catch (error) {
+  atlas39RequestError = error.message
+}
+check(
+  'the committed ATLAS-39 read request is scoped to project ATLAS by project_id',
+  atlas39Request?.contract_version === '1.0.0' &&
+    atlas39Request?.operation === 'read_graph' &&
+    atlas39Request?.project?.selector_kind === 'project_id' &&
+    atlas39Request?.project?.selector_value === 'ATLAS',
+  atlas39RequestError || `found: ${JSON.stringify(atlas39Request?.project)}`
+)
+
+// The runbook states which snapshot the visual baseline was rendered from; the
+// visual test enforces it. If those two ever name different digests, one of them
+// is lying to the reader.
+let atlas39Runbook = ''
+let atlas39VisualTest = ''
+let atlas39DigestError = ''
+try {
+  atlas39Runbook = await readFile('docs/atlas-39-workspace-shell.md', 'utf8')
+  atlas39VisualTest = await readFile('test/atlas39-visual.test.mjs', 'utf8')
+} catch (error) {
+  atlas39DigestError = error.message
+}
+// Both sides are bound to their own explicit label rather than to "the first
+// 64-hex run in the file": a digest mentioned anywhere else in either document
+// must not be able to satisfy — or to break — this check.
+const runbookDigest = atlas39Runbook.match(/\|\s*Snapshot sha256\s*\|\s*`([0-9a-f]{64})`\s*\|/)?.[1] ?? null
+const visualTestDigest = atlas39VisualTest.match(/ACCEPTED_SNAPSHOT_SHA256\s*=\s*'([0-9a-f]{64})'/)?.[1] ?? null
+check(
+  'the runbook and the visual test pin the same accepted-snapshot digest',
+  runbookDigest !== null && runbookDigest === visualTestDigest,
+  atlas39DigestError || `runbook: ${runbookDigest} / visual test: ${visualTestDigest}`
+)
+
+// 17) ATLAS-40 RENDERER SWAP: the browser success path must actually be the
+//     WebGL renderer. The behavioural proof lives in the atlas40-* suites and in
+//     the headed acceptance run; what is checked here is the structural claim
+//     the documentation makes, so the two cannot drift apart silently.
+let atlas40App = ''
+let atlas40Doc = ''
+let atlas40SceneTest = ''
+let atlas40Error = ''
+try {
+  atlas40App = await readFile('viewer/atlas39/app.mjs', 'utf8')
+  atlas40Doc = await readFile('docs/atlas-40-webgl-renderer.md', 'utf8')
+  atlas40SceneTest = await readFile('test/atlas40-scene.test.mjs', 'utf8')
+} catch (error) {
+  atlas40Error = error.message
+}
+
+check(
+  'the workspace shell renders the graph with the WebGL renderer',
+  atlas40App.includes("from './core/render-webgl.mjs'"),
+  atlas40Error || 'app.mjs does not import core/render-webgl.mjs'
+)
+// The SVG renderer is retained for the golden geometry gate, so "it still exists"
+// is not the question. The question is whether it is still what the browser draws.
+check(
+  'the superseded SVG renderer is no longer on the shell path',
+  atlas40App !== '' &&
+    !atlas40App.includes("from './core/render-svg.mjs'") &&
+    !atlas40App.includes("from './core/stage-mount.mjs'"),
+  atlas40Error || 'app.mjs still imports the ATLAS-39 SVG renderer or its mount guard'
+)
+check(
+  'render-svg.mjs states that it is no longer the browser renderer',
+  (await readFile('viewer/atlas39/core/render-svg.mjs', 'utf8').catch(() => '')).includes(
+    'SUPERSEDED AS THE BROWSER RENDERER BY ATLAS-40'
+  )
+)
+// A third copy of the accepted digest: the WebGL scene test must be verified
+// against the same snapshot as the golden gate and the runbook.
+const atlas40SceneDigest = atlas40SceneTest.match(/ACCEPTED_SNAPSHOT_SHA256\s*=\s*'([0-9a-f]{64})'/)?.[1] ?? null
+check(
+  'the ATLAS-40 scene test pins the same accepted-snapshot digest',
+  atlas40SceneDigest !== null && atlas40SceneDigest === runbookDigest,
+  atlas40Error || `scene test: ${atlas40SceneDigest} / runbook: ${runbookDigest}`
+)
+check(
+  'the ATLAS-40 runbook records the delivered slice and its deferred scope',
+  atlas40Doc.includes('Slice 1') && /##\s*Not delivered by slice 1/i.test(atlas40Doc),
+  atlas40Error || 'docs/atlas-40-webgl-renderer.md does not state its slice boundary'
+)
+check(
+  'README points at the ATLAS-40 renderer runbook',
+  (await readFile('README.md', 'utf8').catch(() => '')).includes('docs/atlas-40-webgl-renderer.md')
+)
+check(
+  'README points at the ATLAS-39 run command and runbook',
+  (await readFile('README.md', 'utf8').catch(() => '')).includes('npm run atlas39:serve')
+)
 
 if (failures.length > 0) {
   console.error('VALIDATION FAILED')
