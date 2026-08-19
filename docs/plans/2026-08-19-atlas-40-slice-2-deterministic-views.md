@@ -2449,6 +2449,34 @@ test('an unsupported version is refused before any field is interpreted', () => 
     assert.equal(result.ok, false, `version ${JSON.stringify(version)} was accepted`)
     assert.equal(result.code, E_SAVED_VIEW_VERSION)
   }
+
+  // Every case above keeps every OTHER field valid, so none of them can tell
+  // "version first" from "version last" — which is the ordering D4 requires in
+  // bold, and this test's own title claims. Measured: moving the whole version
+  // gate from the top of validateSavedView down to just above `const identity
+  // = {}` left the suite green at 15/15, and under that mutant a record with a
+  // bad version AND a missing snapshot came back E_SAVED_VIEW_INVALID — the
+  // fields were interpreted first after all.
+  //
+  // The ordering is only visible on a record that is broken in BOTH ways at
+  // once. An older build must say "I do not read this version", never report a
+  // field it had no business interpreting: a version it cannot read is a
+  // record whose field meanings it does not know.
+  const brokenTwice = [
+    { saved_view_version: 99 },
+    { ...sample(), saved_view_version: 99, snapshot: undefined },
+    { ...sample(), saved_view_version: 2, view: { mode: 'cluster', anchor_id: DELIVERY } },
+    { ...sample(), saved_view_version: 0, transform: { scale: 0, tx: 'left', ty: 0 } }
+  ]
+  for (const raw of brokenTwice) {
+    const result = parseSavedView(JSON.stringify(raw))
+    assert.equal(result.ok, false)
+    assert.equal(
+      result.code,
+      E_SAVED_VIEW_VERSION,
+      `a field was interpreted before the version was checked: ${result.code}`
+    )
+  }
 })
 
 test('an unsupported view mode is refused explicitly, never downgraded to overview', () => {
@@ -2532,13 +2560,23 @@ test('COUNTEREXAMPLE: a stale node id is refused and is never mapped onto anothe
 
   // The decisive property: a refusal must carry NO usable node of this graph.
   // If it did, the shell could restore "something close" and look successful.
+  //
+  // The scan is deliberately UNANCHORED. The first draft looked for `"<id>"`,
+  // which only sees a node id that is a whole JSON string value, so an id named
+  // in the refusal's prose was invisible to it — the one place a substitute is
+  // most likely to be offered. Measured: rewriting the stale-node reason to
+  // `the saved ${what} node is not in this graph; the nearest surviving page is
+  // ${viewModel.nodes[0].node_id} - restore that one instead` left the suite
+  // green at 15/15 while the refusal literally read "... the nearest surviving
+  // page is ATLAS:confluence:14778372:14778372 - restore that one instead".
+  // A substitute offered in prose is still a substitute.
   for (const result of [anchorResult, focusResult]) {
     assert.equal('view' in result, false)
     assert.equal('focusId' in result, false)
     assert.equal('transform' in result, false)
     for (const node of vm.nodes) {
       assert.equal(
-        JSON.stringify(result).includes(`"${node.node_id}"`),
+        JSON.stringify(result).includes(node.node_id),
         false,
         `the refusal offered ${node.node_id} as a substitute`
       )
@@ -2860,6 +2898,12 @@ Two things that are **not** defects, recorded because they were checked rather t
 
 - `restoreSavedView` uses `viewModel.adjacency.has(id)` as its node-existence test, and that is sound: `view-model.mjs:130` seeds the adjacency map from `nodes`, not from edges, so a degree-0 node is a key and cannot be mistaken for a deleted one. It is also the idiom `view-model.mjs:235` itself uses for `known`.
 - `IDENTITY_FIELDS` and `validateSavedView` are exported with no importing reader — measured across the whole worktree and all ten planned tasks (Task 6 imports `SAVED_VIEW_VERSION`, `captureSavedView`, `serializeSavedView`, `parseSavedView`, `restoreSavedView` and `E_SAVED_VIEW_STORAGE`, and nothing else). Following the call Task 2 left open for `isPanning()` and Task 3 for `VIEW_MODES`, they are kept and the implementation now says so where they are declared, instead of reading as though something consumed them. Named as one open PO decision, not settled here.
+
+**Corrected 2026-08-19 (second review of Task 4).** Two further defects were measured in the test block above, and it is the repaired one. Both are unpinned invariants, not wrong behaviour: `shasum -a 256 viewer/atlas39/core/saved-view.mjs` is `550fddafb8056d79724e4770e8522b4612e32b94fbad337dd33b9987e70e7b75` before and after this round, and the expected count stays at 15, because both repairs are assertions added to tests that already existed.
+
+5. **D4's version gate was pinned on its code but not on its order.** D4 requires `saved_view_version` to be "checked **first**, before any field is read", and the test was named for it — `an unsupported version is refused before any field is interpreted` — but every case it ran varied `saved_view_version` alone while every other field stayed valid, so it could not tell "version first" from "version last". Measured: moving the whole version-gate block from the top of `validateSavedView` down to just above `const identity = {}` left the suite **green at 15/15, exit 0**, and under that mutant `parseSavedView(JSON.stringify({ saved_view_version: 99 }))` returned `E_SAVED_VIEW_INVALID` where the pristine module returns `E_SAVED_VIEW_VERSION` — the fields were interpreted before the version after all. The ordering is only visible on a record broken in *both* ways at once, so the test now parses four of those (a bad version with a missing snapshot, with an unsupported mode, with an unusable transform, and a bare `{saved_view_version: 99}`) and asserts `E_SAVED_VIEW_VERSION` for each. Under the same mutant the suite is now **red, exit 1, pass 14 / fail 1**, on `a field was interpreted before the version was checked: E_SAVED_VIEW_INVALID`.
+
+6. **The COUNTEREXAMPLE's node-id scan was quote-anchored, so a substitute offered in prose was invisible to it.** The scan asked whether the serialised refusal contains `"<node_id>"` *with* the surrounding quotes, which only matches a node id that is a whole JSON string value — while the refusal's `reason` is the one field where a substitute would actually be offered. Measured: rewriting the stale-node reason to name `viewModel.nodes[0].node_id` as "the nearest surviving page … restore that one instead" left the suite **green at 15/15, exit 0**, while the refusal literally read `the saved anchor node is not in this graph; the nearest surviving page is ATLAS:confluence:14778372:14778372 - restore that one instead` — real node ids present in the refusal: `["ATLAS:confluence:14778372:14778372"]`, real node ids as quoted values: `[]`. The test's own comment states the property ("a refusal must carry NO usable node of this graph"), so the scan is now unanchored. Under the same mutant the suite is **red, exit 1, pass 14 / fail 1**, on `the refusal offered ATLAS:confluence:14778372:14778372 as a substitute`; on the pristine module it stays green at 15/15.
 
 **Step 5: Commit**
 
