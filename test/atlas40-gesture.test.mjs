@@ -17,6 +17,15 @@ import {
   GestureError,
   E_GESTURE_THRESHOLD
 } from '../viewer/atlas39/core/gesture.mjs'
+// One purity guard for every pure core module, so a second suite cannot ship a
+// weaker copy of it. See the header above the STRING_MARKER_MUTANT below.
+import {
+  stripComments,
+  purityViolations,
+  FORBIDDEN_TOKENS,
+  FORBIDDEN_IDENTIFIERS,
+  MODULE_SPECIFIER
+} from './helpers/purity.mjs'
 
 const down = (over = {}) => ({ type: 'pointerdown', pointerId: 1, button: 0, clientX: 100, clientY: 100, ...over })
 // `buttons` is part of the record the module reads: 0 means the press is over.
@@ -443,104 +452,20 @@ test('end() reports the pointer id so the shell releases the capture it took', (
 // ---------------------------------------------------------------------------
 // The purity guard, and the guard on the guard.
 //
-// Scan the CODE, not the English. This module's comments are long and
-// load-bearing, and 'window', 'document', 'navigator' and 'performance' are
-// ordinary words inside them — a raw substring scan fires on vocabulary rather
-// than on capability use, and it already did once: the comment "a window losing
-// the pointer" tripped this guard while the code was pure.
+// The scanner itself now lives in test/helpers/purity.mjs and is imported at
+// the top of this file, because the view-state suite re-spelled it as a raw
+// substring list of its own and the two disagreed in both directions — false
+// reds on ordinary prose, blind spots on a real clock. Its rationale, its
+// measured history and its denylists are documented there; the tests that pin
+// its capability stay here, where they were written.
 //
-// Removing the comments with two regexes over raw text was itself defeatable,
-// and measured to be: `source.replace(/\/\*[\s\S]*?\*\//g, '')` cannot tell a
-// block-comment delimiter from an ordinary string literal, so appending
-// `const OPEN_MARK = '/*'` … `const CLOSE_MARK = '*/'` around a probe that
-// really referenced document, window and navigator deleted the probe BEFORE the
-// denylists ever saw it, and the suite stayed green. The comment stripper is
-// therefore a small scanner that knows where strings begin and end, and it is
-// itself pinned by the test below over the exact mutation that defeated its
-// predecessor.
+// The rule it exists for: scan the CODE, not the English. This module's
+// comments are long and load-bearing, and 'window', 'document', 'navigator' and
+// 'performance' are ordinary words inside them — a raw substring scan fires on
+// vocabulary rather than on capability use, and it already did once: the
+// comment "a window losing the pointer" tripped this guard while the code was
+// pure.
 // ---------------------------------------------------------------------------
-
-/**
- * Removes `//` and block comments the way a JavaScript reader does: string and
- * template literals are code, so comment delimiters inside them are text, and
- * text that merely looks like a comment delimiter cannot switch the scan off.
- */
-function stripComments(source) {
-  let out = ''
-  let quote = null
-  let i = 0
-  while (i < source.length) {
-    const ch = source[i]
-    const next = source[i + 1]
-    if (quote !== null) {
-      out += ch
-      if (ch === '\\') {
-        out += next ?? ''
-        i += 2
-        continue
-      }
-      if (ch === quote) quote = null
-      i += 1
-      continue
-    }
-    if (ch === "'" || ch === '"' || ch === '`') {
-      quote = ch
-      out += ch
-      i += 1
-      continue
-    }
-    if (ch === '/' && next === '/') {
-      while (i < source.length && source[i] !== '\n') i += 1
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      i += 2
-      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1
-      i += 2
-      continue
-    }
-    out += ch
-    i += 1
-  }
-  return out
-}
-
-/** Property-access spellings, which prose does not produce. */
-const FORBIDDEN_TOKENS = [
-  'Date.', 'new Date', 'Math.random', 'performance.',
-  'document.', 'window.', 'globalThis', 'navigator.', 'localStorage',
-  'requestAnimationFrame', 'crypto.'
-]
-
-/**
- * Bare identifiers, matched on word boundaries over already comment-free code.
- * Property-access spellings alone cannot see `typeof document`, `fetch(...)`,
- * `setTimeout(...)`, a static `import` or `crypto.getRandomValues` — the last
- * two being the most direct ways to make this module impure, and both invisible
- * to the first two versions of this guard.
- */
-const FORBIDDEN_IDENTIFIERS = [
-  'window', 'document', 'navigator', 'performance', 'globalThis',
-  'localStorage', 'sessionStorage', 'indexedDB', 'process', 'fetch',
-  'setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask',
-  'requestAnimationFrame', 'Date', 'XMLHttpRequest', 'WebSocket', 'require',
-  'import', 'crypto', 'eval', 'Worker'
-]
-
-/** `import … from '…'` and `export … from '…'` both spell this. */
-const MODULE_SPECIFIER = /\bfrom\s*['"]/
-
-/** Every rule above, applied to one source text. Returns what it found. */
-function purityViolations(source) {
-  const code = stripComments(source)
-  const found = []
-  for (const token of FORBIDDEN_TOKENS) if (code.includes(token)) found.push(token)
-  for (const identifier of FORBIDDEN_IDENTIFIERS) {
-    if (new RegExp(`\\b${identifier}\\b`).test(code)) found.push(identifier)
-  }
-  if (MODULE_SPECIFIER.test(code)) found.push("from '<specifier>'")
-  return found
-}
 
 /** The exact mutation that defeated the regex strip this scanner replaced. */
 const STRING_MARKER_MUTANT = [

@@ -50,19 +50,29 @@ export function normalizeView(view) {
   return { ok: true, view: { mode: 'neighbourhood', anchorId: view.anchorId } }
 }
 
+// Exactly what a consumer reads, and nothing else. The first draft also carried
+// `anchorId` (a copy of `applied.view.anchorId`) and `complete` (a derived
+// boolean); neither had a single reader in the slice, and an unread field is a
+// field no test can pay for — both survived being mutated to a wrong value with
+// the whole suite green. The anchor of an applied view is `applied.view.anchorId`.
 function scopeOf(view, viewModel, nodes, edges) {
   return {
     mode: view.mode,
-    anchorId: view.anchorId,
     shownNodes: nodes.length,
     totalNodes: viewModel.nodes.length,
     shownEdges: edges.length,
-    totalEdges: viewModel.edges.length,
-    complete: nodes.length === viewModel.nodes.length && edges.length === viewModel.edges.length
+    totalEdges: viewModel.edges.length
   }
 }
 
 /**
+ * Overview returns the view model ITSELF as `model` — the identity projection
+ * copies nothing — while a neighbourhood returns a shallow copy carrying the
+ * restricted `nodes` and `edges`. So `applied.model === viewModel` holds in one
+ * mode and not in the other, and a caller that holds the result for the life of
+ * a view must treat `model` as read-only: in overview, mutating it would be
+ * mutating the canonical graph. Nothing in this slice mutates it.
+ *
  * @param {object} viewModel from buildViewModel()
  * @param {{mode:string, anchorId:(string|null)}} view
  * @returns {{ok:true, view:object, model:object, scope:object}
@@ -105,8 +115,14 @@ export function applyView(viewModel, view) {
   }
 }
 
-/** True when this view actually draws the node. An unknown id is never in view. */
+/**
+ * True when this view actually draws the node. An unknown id is never in view,
+ * and neither is anything at all when `applied` is a refusal: this module's
+ * contract is that a refusal is a VALUE, so the one predicate it exports answers
+ * one instead of throwing a TypeError at a caller that did not check `ok` first.
+ */
 export function isInView(applied, nodeId) {
+  if (applied?.ok !== true) return false
   return applied.model.nodes.some((node) => node.node_id === nodeId)
 }
 

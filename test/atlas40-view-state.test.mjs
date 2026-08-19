@@ -20,6 +20,15 @@ import {
   E_VIEW_MODE,
   E_VIEW_ANCHOR
 } from '../viewer/atlas39/core/view-state.mjs'
+// The purity guard is the one the gesture suite built and pinned, imported
+// rather than re-spelled — see the test at the bottom of this file.
+import {
+  stripComments,
+  purityViolations,
+  FORBIDDEN_TOKENS,
+  FORBIDDEN_IDENTIFIERS,
+  MODULE_SPECIFIER
+} from './helpers/purity.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const EVIDENCE = join(repoRoot, 'docs/evidence/atlas-65')
@@ -32,9 +41,15 @@ const DELIVERY = 'ATLAS:confluence:14778372:15171611'
 const SPRINT = 'ATLAS:confluence:14778372:22478849'
 const ARCH = 'ATLAS:confluence:14778372:15073290'
 
-test('the mode list is exactly what this build supports', () => {
+test('the mode list is exactly what this build supports, and cannot be extended from outside', () => {
   assert.deepEqual([...VIEW_MODES], ['overview', 'neighbourhood'])
   assert.deepEqual({ ...DEFAULT_VIEW }, { mode: 'overview', anchorId: null })
+  // Spreading reads the values and says nothing about the freeze. Without these
+  // two assertions a caller could push a third mode into the exported list and
+  // every "an unknown mode is refused" assertion below would still pass, because
+  // the mode would no longer be unknown.
+  assert.equal(Object.isFrozen(VIEW_MODES), true, 'the exported mode list can be extended by a caller')
+  assert.equal(Object.isFrozen(DEFAULT_VIEW), true, 'the exported default view can be rewritten by a caller')
 })
 
 test('overview draws the whole real graph', () => {
@@ -42,7 +57,15 @@ test('overview draws the whole real graph', () => {
   assert.equal(applied.ok, true)
   assert.equal(applied.model.nodes.length, 5)
   assert.equal(applied.model.edges.length, 4)
-  assert.equal(applied.scope.complete, true)
+  // The whole scope, not a field of it: a field nothing reads is a field nothing
+  // pays for, so the shape is pinned here rather than sampled.
+  assert.deepEqual(applied.scope, {
+    mode: 'overview',
+    shownNodes: 5,
+    totalNodes: 5,
+    shownEdges: 4,
+    totalEdges: 4
+  })
   assert.equal(viewCaption(applied.scope), 'Overview — 5 of 5 nodes, 4 of 4 relations.')
 })
 
@@ -58,9 +81,13 @@ test('a neighbourhood is the anchor plus the nodes its explicit edges reach', ()
       'ATLAS:confluence:14778372:parent_of:15171611:22478849'
     ].sort()
   )
-  assert.equal(applied.scope.shownNodes, 3)
-  assert.equal(applied.scope.totalNodes, 5)
-  assert.equal(applied.scope.complete, false)
+  assert.deepEqual(applied.scope, {
+    mode: 'neighbourhood',
+    shownNodes: 3,
+    totalNodes: 5,
+    shownEdges: 2,
+    totalEdges: 4
+  })
 })
 
 test('a neighbourhood draws no edge with an endpoint off view, and a grandchild is not a neighbour', () => {
@@ -138,6 +165,19 @@ test('a view never invents, drops or renames a node fact', () => {
   assert.deepEqual(applied.model.counts, vm.counts)
 })
 
+test('overview hands back the view model itself; a neighbourhood hands back a restricted copy', () => {
+  // The two modes really do differ in identity, and Task 6 assigns this result
+  // to long-lived state, so the asymmetry is stated rather than left to be
+  // rediscovered: in overview `applied.model` IS the canonical graph object, and
+  // a consumer that mutated it would be mutating the graph itself.
+  const overview = applyView(vm, DEFAULT_VIEW)
+  assert.equal(overview.model, vm, 'overview copied the view model instead of projecting identity')
+  const neighbourhood = applyView(vm, { mode: 'neighbourhood', anchorId: DELIVERY })
+  assert.notEqual(neighbourhood.model, vm, 'a restricted view handed back the full graph object')
+  assert.equal(vm.nodes.length, 5, 'projecting a neighbourhood mutated the view model')
+  assert.equal(vm.edges.length, 4, 'projecting a neighbourhood mutated the view model')
+})
+
 test('applying the same view twice produces the same view, node for node and edge for edge', () => {
   for (const view of [DEFAULT_VIEW, { mode: 'neighbourhood', anchorId: DELIVERY }]) {
     const a = applyView(vm, view)
@@ -178,10 +218,13 @@ test('an unknown mode is refused, never coerced into overview', () => {
 })
 
 test('a view descriptor that is not an object is refused as a value, never thrown', () => {
-  // This is the guard Task 4 leans on: a saved view arrives as the output of
-  // JSON.parse, where null, an array, a string and a number are the realistic
-  // inputs. Every refusal in this slice is a VALUE — a TypeError here would be
-  // a crash at the one seam that exists to fail closed.
+  // Defence in depth at a seam Task 4 also guards itself: validateSavedView
+  // refuses a non-object `view` with E_SAVED_VIEW_INVALID before it ever calls
+  // normalizeView, and then passes a freshly built object literal. So this guard
+  // is not the only thing standing between JSON.parse output and a crash — but
+  // every refusal in this slice is a VALUE, and a TypeError here would be a crash
+  // at a seam that exists to fail closed. Without the guard `applyView(vm, null)`
+  // throws instead of refusing.
   for (const descriptor of [null, undefined, [], ['overview'], 'overview', 42, true]) {
     const result = applyView(vm, descriptor)
     assert.equal(result.ok, false, `${JSON.stringify(descriptor)} was accepted`)
@@ -190,14 +233,46 @@ test('a view descriptor that is not an object is refused as a value, never throw
   }
 })
 
+test('normalizeView answers without a graph, and an overview never keeps an anchor', () => {
+  // Reaching normalizeView only through applyView masks its own anchor rule:
+  // applyView re-checks the anchor against the graph and refuses '' with the
+  // same code either way. Task 4 consumes normalizeView standalone, with no
+  // graph in reach, so its no-graph contract is exercised here directly.
+  assert.deepEqual(normalizeView({ mode: 'neighbourhood', anchorId: '' }), {
+    ok: false,
+    code: E_VIEW_ANCHOR,
+    reason: 'a neighbourhood view has no anchor node'
+  })
+  assert.deepEqual(normalizeView({ mode: 'neighbourhood', anchorId: 'not-in-any-graph' }), {
+    ok: true,
+    view: { mode: 'neighbourhood', anchorId: 'not-in-any-graph' }
+  })
+  assert.equal(normalizeView(null).code, E_VIEW_MODE)
+  // An overview carries no anchor, whatever it was handed. Task 4 persists
+  // view.anchorId as anchor_id, so an anchor kept here would be written into a
+  // saved overview and could later refuse that view for a stale node it does not
+  // even use.
+  assert.deepEqual(normalizeView({ mode: 'overview', anchorId: 'stale' }).view, {
+    mode: 'overview',
+    anchorId: null
+  })
+  assert.deepEqual(applyView(vm, { mode: 'overview', anchorId: DELIVERY }).view, {
+    mode: 'overview',
+    anchorId: null
+  })
+})
+
 test('a neighbourhood with no anchor, or an unknown anchor, is refused and retargets nothing', () => {
   assert.equal(applyView(vm, { mode: 'neighbourhood', anchorId: null }).code, E_VIEW_ANCHOR)
   assert.equal(applyView(vm, { mode: 'neighbourhood', anchorId: '' }).code, E_VIEW_ANCHOR)
   const stale = applyView(vm, { mode: 'neighbourhood', anchorId: `${DELIVERY}X` })
   assert.equal(stale.ok, false)
   assert.equal(stale.code, E_VIEW_ANCHOR)
-  // The refusal must not hand back a "closest" node instead.
-  assert.equal(JSON.stringify(stale).includes(DELIVERY) && !JSON.stringify(stale).includes(`${DELIVERY}X`), false)
+  // The refusal must not hand back a "closest" node instead. Pinned as the SHAPE
+  // of the refusal, because the reason quotes the anchor it refused: any test
+  // that searched the serialised refusal for the id it did not retarget to would
+  // find it inside the id it did quote, and could never fail.
+  assert.deepEqual(Object.keys(stale).sort(), ['code', 'ok', 'reason'])
 })
 
 test('isInView answers for the drawn set only, and never for an unknown id', () => {
@@ -206,6 +281,20 @@ test('isInView answers for the drawn set only, and never for an unknown id', () 
   assert.equal(isInView(applied, DELIVERY), true)
   assert.equal(isInView(applied, ARCH), false)
   assert.equal(isInView(applied, 'not-a-node'), false)
+  // In overview every node of the graph is drawn. Without this the predicate is
+  // only ever asked about a neighbourhood, where the drawn set is exactly
+  // "anchor + its adjacency" — so an implementation that answered from the
+  // adjacency instead of from the drawn nodes would be indistinguishable here,
+  // and would then answer false for EVERY node of the whole graph in overview.
+  const overview = applyView(vm, DEFAULT_VIEW)
+  assert.equal(isInView(overview, ARCH), true)
+  assert.equal(isInView(overview, ROOT), true)
+  assert.equal(isInView(overview, 'not-a-node'), false)
+  // A refusal is a value here too: the predicate answers instead of throwing at a
+  // caller that did not check `ok` first.
+  const refused = applyView(vm, { mode: 'neighbourhood', anchorId: `${DELIVERY}X` })
+  assert.equal(isInView(refused, DELIVERY), false)
+  assert.equal(isInView(undefined, DELIVERY), false)
 })
 
 test('the caption counts what is drawn and what exists, and nothing else', () => {
@@ -217,19 +306,50 @@ test('the caption counts what is drawn and what exists, and nothing else', () =>
   )
 })
 
+test('the caption says “1 node” and “1 relation”, never “1 nodes”', () => {
+  // Unreachable with the accepted five-node snapshot, and therefore unproven
+  // text until it is asserted: the scope is built by hand here because this is an
+  // assertion about the sentence, not about ATLAS content.
+  assert.equal(
+    viewCaption({ mode: 'overview', shownNodes: 1, totalNodes: 1, shownEdges: 1, totalEdges: 1 }),
+    'Overview — 1 of 1 node, 1 of 1 relation.'
+  )
+  assert.equal(
+    viewCaption({ mode: 'neighbourhood', shownNodes: 1, totalNodes: 1, shownEdges: 0, totalEdges: 1 }, 'A'),
+    'Direct neighbourhood of “A” — 1 of 1 node, 0 of 1 relation.'
+  )
+})
+
 test('the module carries no clock, randomness or DOM', () => {
+  // The guard is imported, not re-spelled. The first version of this test was a
+  // raw `source.includes(token)` scan over the whole file, comments included —
+  // the exact pattern the gesture suite had already measured and removed one
+  // commit earlier. Measured again on a byte-identical pure module: four
+  // ordinary comments turn it red ("documented in the runbook" hits `document`,
+  // "a window onto the graph" hits `window`, a sentence ending "reading
+  // process." hits `process.`, "never a crypto digest" hits `crypto`), while
+  // `const clock = Date` + `clock.now()`, `navigator.userAgent`,
+  // `queueMicrotask` and `eval` all pass it — and the shared denylists name
+  // every one of those four on a word boundary.
   const source = readFileSync(join(repoRoot, 'viewer/atlas39/core/view-state.mjs'), 'utf8')
-  const forbiddenTokens = [
-    // clock
-    'Date.', 'Date(', 'performance.', 'setTimeout', 'setInterval',
-    // randomness
-    'Math.random', 'crypto',
-    // DOM
-    'document', 'window', 'localStorage',
-    // IO and the ambient routes that reach all three around the tokens above
-    'fetch(', 'node:', 'require(', 'process.', 'globalThis'
-  ]
-  for (const forbidden of forbiddenTokens) {
-    assert.equal(source.includes(forbidden), false, `view-state.mjs references ${forbidden}`)
+  const code = stripComments(source)
+  // The strip is load-bearing, so it is proved not to have eaten the code it was
+  // meant to leave standing — one probe per region of the module.
+  assert.match(code, /export function normalizeView/, 'the comment strip removed normalizeView')
+  assert.match(code, /export function applyView/, 'the comment strip removed applyView')
+  assert.match(code, /viewModel\.edges\.filter/, 'the comment strip removed the edge projection')
+  assert.match(code, /export function isInView/, 'the comment strip removed isInView')
+  assert.match(code, /export function viewCaption/, 'the comment strip removed viewCaption')
+  for (const forbidden of FORBIDDEN_TOKENS) {
+    assert.equal(code.includes(forbidden), false, `view-state.mjs references ${forbidden}`)
   }
+  for (const forbidden of FORBIDDEN_IDENTIFIERS) {
+    assert.doesNotMatch(
+      code,
+      new RegExp(`\\b${forbidden}\\b`),
+      `view-state.mjs references the bare identifier ${forbidden}`
+    )
+  }
+  assert.doesNotMatch(code, MODULE_SPECIFIER, 'view-state.mjs imports from a module specifier')
+  assert.deepEqual(purityViolations(source), [], 'the purity rules disagree with each other')
 })

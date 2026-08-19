@@ -168,6 +168,7 @@ Minimap · performance/benchmark/LOD/instancing/culling · semantic zoom · edge
 - `test/atlas40-saved-view.test.mjs`
 - `test/atlas40-legend.test.mjs`
 - `test/atlas40-gesture.test.mjs`
+- `test/helpers/purity.mjs` — the one purity guard every pure-core suite is scanned with. Added to the inventory 2026-08-19 after the second review of Task 3, which measured Task 3's re-spelled copy of the guard disagreeing with Task 2's in both directions. It is a test helper, not a suite: `npm test` globs `test/**/*.test.mjs`, so it is imported and never run on its own.
 - `docs/plans/2026-08-19-atlas-40-slice-2-deterministic-views.md` — **this file.** Added to the inventory 2026-08-19 after the Task-1 review. It is the scope contract the PR's scope proof is measured against, so it has to exist in the branch it governs; every plan already in `docs/plans/`, 2026-08-06 through 2026-08-13, is tracked — measured before the Task-1 commit, `git ls-files docs/plans | wc -l` = 11, and 12 with this file — so leaving this one untracked would have been a new convention, not the existing one. It is committed with Task 1, the first commit that cites it.
 
 **Modify**
@@ -377,6 +378,15 @@ import {
   GestureError,
   E_GESTURE_THRESHOLD
 } from '../viewer/atlas39/core/gesture.mjs'
+// One purity guard for every pure core module, so a second suite cannot ship a
+// weaker copy of it. See the header above the STRING_MARKER_MUTANT below.
+import {
+  stripComments,
+  purityViolations,
+  FORBIDDEN_TOKENS,
+  FORBIDDEN_IDENTIFIERS,
+  MODULE_SPECIFIER
+} from './helpers/purity.mjs'
 
 const down = (over = {}) => ({ type: 'pointerdown', pointerId: 1, button: 0, clientX: 100, clientY: 100, ...over })
 // `buttons` is part of the record the module reads: 0 means the press is over.
@@ -803,104 +813,20 @@ test('end() reports the pointer id so the shell releases the capture it took', (
 // ---------------------------------------------------------------------------
 // The purity guard, and the guard on the guard.
 //
-// Scan the CODE, not the English. This module's comments are long and
-// load-bearing, and 'window', 'document', 'navigator' and 'performance' are
-// ordinary words inside them — a raw substring scan fires on vocabulary rather
-// than on capability use, and it already did once: the comment "a window losing
-// the pointer" tripped this guard while the code was pure.
+// The scanner itself now lives in test/helpers/purity.mjs and is imported at
+// the top of this file, because the view-state suite re-spelled it as a raw
+// substring list of its own and the two disagreed in both directions — false
+// reds on ordinary prose, blind spots on a real clock. Its rationale, its
+// measured history and its denylists are documented there; the tests that pin
+// its capability stay here, where they were written.
 //
-// Removing the comments with two regexes over raw text was itself defeatable,
-// and measured to be: `source.replace(/\/\*[\s\S]*?\*\//g, '')` cannot tell a
-// block-comment delimiter from an ordinary string literal, so appending
-// `const OPEN_MARK = '/*'` … `const CLOSE_MARK = '*/'` around a probe that
-// really referenced document, window and navigator deleted the probe BEFORE the
-// denylists ever saw it, and the suite stayed green. The comment stripper is
-// therefore a small scanner that knows where strings begin and end, and it is
-// itself pinned by the test below over the exact mutation that defeated its
-// predecessor.
+// The rule it exists for: scan the CODE, not the English. This module's
+// comments are long and load-bearing, and 'window', 'document', 'navigator' and
+// 'performance' are ordinary words inside them — a raw substring scan fires on
+// vocabulary rather than on capability use, and it already did once: the
+// comment "a window losing the pointer" tripped this guard while the code was
+// pure.
 // ---------------------------------------------------------------------------
-
-/**
- * Removes `//` and block comments the way a JavaScript reader does: string and
- * template literals are code, so comment delimiters inside them are text, and
- * text that merely looks like a comment delimiter cannot switch the scan off.
- */
-function stripComments(source) {
-  let out = ''
-  let quote = null
-  let i = 0
-  while (i < source.length) {
-    const ch = source[i]
-    const next = source[i + 1]
-    if (quote !== null) {
-      out += ch
-      if (ch === '\\') {
-        out += next ?? ''
-        i += 2
-        continue
-      }
-      if (ch === quote) quote = null
-      i += 1
-      continue
-    }
-    if (ch === "'" || ch === '"' || ch === '`') {
-      quote = ch
-      out += ch
-      i += 1
-      continue
-    }
-    if (ch === '/' && next === '/') {
-      while (i < source.length && source[i] !== '\n') i += 1
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      i += 2
-      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1
-      i += 2
-      continue
-    }
-    out += ch
-    i += 1
-  }
-  return out
-}
-
-/** Property-access spellings, which prose does not produce. */
-const FORBIDDEN_TOKENS = [
-  'Date.', 'new Date', 'Math.random', 'performance.',
-  'document.', 'window.', 'globalThis', 'navigator.', 'localStorage',
-  'requestAnimationFrame', 'crypto.'
-]
-
-/**
- * Bare identifiers, matched on word boundaries over already comment-free code.
- * Property-access spellings alone cannot see `typeof document`, `fetch(...)`,
- * `setTimeout(...)`, a static `import` or `crypto.getRandomValues` — the last
- * two being the most direct ways to make this module impure, and both invisible
- * to the first two versions of this guard.
- */
-const FORBIDDEN_IDENTIFIERS = [
-  'window', 'document', 'navigator', 'performance', 'globalThis',
-  'localStorage', 'sessionStorage', 'indexedDB', 'process', 'fetch',
-  'setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask',
-  'requestAnimationFrame', 'Date', 'XMLHttpRequest', 'WebSocket', 'require',
-  'import', 'crypto', 'eval', 'Worker'
-]
-
-/** `import … from '…'` and `export … from '…'` both spell this. */
-const MODULE_SPECIFIER = /\bfrom\s*['"]/
-
-/** Every rule above, applied to one source text. Returns what it found. */
-function purityViolations(source) {
-  const code = stripComments(source)
-  const found = []
-  for (const token of FORBIDDEN_TOKENS) if (code.includes(token)) found.push(token)
-  for (const identifier of FORBIDDEN_IDENTIFIERS) {
-    if (new RegExp(`\\b${identifier}\\b`).test(code)) found.push(identifier)
-  }
-  if (MODULE_SPECIFIER.test(code)) found.push("from '<specifier>'")
-  return found
-}
 
 /** The exact mutation that defeated the regex strip this scanner replaced. */
 const STRING_MARKER_MUTANT = [
@@ -1262,6 +1188,10 @@ node --test test/atlas40-gesture.test.mjs
 ```
 Expected: PASS, 22/22.
 
+**Corrected 2026-08-19 (second review of Task 3).** The test block above no longer defines `stripComments`, `FORBIDDEN_TOKENS`, `FORBIDDEN_IDENTIFIERS`, `MODULE_SPECIFIER` and `purityViolations`; it imports them from `test/helpers/purity.mjs`. Nothing about the guard's behaviour changed — the five definitions moved byte-for-byte, and the two tests that pin the guard's capability stay in this file, where they were written. The move is the repair for a measured defect in Task 3, not a tidy-up: Task 3 re-spelled the guard as a raw `source.includes(token)` list over the whole file, which is the exact pattern this task had already measured and removed one commit earlier, and the two copies disagreed in **both** directions (the evidence is in the second review of Task 3 below). A third suite — Task 5's legend — would have copied whichever of the two it found first.
+
+The relocation is proved not to have disarmed this task's own guard: with the string-literal probe appended to `viewer/atlas39/core/gesture.mjs` (`const OPEN_MARK = '/*'` … `const CLOSE_MARK = '*/'` around a probe using `document.title`, `window.name` and `navigator.userAgent`), `node --test test/atlas40-gesture.test.mjs` exits **1**, `pass 21 / fail 1`, red on `the gesture carries no clock, randomness or DOM`; restored, it exits **0** at `pass 22 / fail 0` and `shasum -a 256 viewer/atlas39/core/gesture.mjs` is `f7f96be96d85dd39b727f13410b9b797e6ecc9364deb46904fc5e5aed4dea6be` — the same pristine hash this task's Step-4a table records. The Step-4a rows therefore still hold as measured.
+
 **Corrected 2026-08-19 (fourth review of Task 2).** Expected 16/16 until this round. Six tests were added, one was renamed, and `start()`, `move()` and `consumeClick()` each gained a guard. Each change answers a defect measured against the module at `5048f06`, and every counterexample is in the Step-4a table below.
 
 - **A press whose end this module never saw stayed alive forever, and the next bare hover panned the stage with no button held. Critical, and it needed no lost-pointer exoticism.** `move()` never read `event.buttons`. Measured on an ordinary mouse: (1) `pointerdown` at (100,100) inside `#stage-host`; (2) a 1 px twitch, below the threshold, so `began` never fires and Task 6 therefore never takes a pointer capture (`step.began` is what takes it); (3) the user drags out of `#stage-host` and releases over a **sibling** — `index.html:58-60` makes `.a39-stage-controls` and the sidebar siblings, which D9's own correction above proves — so the shell's `pointerup` listener never runs and `end()` is never called; (4) the user hovers back with NO button held and the first `pointermove` measures `dx=160, dy=80` from the stale origin, returns `{panning: true, began: true}`, and the wired shell takes a capture, sets `body[data-panning]` (`shell.css:332` → `cursor: grabbing`) and pans the graph under a bare cursor; (5) `suppressClick` is now armed, so the user's next click on a node is silently swallowed — the exact defect this module's header says it exists to prevent. The repair is two lines: a step whose `buttons` cannot be read is refused, and `buttons === 0` discards the press and disarms the suppression, because the click that press would have produced, if any, was dispatched before the hover arrived. `buttons` is therefore part of the record this module consumes, and the `move` fixture in the test carries it.
@@ -1398,6 +1328,15 @@ import {
   E_VIEW_MODE,
   E_VIEW_ANCHOR
 } from '../viewer/atlas39/core/view-state.mjs'
+// The purity guard is the one the gesture suite built and pinned, imported
+// rather than re-spelled — see the test at the bottom of this file.
+import {
+  stripComments,
+  purityViolations,
+  FORBIDDEN_TOKENS,
+  FORBIDDEN_IDENTIFIERS,
+  MODULE_SPECIFIER
+} from './helpers/purity.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const EVIDENCE = join(repoRoot, 'docs/evidence/atlas-65')
@@ -1410,9 +1349,15 @@ const DELIVERY = 'ATLAS:confluence:14778372:15171611'
 const SPRINT = 'ATLAS:confluence:14778372:22478849'
 const ARCH = 'ATLAS:confluence:14778372:15073290'
 
-test('the mode list is exactly what this build supports', () => {
+test('the mode list is exactly what this build supports, and cannot be extended from outside', () => {
   assert.deepEqual([...VIEW_MODES], ['overview', 'neighbourhood'])
   assert.deepEqual({ ...DEFAULT_VIEW }, { mode: 'overview', anchorId: null })
+  // Spreading reads the values and says nothing about the freeze. Without these
+  // two assertions a caller could push a third mode into the exported list and
+  // every "an unknown mode is refused" assertion below would still pass, because
+  // the mode would no longer be unknown.
+  assert.equal(Object.isFrozen(VIEW_MODES), true, 'the exported mode list can be extended by a caller')
+  assert.equal(Object.isFrozen(DEFAULT_VIEW), true, 'the exported default view can be rewritten by a caller')
 })
 
 test('overview draws the whole real graph', () => {
@@ -1420,7 +1365,15 @@ test('overview draws the whole real graph', () => {
   assert.equal(applied.ok, true)
   assert.equal(applied.model.nodes.length, 5)
   assert.equal(applied.model.edges.length, 4)
-  assert.equal(applied.scope.complete, true)
+  // The whole scope, not a field of it: a field nothing reads is a field nothing
+  // pays for, so the shape is pinned here rather than sampled.
+  assert.deepEqual(applied.scope, {
+    mode: 'overview',
+    shownNodes: 5,
+    totalNodes: 5,
+    shownEdges: 4,
+    totalEdges: 4
+  })
   assert.equal(viewCaption(applied.scope), 'Overview — 5 of 5 nodes, 4 of 4 relations.')
 })
 
@@ -1436,9 +1389,13 @@ test('a neighbourhood is the anchor plus the nodes its explicit edges reach', ()
       'ATLAS:confluence:14778372:parent_of:15171611:22478849'
     ].sort()
   )
-  assert.equal(applied.scope.shownNodes, 3)
-  assert.equal(applied.scope.totalNodes, 5)
-  assert.equal(applied.scope.complete, false)
+  assert.deepEqual(applied.scope, {
+    mode: 'neighbourhood',
+    shownNodes: 3,
+    totalNodes: 5,
+    shownEdges: 2,
+    totalEdges: 4
+  })
 })
 
 test('a neighbourhood draws no edge with an endpoint off view, and a grandchild is not a neighbour', () => {
@@ -1516,6 +1473,19 @@ test('a view never invents, drops or renames a node fact', () => {
   assert.deepEqual(applied.model.counts, vm.counts)
 })
 
+test('overview hands back the view model itself; a neighbourhood hands back a restricted copy', () => {
+  // The two modes really do differ in identity, and Task 6 assigns this result
+  // to long-lived state, so the asymmetry is stated rather than left to be
+  // rediscovered: in overview `applied.model` IS the canonical graph object, and
+  // a consumer that mutated it would be mutating the graph itself.
+  const overview = applyView(vm, DEFAULT_VIEW)
+  assert.equal(overview.model, vm, 'overview copied the view model instead of projecting identity')
+  const neighbourhood = applyView(vm, { mode: 'neighbourhood', anchorId: DELIVERY })
+  assert.notEqual(neighbourhood.model, vm, 'a restricted view handed back the full graph object')
+  assert.equal(vm.nodes.length, 5, 'projecting a neighbourhood mutated the view model')
+  assert.equal(vm.edges.length, 4, 'projecting a neighbourhood mutated the view model')
+})
+
 test('applying the same view twice produces the same view, node for node and edge for edge', () => {
   for (const view of [DEFAULT_VIEW, { mode: 'neighbourhood', anchorId: DELIVERY }]) {
     const a = applyView(vm, view)
@@ -1556,10 +1526,13 @@ test('an unknown mode is refused, never coerced into overview', () => {
 })
 
 test('a view descriptor that is not an object is refused as a value, never thrown', () => {
-  // This is the guard Task 4 leans on: a saved view arrives as the output of
-  // JSON.parse, where null, an array, a string and a number are the realistic
-  // inputs. Every refusal in this slice is a VALUE — a TypeError here would be
-  // a crash at the one seam that exists to fail closed.
+  // Defence in depth at a seam Task 4 also guards itself: validateSavedView
+  // refuses a non-object `view` with E_SAVED_VIEW_INVALID before it ever calls
+  // normalizeView, and then passes a freshly built object literal. So this guard
+  // is not the only thing standing between JSON.parse output and a crash — but
+  // every refusal in this slice is a VALUE, and a TypeError here would be a crash
+  // at a seam that exists to fail closed. Without the guard `applyView(vm, null)`
+  // throws instead of refusing.
   for (const descriptor of [null, undefined, [], ['overview'], 'overview', 42, true]) {
     const result = applyView(vm, descriptor)
     assert.equal(result.ok, false, `${JSON.stringify(descriptor)} was accepted`)
@@ -1568,14 +1541,46 @@ test('a view descriptor that is not an object is refused as a value, never throw
   }
 })
 
+test('normalizeView answers without a graph, and an overview never keeps an anchor', () => {
+  // Reaching normalizeView only through applyView masks its own anchor rule:
+  // applyView re-checks the anchor against the graph and refuses '' with the
+  // same code either way. Task 4 consumes normalizeView standalone, with no
+  // graph in reach, so its no-graph contract is exercised here directly.
+  assert.deepEqual(normalizeView({ mode: 'neighbourhood', anchorId: '' }), {
+    ok: false,
+    code: E_VIEW_ANCHOR,
+    reason: 'a neighbourhood view has no anchor node'
+  })
+  assert.deepEqual(normalizeView({ mode: 'neighbourhood', anchorId: 'not-in-any-graph' }), {
+    ok: true,
+    view: { mode: 'neighbourhood', anchorId: 'not-in-any-graph' }
+  })
+  assert.equal(normalizeView(null).code, E_VIEW_MODE)
+  // An overview carries no anchor, whatever it was handed. Task 4 persists
+  // view.anchorId as anchor_id, so an anchor kept here would be written into a
+  // saved overview and could later refuse that view for a stale node it does not
+  // even use.
+  assert.deepEqual(normalizeView({ mode: 'overview', anchorId: 'stale' }).view, {
+    mode: 'overview',
+    anchorId: null
+  })
+  assert.deepEqual(applyView(vm, { mode: 'overview', anchorId: DELIVERY }).view, {
+    mode: 'overview',
+    anchorId: null
+  })
+})
+
 test('a neighbourhood with no anchor, or an unknown anchor, is refused and retargets nothing', () => {
   assert.equal(applyView(vm, { mode: 'neighbourhood', anchorId: null }).code, E_VIEW_ANCHOR)
   assert.equal(applyView(vm, { mode: 'neighbourhood', anchorId: '' }).code, E_VIEW_ANCHOR)
   const stale = applyView(vm, { mode: 'neighbourhood', anchorId: `${DELIVERY}X` })
   assert.equal(stale.ok, false)
   assert.equal(stale.code, E_VIEW_ANCHOR)
-  // The refusal must not hand back a "closest" node instead.
-  assert.equal(JSON.stringify(stale).includes(DELIVERY) && !JSON.stringify(stale).includes(`${DELIVERY}X`), false)
+  // The refusal must not hand back a "closest" node instead. Pinned as the SHAPE
+  // of the refusal, because the reason quotes the anchor it refused: any test
+  // that searched the serialised refusal for the id it did not retarget to would
+  // find it inside the id it did quote, and could never fail.
+  assert.deepEqual(Object.keys(stale).sort(), ['code', 'ok', 'reason'])
 })
 
 test('isInView answers for the drawn set only, and never for an unknown id', () => {
@@ -1584,6 +1589,20 @@ test('isInView answers for the drawn set only, and never for an unknown id', () 
   assert.equal(isInView(applied, DELIVERY), true)
   assert.equal(isInView(applied, ARCH), false)
   assert.equal(isInView(applied, 'not-a-node'), false)
+  // In overview every node of the graph is drawn. Without this the predicate is
+  // only ever asked about a neighbourhood, where the drawn set is exactly
+  // "anchor + its adjacency" — so an implementation that answered from the
+  // adjacency instead of from the drawn nodes would be indistinguishable here,
+  // and would then answer false for EVERY node of the whole graph in overview.
+  const overview = applyView(vm, DEFAULT_VIEW)
+  assert.equal(isInView(overview, ARCH), true)
+  assert.equal(isInView(overview, ROOT), true)
+  assert.equal(isInView(overview, 'not-a-node'), false)
+  // A refusal is a value here too: the predicate answers instead of throwing at a
+  // caller that did not check `ok` first.
+  const refused = applyView(vm, { mode: 'neighbourhood', anchorId: `${DELIVERY}X` })
+  assert.equal(isInView(refused, DELIVERY), false)
+  assert.equal(isInView(undefined, DELIVERY), false)
 })
 
 test('the caption counts what is drawn and what exists, and nothing else', () => {
@@ -1595,31 +1614,92 @@ test('the caption counts what is drawn and what exists, and nothing else', () =>
   )
 })
 
+test('the caption says “1 node” and “1 relation”, never “1 nodes”', () => {
+  // Unreachable with the accepted five-node snapshot, and therefore unproven
+  // text until it is asserted: the scope is built by hand here because this is an
+  // assertion about the sentence, not about ATLAS content.
+  assert.equal(
+    viewCaption({ mode: 'overview', shownNodes: 1, totalNodes: 1, shownEdges: 1, totalEdges: 1 }),
+    'Overview — 1 of 1 node, 1 of 1 relation.'
+  )
+  assert.equal(
+    viewCaption({ mode: 'neighbourhood', shownNodes: 1, totalNodes: 1, shownEdges: 0, totalEdges: 1 }, 'A'),
+    'Direct neighbourhood of “A” — 1 of 1 node, 0 of 1 relation.'
+  )
+})
+
 test('the module carries no clock, randomness or DOM', () => {
+  // The guard is imported, not re-spelled. The first version of this test was a
+  // raw `source.includes(token)` scan over the whole file, comments included —
+  // the exact pattern the gesture suite had already measured and removed one
+  // commit earlier. Measured again on a byte-identical pure module: four
+  // ordinary comments turn it red ("documented in the runbook" hits `document`,
+  // "a window onto the graph" hits `window`, a sentence ending "reading
+  // process." hits `process.`, "never a crypto digest" hits `crypto`), while
+  // `const clock = Date` + `clock.now()`, `navigator.userAgent`,
+  // `queueMicrotask` and `eval` all pass it — and the shared denylists name
+  // every one of those four on a word boundary.
   const source = readFileSync(join(repoRoot, 'viewer/atlas39/core/view-state.mjs'), 'utf8')
-  const forbiddenTokens = [
-    // clock
-    'Date.', 'Date(', 'performance.', 'setTimeout', 'setInterval',
-    // randomness
-    'Math.random', 'crypto',
-    // DOM
-    'document', 'window', 'localStorage',
-    // IO and the ambient routes that reach all three around the tokens above
-    'fetch(', 'node:', 'require(', 'process.', 'globalThis'
-  ]
-  for (const forbidden of forbiddenTokens) {
-    assert.equal(source.includes(forbidden), false, `view-state.mjs references ${forbidden}`)
+  const code = stripComments(source)
+  // The strip is load-bearing, so it is proved not to have eaten the code it was
+  // meant to leave standing — one probe per region of the module.
+  assert.match(code, /export function normalizeView/, 'the comment strip removed normalizeView')
+  assert.match(code, /export function applyView/, 'the comment strip removed applyView')
+  assert.match(code, /viewModel\.edges\.filter/, 'the comment strip removed the edge projection')
+  assert.match(code, /export function isInView/, 'the comment strip removed isInView')
+  assert.match(code, /export function viewCaption/, 'the comment strip removed viewCaption')
+  for (const forbidden of FORBIDDEN_TOKENS) {
+    assert.equal(code.includes(forbidden), false, `view-state.mjs references ${forbidden}`)
   }
+  for (const forbidden of FORBIDDEN_IDENTIFIERS) {
+    assert.doesNotMatch(
+      code,
+      new RegExp(`\\b${forbidden}\\b`),
+      `view-state.mjs references the bare identifier ${forbidden}`
+    )
+  }
+  assert.doesNotMatch(code, MODULE_SPECIFIER, 'view-state.mjs imports from a module specifier')
+  assert.deepEqual(purityViolations(source), [], 'the purity rules disagree with each other')
 })
 ```
 
-**Corrected 2026-08-19 (review of Task 3).** The assertions above were mutation-tested against the module they guard, one regression at a time. Three of them did not fail when it regressed, so three claims in this task were not being paid for. All three are repaired in the block above — the block is the file — and **the module's own code is unchanged from the draft below**, verified by checksum after every mutation.
+**Corrected 2026-08-19 (second review of Task 3).** Expected 15/15 until this round; the block above is now **18** tests, and **the module below changed too** — three repairs to it, each answering a measured finding. Both blocks are the files verbatim.
+
+1. **The assertion that paid for a test's name could not fail.** `'…and retargets nothing'` ended in an `assert.equal(…, false)` over `JSON.stringify(stale).includes(DELIVERY) && !JSON.stringify(stale).includes(DELIVERY + 'X')`. The refusal reason quotes the anchor it refused, `…15171611X`, which contains **both** substrings, so the second conjunct is structurally false and the whole expression is `false` for every implementation that quotes the anchor — measured `false` on the pristine module and `false` again on a refusal mutated to carry `nearestAnchorId: <DELIVERY>`, i.e. a refusal that literally hands back "the closest node we do have", the one thing the comment above it forbids. The refusal's **shape** is pinned instead: `assert.deepEqual(Object.keys(stale).sort(), ['code', 'ok', 'reason'])`, which the same mutant fails.
+2. **`isInView` was never asked about an overview.** For a neighbourhood the drawn set is provably identical to "anchor + adjacency(anchor)", so an implementation that answered from the adjacency was indistinguishable — and in overview the anchor is `null`, so that implementation returns `false` for **every node of the whole graph**. Measured: the mutant passed all 15 assertions. One line closes it, and the predicate is now also read in overview and on a refusal.
+3. **The purity guard re-introduced the pattern the previous commit had measured and removed.** See the superseded bullet 3 below. The guard is now imported from `test/helpers/purity.mjs`, shared with Task 2, and the two directions are measured in the table below: four ordinary prose comments on a byte-identical pure module leave the suite green where the re-spelled list turned it red, and a clock reached through a bare `Date` alias turns it red where the re-spelled list stayed green.
+4. **A false justification, in the test file and in this plan.** The Task-4 claim in bullet 4 below is contradicted by this plan's own Task-4 block; corrected there and in the test file.
+5. **`scope` carried two fields nothing reads.** `scope.anchorId` has no reader anywhere in the ten tasks — Task 6's `paintViewControls` reads `scope.mode` and its `anchorLabel()` reads `state.view.anchorId` — and `scope.complete` appeared only in this task's own test. Both survived being mutated to a wrong value with the whole suite green. They are dropped rather than pinned: the anchor of an applied view is `applied.view.anchorId`. The two tests that sampled a scope field now pin the whole scope object, so a field with no reader cannot creep back in unnoticed.
+6. **`isInView` threw on a refusal**, in a module whose contract is that refusals are values: `isInView(applyView(vm, {mode:'neighbourhood', anchorId:'…X'}), id)` raised `TypeError: Cannot read properties of undefined (reading 'nodes')`. Task 6's single call site is guarded, so this was latent rather than live; it is now `if (applied?.ok !== true) return false`, stated in the doc comment and pinned.
+7. **Three unpinned properties of the module** are now asserted, each because a mutation of it survived: `Object.freeze` on `VIEW_MODES` and `DEFAULT_VIEW` (the test spread them, which reads the values and says nothing about the freeze); overview **clearing** a supplied anchor (Task 4 persists `view.anchorId` as `anchor_id`, so keeping a stale one would write it into a saved overview); and `normalizeView`'s own no-graph contract, which every assertion had been reaching through `applyView`, where the graph check masks it — while Task 4 consumes `normalizeView` standalone. The unreachable singular caption branches (`1 node`, `1 relation`) are covered with hand-built scope objects, and the `model` identity asymmetry between the two modes — overview returns the view model itself, a neighbourhood a shallow copy — is now stated in the module and pinned by test rather than left to be rediscovered.
+
+Every mutation below was measured against the green 18-test suite, restoring `viewer/atlas39/core/view-state.mjs` to `ea6a063bd17f21b98d5fce41cd0d60ef01bf4fbc67b27f70c62b6dd6bad347d0` (verified by `shasum -a 256` after each row, never by an empty `diff`):
+
+| Mutation | Must go red | Measured |
+| --- | --- | --- |
+| `refusal()` also returns `nearestAnchorId: <DELIVERY>` | `a neighbourhood with no anchor, or an unknown anchor, is refused and retargets nothing` | exit 1, 16/18 |
+| `isInView` answers from `applied.view.anchorId` + `adjacency` instead of the drawn nodes | `isInView answers for the drawn set only, and never for an unknown id` | exit 1, 17/18 |
+| delete `isInView`'s `if (applied?.ok !== true) return false` | the same test | exit 1, 17/18 |
+| overview keeps a supplied anchor (`anchorId: view.anchorId ?? null`) | `normalizeView answers without a graph, and an overview never keeps an anchor` | exit 1, 17/18 |
+| delete `normalizeView`'s `view.anchorId.length === 0` check | the same test | exit 1, 17/18 |
+| drop `Object.freeze` from `VIEW_MODES` | `the mode list is exactly what this build supports, and cannot be extended from outside` | exit 1, 17/18 |
+| drop `Object.freeze` from `DEFAULT_VIEW` | the same test | exit 1, 17/18 |
+| an unread `complete` field creeps back into `scope` | `overview draws the whole real graph` and `a neighbourhood is the anchor plus the nodes its explicit edges reach` | exit 1, 16/18 |
+| overview returns `{ ...viewModel }` instead of the view model itself | `overview hands back the view model itself; a neighbourhood hands back a restricted copy` | exit 1, 17/18 |
+| `totalNodes === 1 ? 'node'` → `'nodes'` | `the caption says “1 node” and “1 relation”, never “1 nodes”` | exit 1, 17/18 |
+| `totalEdges === 1 ? 'relation'` → `'relations'` | the same test | exit 1, 17/18 |
+| add four ordinary prose comments to the module ("The trade-off is documented in the runbook.", "A view is a window onto the graph.", a sentence ending "reading process.", "never a crypto digest") | nothing — prose is not capability use | exit 0, 18/18 (**the superseded raw-substring list hits `document`, `window`, `process.` and `crypto` on those four lines**) |
+| `const clock = Date` + `clock.now()` in the module | `the module carries no clock, randomness or DOM` | exit 1, 15/18 (**invisible to the superseded list: `'Date.'` and `'Date('` match neither spelling**) |
+| `queueMicrotask(() => {})` in the module | the same test | exit 1, 17/18 (**invisible to the superseded list**) |
+| `import { readFileSync } from 'node:fs'` in the module | the same test | exit 1, 17/18 |
+
+**Corrected 2026-08-19 (review of Task 3).** The assertions above were mutation-tested against the module they guard, one regression at a time. Three of them did not fail when it regressed, so three claims in this task were not being paid for. All three are repaired in the block above — the block is the file — and **the module's own code is unchanged from the draft below**, verified by checksum after every mutation. (**That last clause is true of this round only**; the second review above changed the module in three places and says which.)
 
 1. **D2's neighbour-to-neighbour rule had no witness, and the test named for it did not test it.** The accepted snapshot is a tree: measured over all five nodes, the number of anchors whose two neighbours are joined by a real edge is `0`. Replacing the projection's edge rule with `edge.from === resolved.anchorId || edge.to === resolved.anchorId` — which drops exactly the edges D2 says are drawn — left all 13 tests **green**. The test that claimed the property is renamed to what it actually proves (no endpoint off view, a grandchild is not a neighbour), and a four-node witness graph built through `buildViewModel` now pins the rule. That witness is not evidence about ATLAS content and is never rendered; it exists because the real snapshot cannot express this case at all.
 2. **The order test's anchor could not see an identifier sort.** For anchor `DELIVERY` the view-model order and the identifier order coincide, so re-sorting the projected nodes by `node_id` left all 13 tests **green** — under a test named "not insertion or identifier accident". Measured per anchor, only the root and `…14680066` distinguish the two orders. The test now asserts over the root as well, *and* asserts that the root still distinguishes them, so a later change to the graph or to the node ordering cannot quietly disarm it again.
-3. **The purity guard was narrower than its own name.** `'Date.'` does not match `new Date()`, and no token in the list matched a `node:` import, so both a clock and an IO import passed a guard named "no clock, randomness or DOM". The denylist now names the clock, randomness, DOM and IO routes explicitly. It stays a raw substring scan over the whole source, comments included — strictly weaker than the comment-stripping scanner Task 2 built for `gesture.mjs`, and it fails closed on a comment that happens to contain a token. Unifying the two guards behind one shared helper is **deferred, not silently carried**.
+3. **The purity guard was narrower than its own name.** `'Date.'` does not match `new Date()`, and no token in the list matched a `node:` import, so both a clock and an IO import passed a guard named "no clock, randomness or DOM". The denylist now names the clock, randomness, DOM and IO routes explicitly. It stays a raw substring scan over the whole source, comments included — strictly weaker than the comment-stripping scanner Task 2 built for `gesture.mjs`, and it fails closed on a comment that happens to contain a token. Unifying the two guards behind one shared helper is **deferred, not silently carried**. — **Superseded by the second review of Task 3 below.** "Deferred" was the wrong call and the sentence "it fails closed on a comment that happens to contain a token" understated the cost in one direction while hiding a hole in the other: the re-spelled list turns four ordinary prose comments red on a byte-identical pure module, and is blind to `const clock = Date` + `clock.now()`, to `navigator.userAgent`, to `queueMicrotask` and to `eval`, all four of which Task 2's list names on a word boundary. Both directions are measured below; the guard is now one shared helper.
 
-4. **`normalizeView`'s non-object guard was never exercised.** Deleting it left every test green, and it is the guard Task 4 leans on: a saved view is `JSON.parse` output, so `null`, an array, a string and a number are its realistic inputs, and without the guard `applyView(vm, null)` **throws a TypeError** instead of returning a refusal — a crash at the one seam D4/D5 require to fail closed with a value. A test now pins that every non-object descriptor is refused as a value.
+4. **`normalizeView`'s non-object guard was never exercised.** Deleting it left every test green, and without the guard `applyView(vm, null)` **throws a TypeError** instead of returning a refusal — a crash at a seam D4/D5 require to fail closed with a value. A test now pins that every non-object descriptor is refused as a value. **Corrected 2026-08-19 (second review of Task 3).** This bullet, and the comment it put into the test file, justified the guard as "the guard Task 4 leans on: a saved view is `JSON.parse` output, so `null`, an array, a string and a number are its realistic inputs". That justification is contradicted by this plan's own Task-4 block: `validateSavedView` refuses a non-object `view` with `E_SAVED_VIEW_INVALID` **before** it calls `normalizeView`, and then passes a freshly built object literal, never `JSON.parse` output. Every `normalizeView`/`applyView` call site in this plan was checked; none passes an unvalidated parsed value. The guard and its test are right and stay; only the reason was wrong, and it was load-bearing in the wrong direction — a Task-4 implementer who believed it could drop the `isObject(raw.view)` guard as redundant, at which point a non-object `view` returns `E_VIEW_MODE` (measured: `normalizeView(null)` → `{ok:false, code:'E_VIEW_MODE', reason:'view is not an object'}`), which Task 4's mapping converts to `E_SAVED_VIEW_MODE`, while D4's refusal table assigns "not an object" to `E_SAVED_VIEW_INVALID`. The user would be shown and read out the wrong refusal code. The claim now reads, here and in the test file, as defence in depth at a seam Task 4 also guards itself.
 
 After the repair all 15 mutations fail the suite. One further mutation is recorded as **not** a defect: dropping the `Array.isArray` branch survives, and is an **equivalent mutant** — an array carries no `mode`, so it is refused by the very next check with the identical public outcome (`ok: false`, `E_VIEW_MODE`); only the internal reason string differs. Measured on all three of `[]`, `['overview']` and `[1, 2]`. No assertion was contorted to kill it.
 
@@ -1688,19 +1768,29 @@ export function normalizeView(view) {
   return { ok: true, view: { mode: 'neighbourhood', anchorId: view.anchorId } }
 }
 
+// Exactly what a consumer reads, and nothing else. The first draft also carried
+// `anchorId` (a copy of `applied.view.anchorId`) and `complete` (a derived
+// boolean); neither had a single reader in the slice, and an unread field is a
+// field no test can pay for — both survived being mutated to a wrong value with
+// the whole suite green. The anchor of an applied view is `applied.view.anchorId`.
 function scopeOf(view, viewModel, nodes, edges) {
   return {
     mode: view.mode,
-    anchorId: view.anchorId,
     shownNodes: nodes.length,
     totalNodes: viewModel.nodes.length,
     shownEdges: edges.length,
-    totalEdges: viewModel.edges.length,
-    complete: nodes.length === viewModel.nodes.length && edges.length === viewModel.edges.length
+    totalEdges: viewModel.edges.length
   }
 }
 
 /**
+ * Overview returns the view model ITSELF as `model` — the identity projection
+ * copies nothing — while a neighbourhood returns a shallow copy carrying the
+ * restricted `nodes` and `edges`. So `applied.model === viewModel` holds in one
+ * mode and not in the other, and a caller that holds the result for the life of
+ * a view must treat `model` as read-only: in overview, mutating it would be
+ * mutating the canonical graph. Nothing in this slice mutates it.
+ *
  * @param {object} viewModel from buildViewModel()
  * @param {{mode:string, anchorId:(string|null)}} view
  * @returns {{ok:true, view:object, model:object, scope:object}
@@ -1743,8 +1833,14 @@ export function applyView(viewModel, view) {
   }
 }
 
-/** True when this view actually draws the node. An unknown id is never in view. */
+/**
+ * True when this view actually draws the node. An unknown id is never in view,
+ * and neither is anything at all when `applied` is a refusal: this module's
+ * contract is that a refusal is a VALUE, so the one predicate it exports answers
+ * one instead of throwing a TypeError at a caller that did not check `ok` first.
+ */
 export function isInView(applied, nodeId) {
+  if (applied?.ok !== true) return false
   return applied.model.nodes.some((node) => node.node_id === nodeId)
 }
 
@@ -1766,14 +1862,18 @@ export function viewCaption(scope, anchorLabel = null) {
 ```
 node --test test/atlas40-view-state.test.mjs
 ```
-Expected: PASS, 15/15.
+Expected: PASS, 18/18.
 
 **Step 5: Commit**
 
 ```bash
-git add viewer/atlas39/core/view-state.mjs test/atlas40-view-state.test.mjs
+git add viewer/atlas39/core/view-state.mjs test/atlas40-view-state.test.mjs \
+        test/helpers/purity.mjs test/atlas40-gesture.test.mjs \
+        docs/plans/2026-08-19-atlas-40-slice-2-deterministic-views.md
 git commit -m "ATLAS-40: deterministic view state as a pure projection over the loaded snapshot"
 ```
+
+**Corrected 2026-08-19 (second review of Task 3).** The `git add` gains the shared purity helper, the gesture suite that now imports it, and this plan document — the review that lifted the guard changed both Task-2 and Task-3 code blocks, which are those files verbatim, so the scope contract and the code it governs move together instead of drifting apart between two commits.
 
 ---
 
