@@ -338,7 +338,12 @@ Create `test/atlas40-gesture.test.mjs`:
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { createDragGesture, DRAG_THRESHOLD } from '../viewer/atlas39/core/gesture.mjs'
+import {
+  createDragGesture,
+  DRAG_THRESHOLD,
+  GestureError,
+  E_GESTURE_THRESHOLD
+} from '../viewer/atlas39/core/gesture.mjs'
 
 const down = (over = {}) => ({ type: 'pointerdown', pointerId: 1, button: 0, clientX: 100, clientY: 100, ...over })
 const move = (over = {}) => ({ type: 'pointermove', pointerId: 1, clientX: 100, clientY: 100, ...over })
@@ -363,8 +368,14 @@ function panned() {
 test('a movement below the threshold is a click, not a pan', () => {
   const g = createDragGesture()
   g.start(down())
+  // isPanning() must distinguish "a pointer is down" from "a pan is running" —
+  // that distinction is the whole reason the method exists, and every other
+  // assertion of it runs with a pan already in flight, where a method that
+  // merely reported "a pointer is down" would read identically.
+  assert.equal(g.isPanning(), false, 'a press that has not moved is not a pan')
   const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD - 1 }))
   assert.equal(step.panning, false)
+  assert.equal(g.isPanning(), false, 'a press that moved below the threshold is not a pan')
   assert.equal(g.isClickSuppressed(), false, 'a click gesture must never suppress its own click')
   g.end(up())
   assert.equal(g.consumeClick(), false)
@@ -393,6 +404,28 @@ test('the threshold option is honoured, so a caller can pass its own', () => {
   assert.equal(step.panning, true)
   assert.equal(step.dx, DRAG_THRESHOLD * 5, 'a refused step must not consume the movement it refused')
   assert.equal(step.dy, 0)
+})
+
+test('a threshold that would disable the threshold is refused, not silently accepted', () => {
+  // Both `Math.hypot(dx, dy) < NaN` and `Math.hypot(dx, dy) < 'x'` are false, so
+  // an unvalidated option silently switches the threshold OFF: a half-pixel
+  // twitch becomes a pan and every click on the stage is swallowed. The option
+  // fails closed instead, the way ViewModelError/PaletteError do for their own
+  // unusable input.
+  for (const bad of [Number.NaN, -1, 0, null, 'x', Infinity, -Infinity]) {
+    assert.throws(
+      () => createDragGesture({ threshold: bad }),
+      (err) => err instanceof GestureError && err.code === E_GESTURE_THRESHOLD,
+      `createDragGesture accepted the unusable threshold ${String(bad)}`
+    )
+  }
+  // The default is still reachable, and a usable explicit value still works.
+  assert.equal(createDragGesture().isPanning(), false)
+  assert.equal(createDragGesture({}).isPanning(), false)
+  assert.equal(createDragGesture({ threshold: undefined }).isPanning(), false)
+  const tight = createDragGesture({ threshold: 1 })
+  tight.start(down())
+  assert.equal(tight.move(move({ clientX: 101 })).panning, true, 'a usable explicit threshold was refused')
 })
 
 test('each pan step reports the delta since the previous point, and begins exactly once', () => {
@@ -445,10 +478,47 @@ test('the state machine ignores a second, unrelated pointer', () => {
   assert.equal(g.isPanning(), true, 'the real gesture was cancelled by an unrelated pointer')
 })
 
+test('a second primary press cannot take the stage away from a pan in flight', () => {
+  // The ordinary accidental second touch on a stage with `touch-action: none`.
+  // Unguarded, start() overwrote the active gesture and cleared its suppression:
+  // the finger that was moving could then neither move nor end, and because the
+  // shell gates its cleanup on end() reporting `ended`, the pointer capture was
+  // never released and body[data-panning] never removed — the pan dies under the
+  // user's finger with nothing on screen to explain it.
+  const g = panned()
+  assert.equal(g.start(down({ pointerId: 2, clientX: 500, clientY: 500 })), false, 'a second press hijacked a pan in flight')
+  assert.equal(g.isPanning(), true, 'the second press cancelled the pan it does not own')
+  assert.equal(g.isClickSuppressed(), true, 'the second press disarmed a suppression it does not own')
+  const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4 + 5 }))
+  assert.equal(step.panning, true, 'the panning pointer could no longer move the stage')
+  assert.equal(step.dx, 5)
+  assert.equal(step.dy, 0)
+  const done = g.end(up())
+  assert.equal(done.ended, true, 'the panning pointer could no longer end its own gesture')
+  assert.equal(done.pointerId, 1)
+  assert.equal(done.wasPanning, true)
+})
+
+test('a press that never panned is replaceable, so a lost pointer cannot dead-lock the stage', () => {
+  // The guard above is keyed on `panning`, not on `active`, and this is why: a
+  // press whose pointerup or pointercancel the shell never sees would otherwise
+  // refuse every later press for the lifetime of the page.
+  const g = createDragGesture()
+  assert.equal(g.start(down()), true)
+  assert.equal(g.start(down({ pointerId: 2, clientX: 200, clientY: 200 })), true, 'a press that never panned blocked the next one')
+  const step = g.move(move({ pointerId: 2, clientX: 200 + DRAG_THRESHOLD * 4, clientY: 200 }))
+  assert.equal(step.panning, true, 'the replacing press could not pan')
+  assert.equal(step.dx, DRAG_THRESHOLD * 4)
+  assert.equal(g.move(move({ pointerId: 1, clientX: 900 })).panning, false, 'the replaced pointer still drives the stage')
+})
+
 test('only the primary button starts a gesture', () => {
   const g = createDragGesture()
   assert.equal(g.start(down({ button: 2 })), false)
   assert.equal(g.move(move({ clientX: 400 })).panning, false)
+  // The documented success return is read here, so a start() that reports
+  // failure while starting a gesture cannot ship green.
+  assert.equal(g.start(down()), true, 'a primary press must start a gesture and say so')
 })
 
 test('a fresh press always disarms, whatever the previous gesture left behind', () => {
@@ -468,13 +538,24 @@ test('end() reports the pointer id so the shell releases the capture it took', (
 
 test('the gesture carries no clock, randomness or DOM', () => {
   const source = readFileSync(new URL('../viewer/atlas39/core/gesture.mjs', import.meta.url), 'utf8')
+  // Scan the CODE, not the English. This module's comments are long and
+  // load-bearing, and 'window', 'document', 'navigator' and 'performance' are
+  // ordinary words inside them — a raw substring scan fires on vocabulary
+  // rather than on capability use, and it already did once: the comment "a
+  // window losing the pointer" tripped this guard while the code was pure.
+  // Two independent defences, so neither has to be perfect: full-line comments
+  // are removed (never partial lines, which a string containing '//' would let
+  // truncate real code away), and the tokens are spelled as property accesses,
+  // which prose does not produce.
+  const code = source.replace(/^\s*\/\/.*$/gm, '')
+  assert.match(code, /export function createDragGesture/, 'the comment strip removed the code as well')
   const forbiddenTokens = [
-    'Date.', 'new Date', 'Math.random', 'performance',
-    'document', 'window', 'globalThis', 'navigator', 'localStorage',
+    'Date.', 'new Date', 'Math.random', 'performance.',
+    'document.', 'window.', 'globalThis', 'navigator.', 'localStorage',
     'requestAnimationFrame'
   ]
   for (const forbidden of forbiddenTokens) {
-    assert.equal(source.includes(forbidden), false, `gesture.mjs references ${forbidden}`)
+    assert.equal(code.includes(forbidden), false, `gesture.mjs references ${forbidden}`)
   }
 })
 ```
@@ -517,19 +598,57 @@ Create `viewer/atlas39/core/gesture.mjs`:
 /** Screen pixels of movement that turn a press into a pan instead of a click. */
 export const DRAG_THRESHOLD = 4
 
+export const E_GESTURE_THRESHOLD = 'E_GESTURE_THRESHOLD'
+
+export class GestureError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'GestureError'
+    this.code = E_GESTURE_THRESHOLD
+  }
+}
+
 /**
  * @param {{threshold?: number}} [options]
  * @returns {{start:Function, move:Function, end:Function,
  *            isClickSuppressed:Function, consumeClick:Function, isPanning:Function}}
+ * @throws {GestureError} when `threshold` is not a finite number above zero.
  */
 export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
+  // Fail closed on the option, because failing open here disables the very
+  // thing the option names: `Math.hypot(...) < NaN` and `Math.hypot(...) < 'x'`
+  // are both false, so an unvalidated threshold turns a half-pixel twitch into
+  // a pan and every click on the stage into a swallowed one. Sibling core
+  // modules throw on this class of bad input (ViewModelError, PaletteError);
+  // so does this one.
+  if (!Number.isFinite(threshold) || threshold <= 0) {
+    throw new GestureError(
+      `${E_GESTURE_THRESHOLD}: threshold must be a finite number of pixels above zero, received ${String(threshold)}`
+    )
+  }
+
   let active = null
   let suppressClick = false
 
   return {
-    /** @returns {boolean} true when a gesture actually started */
+    /**
+     * @returns {boolean} true when a gesture actually started. False on a
+     *   non-primary button, and false when a pan is already in flight.
+     */
     start(event) {
       if (event.button !== 0) return false
+      // A pan in flight owns the stage until it ends. A second primary press —
+      // the ordinary accidental second touch on a surface with
+      // `touch-action: none` — must not take the gesture away from the finger
+      // that is moving: the replaced pointer could then neither move nor end,
+      // and because the shell gates its cleanup on `end()` reporting `ended`,
+      // its pointer capture would never be released and `body[data-panning]`
+      // would stay set, with nothing on screen to explain it.
+      //
+      // The guard is keyed on `panning`, not on `active`: a press that has not
+      // yet panned stays replaceable, so a pointer whose up/cancel the shell
+      // never sees cannot dead-lock the stage against every later press.
+      if (active?.panning === true) return false
       // A fresh press always disarms: whatever a previous gesture left behind,
       // the click that belongs to THIS press must be allowed through.
       suppressClick = false
@@ -591,7 +710,7 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
       return true
     },
 
-    /** True while a pan is in progress. */
+    /** True while a pan is in progress. A press that has not moved is not one. */
     isPanning() {
       return active?.panning === true
     }
@@ -604,7 +723,29 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
 ```
 node --test test/atlas40-gesture.test.mjs
 ```
-Expected: PASS, 12/12.
+Expected: PASS, 15/15.
+
+**Corrected 2026-08-19 (second review of Task 2).** Expected 12/12 until this round; three more tests were added, and the module gained two guards and a fail-closed option. Each change answers a measured finding rather than a preference:
+
+- **`isPanning()` was a surviving mutant.** Replacing `return active?.panning === true` with `return active !== null` left the 12-test suite fully green. The only assertion that read it ran with a pan already in flight, where "a pointer is down" and "a pan is running" are indistinguishable — precisely the distinction the method exists for. `'a movement below the threshold is a click, not a pan'` now reads it twice on a press that has not panned. Measured after the fix: that mutant exits 1 on that test.
+- **A second primary `pointerdown` hijacked an in-flight gesture.** `start()` overwrote `active` and cleared `suppressClick` with no guard, a faithful port of slice 1's `app.mjs:653-657`. Measured against the unguarded module: while pointer 1 was panning, `start({pointerId: 2, button: 0})` returned true, after which pointer 1 could neither move (`{panning:false, began:false, dx:0, dy:0}`) nor end (`{ended:false, wasPanning:false, pointerId:null}`). With the Task-6 wiring below that is the ordinary accidental second touch on a stage with `touch-action: none`: the pan dies under the moving finger, and because the shell gates its cleanup on `done.ended`, `releasePointerCapture` is never called and `body[data-panning]` is never removed. `start()` now refuses while `active.panning` is true — keyed on `panning`, not on `active`, so a press whose pointerup the shell never sees cannot dead-lock the stage against every later press. Both halves are pinned, and Task 2 no longer ships a state defect untested in the task that exists to make this class of defect testable.
+- **`start()`'s documented success return was neither pinned nor read.** Changing `return true` to `return false` left the suite green. `'only the primary button starts a gesture'` now reads it, so the JSDoc contract and the code cannot disagree silently.
+- **The `threshold` option failed open.** Measured: with `NaN`, `-1`, `0`, `null` or `'x'`, a 0.5 px twitch already reported `panning: true`, because `Math.hypot(…) < NaN` and `< 'x'` are both false — the option could silently switch off the very threshold it names, and every stage click after a twitch would be swallowed. It now throws `GestureError`/`E_GESTURE_THRESHOLD`, matching `ViewModelError` and `PaletteError` in the sibling core modules.
+- **The purity guard scanned prose, not code.** `'performance'`, `'document'`, `'window'` and `'navigator'` are ordinary English in a repo whose convention is long, load-bearing comments, and a substring scan over the whole file cannot tell an identifier from prose — it already forced the reword of "a window losing the pointer" in the first round, when the code was pure and only the English was the failure. The guard now strips full-line comments (never partial lines, which a string containing `//` could use to truncate real code out of the scan) and spells the tokens as property accesses. Both halves are measured below.
+
+**Step 4a: Counterexample proofs for the four new guarantees (do not commit the mutations)**
+
+Same protocol as Step 5: `git add` the pristine files first, mutate, run, `git checkout --`, and confirm the restored `shasum -a 256` equals the pristine one. Every one of these was measured at `15/15` before mutation:
+
+| Mutation | Must go red | Measured |
+| --- | --- | --- |
+| `isPanning()` → `return active !== null` | `a movement below the threshold is a click, not a pan` | exit 1 |
+| delete `if (active?.panning === true) return false` | `a second primary press cannot take the stage away from a pan in flight` | exit 1 |
+| that guard → `if (active !== null) return false` | `a press that never panned is replaceable, so a lost pointer cannot dead-lock the stage` | exit 1 |
+| `start()` success `return true` → `return false` | `only the primary button starts a gesture` (and the replaceable-press test) | exit 1 |
+| delete the `Number.isFinite(threshold)` block | `a threshold that would disable the threshold is refused, not silently accepted` | exit 1 |
+| re-introduce the comment "a window losing the pointer" | nothing — prose is not capability use | exit 0, 15/15 |
+| add a never-called `function unusedProbe() { return document.title }` | `the gesture carries no clock, randomness or DOM` | exit 1 |
 
 **Corrected 2026-08-19 (review of Task 2).** The first draft expected 9/9. Three tests were added by that review, and the reason is worth carrying: nine tests asserted `.panning`, `.began`, `.ended`, `.wasPanning`, `.pointerId` and the suppression flags, and not one of them ever read `dx` or `dy` — the module's only numeric output and the entire payload Task 6 feeds to `panBy`. `DRAG_THRESHOLD`'s value and the strict `<` at the boundary were likewise unpinned, so a tenfold change to a human-visually-accepted interaction constant passed green. That is the same weakness D9 indicts slice 1 for, relocated: the state was testable, the number that moves the graph was not tested.
 
@@ -636,9 +777,12 @@ While mutating, also confirm the tests hold the rest of the module's contract. E
 **Step 6: Commit**
 
 ```bash
-git add viewer/atlas39/core/gesture.mjs test/atlas40-gesture.test.mjs
+git add viewer/atlas39/core/gesture.mjs test/atlas40-gesture.test.mjs \
+        docs/plans/2026-08-19-atlas-40-slice-2-deterministic-views.md
 git commit -m "ATLAS-40: make the pointer drag a pure state machine and stop pointercancel arming a stale click suppression"
 ```
+
+**Corrected 2026-08-19 (second review of Task 2).** The `git add` gains this plan document. The second review's repairs changed both Task-2 code blocks above — which are the two files verbatim — and Task 6's `wirePointer`, so the scope contract and the code it governs move in one commit instead of drifting apart between two.
 
 ---
 
@@ -2217,7 +2361,6 @@ function wirePointer() {
   }, true)
 
   dom.stageHost.addEventListener('pointerdown', (event) => {
-    if (event.target.closest?.('.a39-stage-controls')) return
     gesture.start(event)
   })
 
@@ -2241,6 +2384,8 @@ function wirePointer() {
   dom.stageHost.addEventListener('pointercancel', endPan)
 }
 ```
+
+**Corrected 2026-08-19 (second review of Task 2).** The first draft of this replacement kept slice 1's `if (event.target.closest?.('.a39-stage-controls')) return` at the top of the `pointerdown` handler. D9's own correction above proves that line is dead: `index.html:58-60` makes `.a39-stage-controls` a *sibling* of `#stage-host`, so a pointer event on the controls never reaches a listener bound to `dom.stageHost` at all. Carrying provably dead code into new code, in the same document that proves it dead, is not defensiveness — it is a false hint to the next reader that the controls are reachable here. It is dropped. The live occurrence stays where it is load-bearing: `app.mjs:542`, in the `keydown` path, whose listener sits on `dom.stage`, the common ancestor of both — and that is the occurrence Task 7's `assert.match(app, /event\.target\.closest\?\.\('\.a39-stage-controls'\)/)` matches, so dropping the dead copy does not turn that assertion red. Should the markup ever nest the controls inside `#stage-host`, the guard returns together with a test that shows it firing.
 
 `wireEvents` — add:
 

@@ -22,19 +22,57 @@
 /** Screen pixels of movement that turn a press into a pan instead of a click. */
 export const DRAG_THRESHOLD = 4
 
+export const E_GESTURE_THRESHOLD = 'E_GESTURE_THRESHOLD'
+
+export class GestureError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'GestureError'
+    this.code = E_GESTURE_THRESHOLD
+  }
+}
+
 /**
  * @param {{threshold?: number}} [options]
  * @returns {{start:Function, move:Function, end:Function,
  *            isClickSuppressed:Function, consumeClick:Function, isPanning:Function}}
+ * @throws {GestureError} when `threshold` is not a finite number above zero.
  */
 export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
+  // Fail closed on the option, because failing open here disables the very
+  // thing the option names: `Math.hypot(...) < NaN` and `Math.hypot(...) < 'x'`
+  // are both false, so an unvalidated threshold turns a half-pixel twitch into
+  // a pan and every click on the stage into a swallowed one. Sibling core
+  // modules throw on this class of bad input (ViewModelError, PaletteError);
+  // so does this one.
+  if (!Number.isFinite(threshold) || threshold <= 0) {
+    throw new GestureError(
+      `${E_GESTURE_THRESHOLD}: threshold must be a finite number of pixels above zero, received ${String(threshold)}`
+    )
+  }
+
   let active = null
   let suppressClick = false
 
   return {
-    /** @returns {boolean} true when a gesture actually started */
+    /**
+     * @returns {boolean} true when a gesture actually started. False on a
+     *   non-primary button, and false when a pan is already in flight.
+     */
     start(event) {
       if (event.button !== 0) return false
+      // A pan in flight owns the stage until it ends. A second primary press —
+      // the ordinary accidental second touch on a surface with
+      // `touch-action: none` — must not take the gesture away from the finger
+      // that is moving: the replaced pointer could then neither move nor end,
+      // and because the shell gates its cleanup on `end()` reporting `ended`,
+      // its pointer capture would never be released and `body[data-panning]`
+      // would stay set, with nothing on screen to explain it.
+      //
+      // The guard is keyed on `panning`, not on `active`: a press that has not
+      // yet panned stays replaceable, so a pointer whose up/cancel the shell
+      // never sees cannot dead-lock the stage against every later press.
+      if (active?.panning === true) return false
       // A fresh press always disarms: whatever a previous gesture left behind,
       // the click that belongs to THIS press must be allowed through.
       suppressClick = false
@@ -96,7 +134,7 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
       return true
     },
 
-    /** True while a pan is in progress. */
+    /** True while a pan is in progress. A press that has not moved is not one. */
     isPanning() {
       return active?.panning === true
     }
