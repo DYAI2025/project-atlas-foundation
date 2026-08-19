@@ -222,6 +222,34 @@ test('a different stage size restores the same logical view and admits the re-fi
     true,
     'a change in width alone was reported as an exact restore'
   )
+
+  // Every case above restores into a LARGER stage, so the comparison was pinned
+  // on both dimensions but not on its DIRECTION. Measured: replacing
+  // `parsed.viewport.width !== viewport.width || parsed.viewport.height !==
+  // viewport.height` with `<` in both halves left the suite green at exit 0,
+  // 17/17, and a view saved at 1440x900 then restored at 1092x693 answered
+  // {"ok":true,...,"viewportChanged":false}. Task 6 suppresses ' The stage is a
+  // different size than when this view was saved, so the zoom and position were
+  // re-fitted.' on exactly that flag, so the mutant announces a pixel-identical
+  // restore across a viewport change — the overclaim D6 forbids in as many
+  // words. A shrinking stage is the ordinary case (a sidebar opens, the window
+  // is made smaller), so it is pinned per dimension, the same way growing is.
+  const smaller = { width: 800, height: 500 }
+  assert.equal(
+    restoreSavedView(vm, parsed(), smaller).viewportChanged,
+    true,
+    'a restore into a smaller stage was reported as an exact restore'
+  )
+  assert.equal(
+    restoreSavedView(vm, parsed(), { width: VIEWPORT.width, height: smaller.height }).viewportChanged,
+    true,
+    'a stage that lost height alone was reported as an exact restore'
+  )
+  assert.equal(
+    restoreSavedView(vm, parsed(), { width: smaller.width, height: VIEWPORT.height }).viewportChanged,
+    true,
+    'a stage that lost width alone was reported as an exact restore'
+  )
 })
 
 test('an overview saved view needs no anchor and restores to overview', () => {
@@ -236,6 +264,28 @@ test('an overview saved view needs no anchor and restores to overview', () => {
   assert.equal(bound.ok, true)
   assert.deepEqual(bound.view, { mode: 'overview', anchorId: null })
   assert.equal(bound.focusId, null)
+})
+
+test('capture never writes a focus id that validate would refuse', () => {
+  // The two sides of this module disagreed on the empty string: capture asked
+  // `typeof focusId === 'string'`, which accepts '', while validate refuses ''
+  // through `isText` — so capture could store a record this module can never
+  // restore, and the user would get E_SAVED_VIEW_INVALID from a view the
+  // workspace itself wrote. It is unreachable from the shell today, because
+  // `state.focusId` is a node id or null, which is exactly why the agreement
+  // needs a test rather than a comment: nothing else in this suite would notice
+  // the two predicates drifting apart again.
+  const saved = captureSavedView({
+    viewModel: vm,
+    view: { mode: 'overview', anchorId: null },
+    focusId: '',
+    transform: { scale: 1, tx: 0, ty: 0 },
+    viewport: VIEWPORT
+  })
+  assert.equal(saved.focus_id, null, 'capture stored a focus id validate refuses')
+  const parsed = parseSavedView(serializeSavedView(saved))
+  assert.equal(parsed.ok, true, parsed.reason)
+  assert.equal(parsed.value.focusId, null)
 })
 
 test('nothing stored, empty storage or non-JSON is a refusal, not a crash', () => {
@@ -322,17 +372,55 @@ test('a malformed shape is refused field by field', () => {
   // ok:true — the shell would apply a NaN translate, or accept a stage size it
   // cannot use, and announce a successful restore. Only `project_id` and
   // `node_count` were pinned, and they are exactly the two rows this table had.
+  //
+  // Every row above pinned the TYPE half of its guard and none pinned the
+  // DOMAIN half, so the same wrong-refusal-code false story survived a second
+  // time. Three mutants, each measured at exit 0, 17/17, with
+  // `shasum -a 256 viewer/atlas39/core/saved-view.mjs` restored to
+  // 07e4452ac4a373d9dd370ecf4d63491dcf89f2068788b77bc894f52a309be880 each time:
+  //
+  //   `const isText = (v) => typeof v === 'string'` — the `&& v.length > 0`
+  //   deleted — lets a stored {"source_id": ""} parse, and restoreSavedView
+  //   then answers {"ok":false,"code":"E_SAVED_VIEW_SNAPSHOT","reason":"the
+  //   saved view was captured against a different graph (source_id was \"\",
+  //   this graph has \"14778372\")"}: a malformed record reported as a
+  //   re-scanned Confluence tree. The same mutant answers
+  //   E_SAVED_VIEW_STALE_NODE for {"focus_id": ""} — a malformed record
+  //   reported as a deleted page.
+  //
+  //   `!Number.isInteger(snapshot.node_count)` -> `typeof snapshot.node_count
+  //   !== 'number'` lets node_count 5.5 parse and restore as
+  //   E_SAVED_VIEW_SNAPSHOT "(node_count was 5.5, this graph has 5)"; the same
+  //   for edge_count 4.5, "(edge_count was 4.5, this graph has 4)".
+  //
+  //   `raw.focus_id !== null` -> `raw.focus_id != null` lets a record with NO
+  //   `focus_id` key at all parse ok:true and restore
+  //   {"ok":true,...,"focusId":null} — a missing field silently defaulted,
+  //   where D4's table assigns it to E_SAVED_VIEW_INVALID.
+  //
+  // So each guarded field now carries both halves: the wrong type AND the
+  // wrong value of the right type.
   const base = sample()
   const mutations = [
     ['snapshot', undefined],
     ['snapshot', { ...base.snapshot, project_id: 42 }],
+    ['snapshot', { ...base.snapshot, project_id: '' }],
     ['snapshot', { ...base.snapshot, source_id: 14778372 }],
+    ['snapshot', { ...base.snapshot, source_id: '' }],
     ['snapshot', { ...base.snapshot, contract_version: 1 }],
+    ['snapshot', { ...base.snapshot, contract_version: '' }],
     ['snapshot', { ...base.snapshot, id_scheme: null }],
+    ['snapshot', { ...base.snapshot, id_scheme: '' }],
     ['snapshot', { ...base.snapshot, node_count: '5' }],
+    ['snapshot', { ...base.snapshot, node_count: 5.5 }],
     ['snapshot', { ...base.snapshot, edge_count: '4' }],
+    ['snapshot', { ...base.snapshot, edge_count: 4.5 }],
     ['view', undefined],
     ['focus_id', 42],
+    ['focus_id', ''],
+    // JSON.stringify drops an undefined value, so this row is a record with no
+    // `focus_id` key at all — the case the strict `!== null` exists for.
+    ['focus_id', undefined],
     ['transform', { scale: 0, tx: 0, ty: 0 }],
     ['transform', { scale: Number.NaN, tx: 0, ty: 0 }],
     ['transform', { scale: 1, tx: 'left', ty: 0 }],
@@ -443,6 +531,18 @@ test('restoreSavedView answers a refusal when it is handed anything but a valida
   // of undefined (reading 'project_id')`, and so did the same call on a
   // refusal. Under D5 a saved view that does not apply must never tear the
   // stage down, so the wrong shape is refused rather than thrown.
+  //
+  // The first guard covered `parsed`, `parsed.snapshot` and `parsed.view` — 2
+  // of the 4 objects this function dereferences — so the title above and the
+  // module's own "anything else is refused as a value, never thrown" were still
+  // false. Measured on that module: a record carrying this graph's six identity
+  // values and a valid `view` but no `transform`/`viewport`, the same record
+  // carrying `transform` but no `viewport`, and `restoreSavedView(vm, parsed)`
+  // with the stage size omitted ALL raised `TypeError: Cannot read properties
+  // of undefined (reading 'width')` at saved-view.mjs:242 — the identity and
+  // stale-node checks pass first, so the guard never saw them. All four objects
+  // are guarded now, and all three shapes are rows here.
+  const complete = parseSavedView(serializeSavedView(sample())).value
   const wrong = [
     parseSavedView(serializeSavedView(sample())), // the {ok, value} envelope, not value
     parseSavedView('not json'), // a refusal
@@ -450,13 +550,49 @@ test('restoreSavedView answers a refusal when it is handed anything but a valida
     undefined,
     'a string',
     {},
-    { snapshot: sample().snapshot } // an identity, but no view
+    { snapshot: sample().snapshot }, // an identity, but no view
+    // All three of these get PAST the identity and stale-node checks, which is
+    // why they threw where the earlier rows refused. Each of the two remaining
+    // record fields gets its own row, because a single row covering both leaves
+    // the other clause fail-OPEN: measured on the repaired module, deleting
+    // `!isObject(parsed.transform)` alone left the suite green at exit 0, 18/18
+    // while the missing-viewport rows still caught the viewport clause, and
+    // under that mutant a record with no `transform` restored ok:true carrying
+    // `transform: undefined` — which the shell would hand straight to
+    // clampTransform. The transform is never dereferenced here, so it does not
+    // throw; it is handed on as an unusable value instead, which is the same
+    // half-applied restore from the other direction.
+    { snapshot: complete.snapshot, view: complete.view, focusId: null },
+    {
+      snapshot: complete.snapshot,
+      view: complete.view,
+      focusId: null,
+      transform: { scale: 1, tx: 0, ty: 0 }
+    },
+    {
+      snapshot: complete.snapshot,
+      view: complete.view,
+      focusId: null,
+      viewport: { width: 1092, height: 693 }
+    }
   ]
   for (const argument of wrong) {
     const result = restoreSavedView(vm, argument, VIEWPORT)
     assert.equal(result.ok, false, `${JSON.stringify(argument)} was accepted`)
     assert.equal(result.code, E_SAVED_VIEW_INVALID, `${JSON.stringify(argument)}: ${result.code}`)
     // Nothing may be handed back that the shell could half-apply.
+    assert.equal('view' in result, false)
+    assert.equal('focusId' in result, false)
+    assert.equal('transform' in result, false)
+  }
+
+  // The current stage size is the fourth dereferenced object, and it is the
+  // caller's argument rather than the record's field, so it needs its own case:
+  // a complete, valid saved view with no stage size to restore it into.
+  for (const stage of [undefined, null, 'wide']) {
+    const result = stage === undefined ? restoreSavedView(vm, complete) : restoreSavedView(vm, complete, stage)
+    assert.equal(result.ok, false, `stage size ${JSON.stringify(stage)} was accepted`)
+    assert.equal(result.code, E_SAVED_VIEW_INVALID, `stage size ${JSON.stringify(stage)}: ${result.code}`)
     assert.equal('view' in result, false)
     assert.equal('focusId' in result, false)
     assert.equal('transform' in result, false)
