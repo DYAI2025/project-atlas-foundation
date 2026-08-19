@@ -2290,6 +2290,15 @@ import {
   E_SAVED_VIEW_SNAPSHOT,
   E_SAVED_VIEW_STALE_NODE
 } from '../viewer/atlas39/core/saved-view.mjs'
+// The purity guard is the shared one every pure-core suite is scanned with,
+// imported rather than re-spelled — see the test at the bottom of this file.
+import {
+  stripComments,
+  purityViolations,
+  FORBIDDEN_TOKENS,
+  FORBIDDEN_IDENTIFIERS,
+  MODULE_SPECIFIER
+} from './helpers/purity.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const EVIDENCE = join(repoRoot, 'docs/evidence/atlas-65')
@@ -2327,10 +2336,40 @@ test('a saved view carries UI state and identity only — never the graph', () =
 })
 
 test('serialising is byte-stable, so the same view always stores the same bytes', () => {
-  assert.equal(serializeSavedView(sample()), serializeSavedView(sample()))
-  // Key order must not depend on how the object was assembled.
-  const reordered = JSON.parse(JSON.stringify(sample()))
-  assert.equal(serializeSavedView(reordered), serializeSavedView(sample()))
+  const canonical = serializeSavedView(sample())
+  assert.equal(serializeSavedView(sample()), canonical)
+
+  // Key order must not depend on how the object was assembled, and nothing
+  // outside the contract may reach storage.
+  //
+  // The first draft of this test built its "reordered" object with
+  // JSON.parse(JSON.stringify(sample())), which PRESERVES key order — so it
+  // reordered nothing, and replacing JSON.stringify(saved, KEY_ORDER) with a
+  // plain JSON.stringify(saved) left this suite green at 14/14 (measured). The
+  // replacer is the whole reason the stored bytes are a function of the view
+  // alone, so it is pinned by an object that really is scrambled and really
+  // does carry fields the contract does not name.
+  const s = sample()
+  const scrambled = {}
+  scrambled.viewport = { height: s.viewport.height, width: s.viewport.width }
+  scrambled.transform = { ty: s.transform.ty, tx: s.transform.tx, scale: s.transform.scale }
+  scrambled.focus_id = s.focus_id
+  scrambled.view = { anchor_id: s.view.anchor_id, mode: s.view.mode }
+  scrambled.snapshot = {
+    edge_count: s.snapshot.edge_count,
+    node_count: s.snapshot.node_count,
+    id_scheme: s.snapshot.id_scheme,
+    contract_version: s.snapshot.contract_version,
+    source_id: s.snapshot.source_id,
+    project_id: s.snapshot.project_id
+  }
+  scrambled.saved_view_version = s.saved_view_version
+  scrambled.stray_field = 'must not be persisted'
+  scrambled.snapshot.stray_nested = 'must not be persisted either'
+
+  // Without this the test could pass on an object that was never scrambled.
+  assert.notEqual(JSON.stringify(scrambled), canonical, 'the scrambled object was not actually scrambled')
+  assert.equal(serializeSavedView(scrambled), canonical)
 })
 
 test('roundtrip: capture -> serialise -> parse -> restore reproduces the view exactly', () => {
@@ -2354,13 +2393,30 @@ test('restoring the same saved view repeatedly gives the identical result every 
 })
 
 test('a different stage size restores the same logical view and admits the re-fit', () => {
-  const bound = restoreSavedView(vm, parseSavedView(serializeSavedView(sample())).value, { width: 1440, height: 900 })
+  const parsed = () => parseSavedView(serializeSavedView(sample())).value
+  const bound = restoreSavedView(vm, parsed(), { width: 1440, height: 900 })
   assert.equal(bound.ok, true)
   assert.deepEqual(bound.view, { mode: 'neighbourhood', anchorId: DELIVERY })
   assert.equal(bound.focusId, SPRINT)
   // The transform is handed back unchanged; the shell clamps it to the world it
   // actually has. What must not happen is a silent claim that nothing changed.
   assert.equal(bound.viewportChanged, true)
+  assert.deepEqual(bound.transform, { scale: 1.75, tx: -412, ty: -88 })
+
+  // Either dimension alone is already a different stage. The first draft varied
+  // both together, so comparing only the width survived mutation with the suite
+  // green (measured) — and a stage that changed height alone would then have
+  // been announced as an exact restore.
+  assert.equal(
+    restoreSavedView(vm, parsed(), { width: VIEWPORT.width, height: 900 }).viewportChanged,
+    true,
+    'a change in height alone was reported as an exact restore'
+  )
+  assert.equal(
+    restoreSavedView(vm, parsed(), { width: 1440, height: VIEWPORT.height }).viewportChanged,
+    true,
+    'a change in width alone was reported as an exact restore'
+  )
 })
 
 test('an overview saved view needs no anchor and restores to overview', () => {
@@ -2402,6 +2458,20 @@ test('an unsupported view mode is refused explicitly, never downgraded to overvi
     assert.equal(result.ok, false, `mode ${JSON.stringify(mode)} was accepted`)
     assert.equal(result.code, E_SAVED_VIEW_MODE)
     assert.equal(JSON.stringify(result).includes('overview'), false, 'the refusal fell back to overview')
+  }
+})
+
+test('a supported mode with a missing anchor is refused as malformed, not as a bad mode', () => {
+  // `neighbourhood` IS a mode this build supports; what is unusable is the
+  // anchor. Reporting E_SAVED_VIEW_MODE here would tell the user their saved
+  // view came from another build — a different, and false, story. This is the
+  // only case that separates the two codes, and it was untested: collapsing
+  // `view.code === E_VIEW_MODE ? E_SAVED_VIEW_MODE : E_SAVED_VIEW_INVALID` to a
+  // bare E_SAVED_VIEW_MODE left the suite green at 14/14 (measured).
+  for (const anchor of [null, '', 42, undefined]) {
+    const result = parseSavedView(JSON.stringify({ ...sample(), view: { mode: 'neighbourhood', anchor_id: anchor } }))
+    assert.equal(result.ok, false, `anchor ${JSON.stringify(anchor)} was accepted`)
+    assert.equal(result.code, E_SAVED_VIEW_INVALID, `anchor ${JSON.stringify(anchor)}: ${result.code}`)
   }
 })
 
@@ -2476,11 +2546,55 @@ test('COUNTEREXAMPLE: a stale node id is refused and is never mapped onto anothe
   }
 })
 
-test('the module carries no storage, clock, randomness or DOM', () => {
+// This is the first pure-core module that legitimately imports another one, so
+// it cannot be handed to the shared guard whole: that guard denies `import` and
+// any module specifier outright, and reports ["import", "from '<specifier>'"] on
+// the correct, pristine file.
+//
+// The plan's first draft answered that by re-spelling a raw whole-file
+// `source.includes(token)` list — the exact pattern this repository had already
+// measured and removed twice. Measured a third time, here, on this module: two
+// ordinary comments turn it red on a byte-identically pure file ("documented in
+// the runbook" hits `document`, "a window onto the graph" hits `window`), while
+// `const clock = Date` + `clock.now()`, `navigator.userAgent`, `queueMicrotask`,
+// `eval`, `crypto.getRandomValues`, `setTimeout`, `performance.now`,
+// `globalThis` and a dynamic `import('node:fs')` every one of them pass it.
+//
+// So the carve-out is narrowed to the one import instead of widened to a weaker
+// guard: that exact statement must appear exactly once, and the WHOLE shared
+// guard — `import` and MODULE_SPECIFIER included — then runs over everything
+// else. A second import, static or dynamic, is still caught.
+const ALLOWED_IMPORT = "import { normalizeView, E_VIEW_MODE } from './view-state.mjs'"
+
+test('the module carries no storage, clock, randomness or DOM, and imports only the view state', () => {
   const source = readFileSync(join(repoRoot, 'viewer/atlas39/core/saved-view.mjs'), 'utf8')
-  for (const forbidden of ['localStorage', 'sessionStorage', 'Date.', 'Math.random', 'document', 'window', 'fetch(']) {
-    assert.equal(source.includes(forbidden), false, `saved-view.mjs references ${forbidden}`)
+  const code = stripComments(source)
+  // The strip is load-bearing, so it is proved not to have eaten the code it was
+  // meant to leave standing — one probe per region of the module.
+  assert.match(code, /export function captureSavedView/, 'the comment strip removed captureSavedView')
+  assert.match(code, /export function serializeSavedView/, 'the comment strip removed serializeSavedView')
+  assert.match(code, /export function parseSavedView/, 'the comment strip removed parseSavedView')
+  assert.match(code, /export function validateSavedView/, 'the comment strip removed validateSavedView')
+  assert.match(code, /export function restoreSavedView/, 'the comment strip removed restoreSavedView')
+
+  assert.equal(
+    code.split(ALLOWED_IMPORT).length - 1,
+    1,
+    'saved-view.mjs no longer imports exactly the view state, exactly once'
+  )
+  const body = code.replace(ALLOWED_IMPORT, '')
+  for (const forbidden of FORBIDDEN_TOKENS) {
+    assert.equal(body.includes(forbidden), false, `saved-view.mjs references ${forbidden}`)
   }
+  for (const forbidden of FORBIDDEN_IDENTIFIERS) {
+    assert.doesNotMatch(
+      body,
+      new RegExp(`\\b${forbidden}\\b`),
+      `saved-view.mjs references the bare identifier ${forbidden}`
+    )
+  }
+  assert.doesNotMatch(body, MODULE_SPECIFIER, 'saved-view.mjs imports from a second module specifier')
+  assert.deepEqual(purityViolations(body), [], 'the purity rules disagree with each other')
 })
 ```
 
@@ -2529,7 +2643,20 @@ export const E_SAVED_VIEW_STALE_NODE = 'E_SAVED_VIEW_STALE_NODE'
 /** Raised by the shell, not here: storage is the one part this module cannot own. */
 export const E_SAVED_VIEW_STORAGE = 'E_SAVED_VIEW_STORAGE'
 
-/** The identity fields a saved view must match to be restorable. */
+/**
+ * The identity fields a saved view must match to be restorable.
+ *
+ * Exported with no importing reader, measured across the whole worktree and the
+ * ten planned tasks: `validateSavedView` and this list are both read only from
+ * inside this module (Task 6 imports SAVED_VIEW_VERSION, captureSavedView,
+ * serializeSavedView, parseSavedView, restoreSavedView and E_SAVED_VIEW_STORAGE,
+ * and nothing else). They are exported anyway so that a caller which already
+ * holds a parsed record — the shell re-checking a restore after a re-scan — can
+ * name the identity from here rather than re-spelling six field names where the
+ * two lists could disagree. This is the same open call Task 2 left for
+ * `isPanning()` and Task 3 for `VIEW_MODES`, and it is named as one PO decision
+ * rather than settled here.
+ */
 export const IDENTITY_FIELDS = Object.freeze([
   'project_id',
   'source_id',
@@ -2715,7 +2842,24 @@ export function restoreSavedView(viewModel, parsed, viewport) {
 ```
 node --test test/atlas40-saved-view.test.mjs
 ```
-Expected: PASS, 14/14.
+Expected: PASS, 15/15.
+
+**Corrected 2026-08-19 (review of Task 4).** Four defects in this task were measured and repaired; the test block above is the repaired one, and the expected count moved from 14 to 15.
+
+1. **The purity guard was the raw whole-file substring list this plan had already measured and removed twice.** §2 names `test/helpers/purity.mjs` as "the one purity guard every pure-core suite is scanned with", and this task's test did not use it — so that clause of the scope contract was false as written. Measured on this module, the list `['localStorage','sessionStorage','Date.','Math.random','document','window','fetch(']` fails in both directions. On a byte-identically pure file the comment `// The trade-off is documented in the runbook.` fires `document` and `// A saved view is a window onto one moment of the graph.` fires `window`; meanwhile `const clock = Date` + `clock.now()`, `navigator.userAgent`, `queueMicrotask(fn)`, `eval(s)`, `crypto.getRandomValues(...)`, `setTimeout(...)`, `performance.now()`, `globalThis.x` and `import('node:fs')` all pass it — nine real impurities, zero hits.
+
+   The shared guard could not simply replace it, which is why the first draft reached for a weaker list: `saved-view.mjs` is the first pure-core module that legitimately imports another one, and `purityViolations()` denies `import` and `MODULE_SPECIFIER` outright, returning `["import","from '<specifier>'"]` on the correct, pristine file. The repair narrows the carve-out instead of widening the guard — the exact statement `import { normalizeView, E_VIEW_MODE } from './view-state.mjs'` must appear exactly once, and the whole shared guard then runs over everything else, so a second import, static or dynamic, is still caught. Verified: all nine impurities above, plus a second static import, a `localStorage` read and a `document.title` read, each turn the suite red; all four prose probes that broke the old list leave it green.
+
+2. **The byte-stability test reordered nothing.** It built its "reordered" object with `JSON.parse(JSON.stringify(sample()))`, which preserves key order. Measured: replacing `JSON.stringify(saved, KEY_ORDER)` with a plain `JSON.stringify(saved)` left the suite green at 14/14 — so `KEY_ORDER`, the whole reason the stored bytes are a function of the view alone, was unpinned. The test now inserts every key in reverse order and smuggles two stray fields, asserts the scramble really is one, and is red under that mutation.
+
+3. **The one branch separating `E_SAVED_VIEW_MODE` from `E_SAVED_VIEW_INVALID` was untested.** No case exercised a *supported* mode with an unusable anchor, so collapsing `view.code === E_VIEW_MODE ? E_SAVED_VIEW_MODE : E_SAVED_VIEW_INVALID` to a bare `E_SAVED_VIEW_MODE` left the suite green at 14/14 — a saved `neighbourhood` view carrying `"anchor_id": 42` would then have been reported as coming from another build. Task 3's suite had already flagged this seam and cited D4's table from the other side; the new test pins it from this one, over `null`, `''`, `42` and a missing field.
+
+4. **`viewportChanged` was pinned on both dimensions at once.** The only re-fit case varied 1092×693 to 1440×900, so comparing width alone survived with the suite green at 14/14, and a stage that changed height only would have been announced as an exact restore. The test now adds a height-only and a width-only case.
+
+Two things that are **not** defects, recorded because they were checked rather than assumed:
+
+- `restoreSavedView` uses `viewModel.adjacency.has(id)` as its node-existence test, and that is sound: `view-model.mjs:130` seeds the adjacency map from `nodes`, not from edges, so a degree-0 node is a key and cannot be mistaken for a deleted one. It is also the idiom `view-model.mjs:235` itself uses for `known`.
+- `IDENTITY_FIELDS` and `validateSavedView` are exported with no importing reader — measured across the whole worktree and all ten planned tasks (Task 6 imports `SAVED_VIEW_VERSION`, `captureSavedView`, `serializeSavedView`, `parseSavedView`, `restoreSavedView` and `E_SAVED_VIEW_STORAGE`, and nothing else). Following the call Task 2 left open for `isPanning()` and Task 3 for `VIEW_MODES`, they are kept and the implementation now says so where they are declared, instead of reading as though something consumed them. Named as one open PO decision, not settled here.
 
 **Step 5: Commit**
 
