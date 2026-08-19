@@ -109,6 +109,27 @@ test('the legend does not claim an encoding the stage does not draw', () => {
     edgeLegendNote(many),
     'All relation types are drawn with the same stroke; the stage does not tell them apart visually.'
   )
+
+  // The single-row sentence is a TEMPLATE, not a constant that happens to be
+  // right for the accepted snapshot. Every other single-row assertion in this
+  // file reads the real graph, where the honest answer IS "parent_of
+  // (explicit)", so none of them can tell the two apart. Measured on the shipped
+  // module: replacing the template with the literal 'Every relation drawn here
+  // is parent_of (explicit); all are drawn with the same stroke.' survived the
+  // whole suite at exit 0, 13/13, and then answered a links_to/derived model
+  // with that same sentence verbatim — slice 1's fixed rows, moved out of the
+  // rows and into the sentence, which is the AC7 defect this suite exists to
+  // prevent. The relation-type half is reachable with real data
+  // (view-model.mjs:81 admits any non-empty relation_type); the origin half is
+  // not today (view-model.mjs:87 refuses any origin but 'explicit'). Both are
+  // pinned, so neither can be frozen into the sentence.
+  const other = buildEdgeLegend(synthetic([
+    { edge_id: '1', from: 'a', to: 'b', relation_type: 'links_to', origin: 'derived' }
+  ]))
+  assert.equal(
+    edgeLegendNote(other),
+    'Every relation drawn here is links_to (derived); all are drawn with the same stroke.'
+  )
 })
 
 test('the legend describes the view on the stage, not the whole snapshot', () => {
@@ -167,6 +188,30 @@ test('an absent depth is never displayed, and unrooted nodes sort last', () => {
     )
   }
 
+  // What the hierarchy group does NOT distinguish, pinned rather than left to be
+  // discovered while wiring the shell: the token ladder collapses every depth
+  // >= 3 onto `--depth-n`, so a graph deeper than three levels shows several
+  // differently-labelled rows carrying an IDENTICAL swatch — which would imply a
+  // per-level colour the stage does not draw, the same overclaim the edge legend
+  // refuses for itself through `distinguishesTypes` and `edgeLegendNote`. No
+  // flag is returned for it, because the fact is already in the rows; this is
+  // the derivation a shell caption uses, asserted so the route stays open. D7
+  // records the limitation and assigns the sentence to the shell.
+  const deep = buildDepthLegend(synthetic([], [0, 1, 2, 3, 4, 5].map(mk)))
+  assert.deepEqual(
+    deep.entries.map((e) => e.token),
+    ['--depth-0', '--depth-1', '--depth-2', '--depth-n', '--depth-n', '--depth-n']
+  )
+  assert.deepEqual(
+    deep.entries.map((e) => depthCaption(e.depth)),
+    ['Root', 'Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5']
+  )
+  assert.equal(new Set(deep.entries.map((e) => e.token)).size, 4, 'the depth ladder no longer collapses')
+  // On the accepted snapshot nothing shares a swatch, which is why nothing is
+  // wrong today and why only a deeper graph can witness the limitation.
+  const real = buildDepthLegend(vm)
+  assert.equal(new Set(real.entries.map((e) => e.token)).size, real.entries.length)
+
   // A graph with no nodes states that it has no hierarchy rather than showing a
   // row. `empty` is part of the contract the shell reads, and nothing else in
   // this file asked for it: `empty: entries.length === 0` mutated to
@@ -176,24 +221,60 @@ test('an absent depth is never displayed, and unrooted nodes sort last', () => {
   assert.equal(none.empty, true)
 })
 
-test('two relation kinds that differ only across the separator stay two rows', () => {
-  // buildEdgeLegend groups on a composite key, and the key's separator is the
-  // one character a relation type must not be able to forge. The module joins on
-  // NUL for that reason; nothing in the plan's suite could lose it. Measured:
-  // the separator changed from `\u0000` to `|` survived at exit 0, 12/12, and on
-  // the two edges below it does not merely merge the rows — it reports ONE row,
-  // `parent_of|v2 (explicit)`, with count 2, attributing a relation kind to an
-  // edge that does not have it. That is the invention AC7 exists to prevent,
-  // so the property is asserted rather than left to a comment.
-  const legend = buildEdgeLegend(synthetic([
-    { edge_id: '1', from: 'a', to: 'b', relation_type: 'parent_of|v2', origin: 'explicit' },
-    { edge_id: '2', from: 'a', to: 'b', relation_type: 'parent_of', origin: 'v2|explicit' }
+test('two relation kinds that differ only across the key boundary stay two rows', () => {
+  // buildEdgeLegend groups on a composite key. A key that JOINS the two fields
+  // on a separator is injective only while no value can contain that separator,
+  // and two separators have now been measured against that claim:
+  //
+  //   - `|`: on the pair below the rows do not merely merge — ONE row is
+  //     reported, `parent_of|v2 (explicit)` with count 2, attributing a relation
+  //     kind to an edge that does not have it.
+  //   - NUL: the module joined on `\u0000` and its comment claimed a relation
+  //     type containing it could not collide with a different pair. That claim
+  //     was false, and this test could not see it because it probed `|` only.
+  //     Measured on the shipped module, with [NUL] for the byte:
+  //     `parent_of[NUL]v2 / explicit` and `parent_of / v2[NUL]explicit` produced
+  //     ONE row, `{relationType:'parent_of[NUL]v2', origin:'explicit',
+  //     count:2}`, total 2 — the same fabrication, performed with the separator
+  //     the comment named as the guard.
+  //
+  // The key is the JSON text of the pair now, so both are asserted: no separator
+  // can come back without one of them going red.
+  const NUL = String.fromCharCode(0)
+  for (const separator of ['|', NUL]) {
+    const legend = buildEdgeLegend(synthetic([
+      { edge_id: '1', from: 'a', to: 'b', relation_type: `parent_of${separator}v2`, origin: 'explicit' },
+      { edge_id: '2', from: 'a', to: 'b', relation_type: 'parent_of', origin: `v2${separator}explicit` }
+    ]))
+    assert.deepEqual(
+      legend.entries,
+      [
+        { relationType: 'parent_of', origin: `v2${separator}explicit`, count: 1 },
+        { relationType: `parent_of${separator}v2`, origin: 'explicit', count: 1 }
+      ],
+      `a ${JSON.stringify(separator)} separator collapsed two relation kinds into one row`
+    )
+    assert.equal(legend.total, 2)
+  }
+
+  // JSON text has a boundary of its own — the `","` between the two fields — and
+  // the difference is that it is ESCAPED inside a value instead of being
+  // forgeable. A relation type that spells that boundary literally must still not
+  // merge with the pair it would forge; under a naive `a + '","' + b` join both
+  // edges below produce the identical key `parent_of","explicit","x`.
+  const forged = buildEdgeLegend(synthetic([
+    { edge_id: '1', from: 'a', to: 'b', relation_type: 'parent_of","explicit', origin: 'x' },
+    { edge_id: '2', from: 'a', to: 'b', relation_type: 'parent_of', origin: 'explicit","x' }
   ]))
-  assert.deepEqual(legend.entries, [
-    { relationType: 'parent_of', origin: 'v2|explicit', count: 1 },
-    { relationType: 'parent_of|v2', origin: 'explicit', count: 1 }
-  ])
-  assert.equal(legend.total, 2)
+  assert.deepEqual(
+    forged.entries,
+    [
+      { relationType: 'parent_of', origin: 'explicit","x', count: 1 },
+      { relationType: 'parent_of","explicit', origin: 'x', count: 1 }
+    ],
+    'the JSON key boundary was forged from inside a value'
+  )
+  assert.equal(forged.total, 2)
 })
 
 test('relation types are echoed exactly, never normalised or prettified', () => {

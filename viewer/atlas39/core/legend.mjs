@@ -30,20 +30,48 @@ import { depthTokenName } from './scene.mjs'
 // itself because the process locale changed.
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 
-/** The design token every explicit relation is actually stroked with. */
+// The design token every explicit relation is actually stroked with.
+//
+// Exported with no production reader. Measured across the whole worktree,
+// excluding .git and node_modules: the only occurrences of this name are this
+// declaration, its use in buildEdgeLegend below, and the plan. Task 6 imports
+// buildEdgeLegend, edgeLegendNote, buildDepthLegend and depthCaption, and paints
+// the edge swatch from a re-spelled `var(--line-strong)` in shell CSS instead of
+// reading the name from here — so the token the legend NAMES and the token the
+// swatch USES are two independent spellings of one claim. It is exported anyway
+// so that pair can be collapsed onto one source. Keeping an export only tests
+// read is the same call Task 2 left open for isPanning()/isClickSuppressed() and
+// Task 3 for VIEW_MODES; the three are named in the plan as ONE open PO decision
+// rather than settled here.
 export const EDGE_ENCODING_TOKEN = '--line-strong'
 
 /**
  * @param {object} model a view model, or the projected model of a view
  * @returns {{entries:Array, total:number, distinguishesTypes:boolean,
  *            encodingToken:string, empty:boolean}}
+ *
+ * `total` counts the edges this model DRAWS. On a neighbourhood that is
+ * `applyView(...).scope.shownEdges`, never `scope.totalEdges` — measured on the
+ * SPRINT neighbourhood of the accepted snapshot, scope
+ * `{shownNodes:2, totalNodes:5, shownEdges:1, totalEdges:4}` against
+ * `buildEdgeLegend(applied.model).total === 1`. The two objects spell "total"
+ * for different quantities and a shell caption reads them side by side, so the
+ * difference is stated here rather than left to be rediscovered.
  */
 export function buildEdgeLegend(model) {
   const counts = new Map()
   for (const edge of model.edges) {
-    // A NUL separator, so a relation type containing the separator cannot
-    // collide with a different (type, origin) pair.
-    const key = `${edge.relation_type}\u0000${edge.origin}`
+    // The key is the JSON text of the PAIR, not the two fields joined on a
+    // separator. A joined key is injective only while no value can contain the
+    // separator, and the NUL this used to join on did not have that property
+    // either. Measured on the shipped module, with [NUL] standing for the byte:
+    // `parent_of[NUL]v2 / explicit` and `parent_of / v2[NUL]explicit` produced
+    // ONE row, `{relationType:'parent_of[NUL]v2', origin:'explicit', count:2}`,
+    // total 2 — the exact fabrication the separator comment claimed to prevent,
+    // performed with the separator itself. JSON.stringify escapes every quote
+    // and backslash inside a value, so distinct pairs of strings always produce
+    // distinct key text and no value can forge the boundary between the two.
+    const key = JSON.stringify([edge.relation_type, edge.origin])
     const entry = counts.get(key)
     if (entry) entry.count += 1
     else counts.set(key, { relationType: edge.relation_type, origin: edge.origin, count: 1 })
@@ -77,11 +105,29 @@ export function edgeLegendNote(legend) {
  * strokes the disc with. This is NOT the ATLAS-40 edge legend and is headed as
  * hierarchy; it exists because depth is what the node colours encode, and an
  * unexplained colour is its own small lie.
+ *
+ * What this group does NOT distinguish, written here because the edge legend
+ * states its own limit and this one must not be discovered while wiring the
+ * shell: depthTokenName collapses every depth >= 3 onto `--depth-n`, so a graph
+ * deeper than three levels produces several differently-labelled rows carrying
+ * an IDENTICAL swatch. Measured on a six-level graph — `Root -> --depth-0`,
+ * `Level 1 -> --depth-1`, `Level 2 -> --depth-2`, `Level 3 -> --depth-n`,
+ * `Level 4 -> --depth-n`, `Level 5 -> --depth-n`: 4 distinct tokens over 6 rows.
+ * Nothing is wrong on the accepted snapshot, which is three levels deep and
+ * gives every row its own token. No flag is returned for it, because the fact is
+ * already in the rows — a shell that must say "Level 3 and deeper share one
+ * colour" derives it from `new Set(entries.map((e) => e.token)).size <
+ * entries.length` rather than from a field only tests would read. D7 records the
+ * limitation and assigns the sentence to the shell.
  */
 export function buildDepthLegend(model) {
   const counts = new Map()
   for (const node of model.nodes) {
-    const key = node.depth === null ? 'none' : String(node.depth)
+    // `String(null)` is 'null', which no numeric depth can spell, so this is
+    // already injective over the `number|null` the model guarantees. The
+    // `depth === null ? 'none'` special case this replaced guarded nothing while
+    // reading as though it guarded something.
+    const key = String(node.depth)
     const entry = counts.get(key)
     if (entry) entry.count += 1
     else counts.set(key, { depth: node.depth, token: depthTokenName(node.depth), count: 1 })

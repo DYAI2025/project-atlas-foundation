@@ -119,6 +119,10 @@ The stage draws **every** explicit edge with the same idle stroke (`--line-stron
 
 Depth/hierarchy stays, in a **separately headed** "Hierarchy" group, derived from the depths actually present, with the swatch bound to the *same token* the renderer strokes the disc with (D8). It is not the Edge Legend and is not labelled as one.
 
+**Corrected 2026-08-19 (second review of Task 5).** The hierarchy group has a limit of its own and this decision did not state it, which left it to be discovered while wiring Task 6. `depthTokenName` collapses **every depth >= 3** onto `--depth-n`, so on a graph deeper than three levels several differently-labelled rows carry an **identical** swatch. Measured on a six-level graph against the shipped module: `Root -> --depth-0`, `Level 1 -> --depth-1`, `Level 2 -> --depth-2`, `Level 3 -> --depth-n`, `Level 4 -> --depth-n`, `Level 5 -> --depth-n` — **4 distinct tokens over 6 rows** — and `Object.keys(buildDepthLegend(model))` is exactly `['entries','empty']`, so nothing in the returned value says so. Rendered by Task 6 as label + swatch, that implies a per-level colour the stage does not draw: the same overclaim the edge legend refuses for itself one group over through `distinguishesTypes: false` and `edgeLegendNote`. Nothing is red today — the accepted snapshot is three levels deep and every row has its own token, measured as `new Set(entries.map((e) => e.token)).size === entries.length`.
+
+**The decision, recorded here rather than settled in code:** `buildDepthLegend` returns **no extra flag** for it, because the fact is already in the rows, and **Task 6 must say it** — a shell whose hierarchy rows share a token derives that from `new Set(entries.map((e) => e.token)).size < entries.length` and states "Level 3 and deeper share one colour" next to the group. The collapse itself belongs to `depthTokenName` in `core/scene.mjs` and is **not** changed by this slice. The limitation is pinned by test in `test/atlas40-legend.test.mjs` (`an absent depth is never displayed, and unrooted nodes sort last`), so a ladder that stopped collapsing, or started collapsing sooner, cannot pass unnoticed: mutating the row's token to a constant scores exit 1, 11/13.
+
 ### D8 — One depth→token function, so the swatch cannot drift from the stroke unnoticed
 
 `core/scene.mjs` gains `depthTokenName(depth)` returning `--depth-0|--depth-1|--depth-2|--depth-n|--depth-none`, and `depthColor()` is re-expressed in terms of it. The legend swatch sets `style.borderColor = \`var(${token})\`` behind an allowlist regex.
@@ -3414,6 +3418,27 @@ test('the legend does not claim an encoding the stage does not draw', () => {
     edgeLegendNote(many),
     'All relation types are drawn with the same stroke; the stage does not tell them apart visually.'
   )
+
+  // The single-row sentence is a TEMPLATE, not a constant that happens to be
+  // right for the accepted snapshot. Every other single-row assertion in this
+  // file reads the real graph, where the honest answer IS "parent_of
+  // (explicit)", so none of them can tell the two apart. Measured on the shipped
+  // module: replacing the template with the literal 'Every relation drawn here
+  // is parent_of (explicit); all are drawn with the same stroke.' survived the
+  // whole suite at exit 0, 13/13, and then answered a links_to/derived model
+  // with that same sentence verbatim — slice 1's fixed rows, moved out of the
+  // rows and into the sentence, which is the AC7 defect this suite exists to
+  // prevent. The relation-type half is reachable with real data
+  // (view-model.mjs:81 admits any non-empty relation_type); the origin half is
+  // not today (view-model.mjs:87 refuses any origin but 'explicit'). Both are
+  // pinned, so neither can be frozen into the sentence.
+  const other = buildEdgeLegend(synthetic([
+    { edge_id: '1', from: 'a', to: 'b', relation_type: 'links_to', origin: 'derived' }
+  ]))
+  assert.equal(
+    edgeLegendNote(other),
+    'Every relation drawn here is links_to (derived); all are drawn with the same stroke.'
+  )
 })
 
 test('the legend describes the view on the stage, not the whole snapshot', () => {
@@ -3472,6 +3497,30 @@ test('an absent depth is never displayed, and unrooted nodes sort last', () => {
     )
   }
 
+  // What the hierarchy group does NOT distinguish, pinned rather than left to be
+  // discovered while wiring the shell: the token ladder collapses every depth
+  // >= 3 onto `--depth-n`, so a graph deeper than three levels shows several
+  // differently-labelled rows carrying an IDENTICAL swatch — which would imply a
+  // per-level colour the stage does not draw, the same overclaim the edge legend
+  // refuses for itself through `distinguishesTypes` and `edgeLegendNote`. No
+  // flag is returned for it, because the fact is already in the rows; this is
+  // the derivation a shell caption uses, asserted so the route stays open. D7
+  // records the limitation and assigns the sentence to the shell.
+  const deep = buildDepthLegend(synthetic([], [0, 1, 2, 3, 4, 5].map(mk)))
+  assert.deepEqual(
+    deep.entries.map((e) => e.token),
+    ['--depth-0', '--depth-1', '--depth-2', '--depth-n', '--depth-n', '--depth-n']
+  )
+  assert.deepEqual(
+    deep.entries.map((e) => depthCaption(e.depth)),
+    ['Root', 'Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5']
+  )
+  assert.equal(new Set(deep.entries.map((e) => e.token)).size, 4, 'the depth ladder no longer collapses')
+  // On the accepted snapshot nothing shares a swatch, which is why nothing is
+  // wrong today and why only a deeper graph can witness the limitation.
+  const real = buildDepthLegend(vm)
+  assert.equal(new Set(real.entries.map((e) => e.token)).size, real.entries.length)
+
   // A graph with no nodes states that it has no hierarchy rather than showing a
   // row. `empty` is part of the contract the shell reads, and nothing else in
   // this file asked for it: `empty: entries.length === 0` mutated to
@@ -3481,24 +3530,60 @@ test('an absent depth is never displayed, and unrooted nodes sort last', () => {
   assert.equal(none.empty, true)
 })
 
-test('two relation kinds that differ only across the separator stay two rows', () => {
-  // buildEdgeLegend groups on a composite key, and the key's separator is the
-  // one character a relation type must not be able to forge. The module joins on
-  // NUL for that reason; nothing in the plan's suite could lose it. Measured:
-  // the separator changed from `\u0000` to `|` survived at exit 0, 12/12, and on
-  // the two edges below it does not merely merge the rows — it reports ONE row,
-  // `parent_of|v2 (explicit)`, with count 2, attributing a relation kind to an
-  // edge that does not have it. That is the invention AC7 exists to prevent,
-  // so the property is asserted rather than left to a comment.
-  const legend = buildEdgeLegend(synthetic([
-    { edge_id: '1', from: 'a', to: 'b', relation_type: 'parent_of|v2', origin: 'explicit' },
-    { edge_id: '2', from: 'a', to: 'b', relation_type: 'parent_of', origin: 'v2|explicit' }
+test('two relation kinds that differ only across the key boundary stay two rows', () => {
+  // buildEdgeLegend groups on a composite key. A key that JOINS the two fields
+  // on a separator is injective only while no value can contain that separator,
+  // and two separators have now been measured against that claim:
+  //
+  //   - `|`: on the pair below the rows do not merely merge — ONE row is
+  //     reported, `parent_of|v2 (explicit)` with count 2, attributing a relation
+  //     kind to an edge that does not have it.
+  //   - NUL: the module joined on `\u0000` and its comment claimed a relation
+  //     type containing it could not collide with a different pair. That claim
+  //     was false, and this test could not see it because it probed `|` only.
+  //     Measured on the shipped module, with [NUL] for the byte:
+  //     `parent_of[NUL]v2 / explicit` and `parent_of / v2[NUL]explicit` produced
+  //     ONE row, `{relationType:'parent_of[NUL]v2', origin:'explicit',
+  //     count:2}`, total 2 — the same fabrication, performed with the separator
+  //     the comment named as the guard.
+  //
+  // The key is the JSON text of the pair now, so both are asserted: no separator
+  // can come back without one of them going red.
+  const NUL = String.fromCharCode(0)
+  for (const separator of ['|', NUL]) {
+    const legend = buildEdgeLegend(synthetic([
+      { edge_id: '1', from: 'a', to: 'b', relation_type: `parent_of${separator}v2`, origin: 'explicit' },
+      { edge_id: '2', from: 'a', to: 'b', relation_type: 'parent_of', origin: `v2${separator}explicit` }
+    ]))
+    assert.deepEqual(
+      legend.entries,
+      [
+        { relationType: 'parent_of', origin: `v2${separator}explicit`, count: 1 },
+        { relationType: `parent_of${separator}v2`, origin: 'explicit', count: 1 }
+      ],
+      `a ${JSON.stringify(separator)} separator collapsed two relation kinds into one row`
+    )
+    assert.equal(legend.total, 2)
+  }
+
+  // JSON text has a boundary of its own — the `","` between the two fields — and
+  // the difference is that it is ESCAPED inside a value instead of being
+  // forgeable. A relation type that spells that boundary literally must still not
+  // merge with the pair it would forge; under a naive `a + '","' + b` join both
+  // edges below produce the identical key `parent_of","explicit","x`.
+  const forged = buildEdgeLegend(synthetic([
+    { edge_id: '1', from: 'a', to: 'b', relation_type: 'parent_of","explicit', origin: 'x' },
+    { edge_id: '2', from: 'a', to: 'b', relation_type: 'parent_of', origin: 'explicit","x' }
   ]))
-  assert.deepEqual(legend.entries, [
-    { relationType: 'parent_of', origin: 'v2|explicit', count: 1 },
-    { relationType: 'parent_of|v2', origin: 'explicit', count: 1 }
-  ])
-  assert.equal(legend.total, 2)
+  assert.deepEqual(
+    forged.entries,
+    [
+      { relationType: 'parent_of', origin: 'explicit","x', count: 1 },
+      { relationType: 'parent_of","explicit', origin: 'x', count: 1 }
+    ],
+    'the JSON key boundary was forged from inside a value'
+  )
+  assert.equal(forged.total, 2)
 })
 
 test('relation types are echoed exactly, never normalised or prettified', () => {
@@ -3594,10 +3679,31 @@ test('the encoding token the legend names is the token the stage really strokes 
 })
 ```
 
-**Corrected 2026-08-19 (review of Task 5).** The block above is the shipped file verbatim, at **13** tests rather than the 11 the first draft carried. **The module below did not change** — it is shipped byte-for-byte as this plan spelled it, at `82a42c70d2d79a9aea201c2b1c564d1408647ddad7f57680441520aa41b1173c`. Four repairs to the suite, each answering a measurement:
+**Corrected 2026-08-19 (second review of Task 5).** Still **13** tests (13 before, 13 after) carrying **7** more assertions — 49 to 56, measured with `grep -c 'assert\.'` — across two widened tests and one that was renamed and rewritten (`…across the separator…` became `…across the key boundary…`). **The module changed too**, and its only non-comment change is the two grouping keys: `/usr/bin/diff` between the previous module and this one, filtered to the lines that are not comments, prints exactly two removals and two additions — the NUL-joined edge key against `JSON.stringify([edge.relation_type, edge.origin])`, and the depth ternary against `String(node.depth)`. Everything else that moved in it is comment. Both blocks in this task are the shipped files verbatim: the suite at `78201206a2bbd828dfcf9f6d752c91fdb7ac9f02a5a535e24804f06d16982524` and the module at `d6100b077e95615b151333670f7211390e0d3908c7085e4139014aee0f616a4a`. The five findings below were each measured on the module the previous round shipped, `82a42c70d2d79a9aea201c2b1c564d1408647ddad7f57680441520aa41b1173c`, and every mutation was restored and re-verified with `shasum -a 256`, never with an empty `diff`.
+
+1. **The legend's user-facing sentence was not pinned as a template, and a surviving mutant turns it into a fixed string.** Replacing the template `Every relation drawn here is ${only.relationType} (${only.origin}); …` with the literal `Every relation drawn here is parent_of (explicit); …` scored **exit 0, 13/13**, and `edgeLegendNote(buildEdgeLegend({edges:[{relation_type:'links_to', origin:'derived', …}]}))` then returned `"Every relation drawn here is parent_of (explicit); all are drawn with the same stroke."` verbatim. That is exactly the AC7 defect this suite exists to prevent — slice 1's fixed rows, which happened to be accurate at five nodes, moved out of the rows and into the sentence — and `legend.mjs` names that pattern in its own header as the thing it fixes. The rows were pinned against invention; the **note** was not, because the only single-row note assertion read the real snapshot, where the honest answer is `parent_of (explicit)` anyway, so it could not tell a template from a constant. The relation-type half is reachable with real data (`view-model.mjs:81` requires only `isText(edge.relation_type)`); the origin half is not today (`view-model.mjs:87` refuses any origin but `'explicit'`). One assertion over a `links_to`/`derived` model pins both halves.
+2. **The NUL separator's comment claimed a property the key did not have, and the previous round's repair could not see it.** The key was `${relation_type}\u0000${origin}` under a comment saying a relation type containing the separator "cannot collide with a different (type, origin) pair". Measured on that module: `relation_type: 'parent_of<NUL>v2', origin: 'explicit'` and `relation_type: 'parent_of', origin: 'v2<NUL>explicit'` produced **ONE** row, `{relationType:'parent_of<NUL>v2', origin:'explicit', count:2}`, total 2 — the same fabrication the previous round's new test was written to prevent, performed **with the separator itself**, and invisible to that test because it probed `|`. Not reachable through the real path (`view-model.mjs:87`), so this was a false claim rather than a shipped defect. The claim is made true instead of narrowed: the key is now `JSON.stringify([edge.relation_type, edge.origin])`, which has no forgeable boundary because every quote and backslash inside a value is escaped. The test now asserts both separators and a value that spells the JSON boundary `","` literally.
+3. **The hierarchy group stated no limit of its own.** Recorded as a decision under **D7** above rather than discovered during Task 6, with the six-level measurement, and pinned by test.
+4. **`legend.total` and `scope.totalEdges` spell "total" for different quantities, and Task 6 reads both objects.** Measured on the SPRINT neighbourhood: `scope = {shownNodes:2, totalNodes:5, shownEdges:1, totalEdges:4}` while `buildEdgeLegend(applied.model).total = 1` — so `legend.total === scope.shownEdges`. The behaviour was already pinned; only the name was ambiguous across the two modules a shell caption reads side by side. The field is **not** renamed, because Task 6's spec below already reads this contract and a rename there is not this task's to make; the `@returns` JSDoc now states which quantity it is, with the measurement.
+5. **`EDGE_ENCODING_TOKEN` has no importer.** Measured across the whole worktree, excluding `.git` and `node_modules`: its only occurrences are the declaration, its use at `legend.mjs:60` inside the same module, and this plan. Task 6 below re-spells `var(--line-strong)` in shell CSS for the edge swatch instead of reading the name from here. This is the **third** unread export in the slice, after `VIEW_MODES` (Task 3) and `isPanning()`/`isClickSuppressed()` (Task 2), and it is **one open PO decision covering all three**, not three: keep them, so the shell reads each of these facts from one source instead of re-spelling it, or delete all three with the assertions that read them. The module records the open decision at the declaration, as Task 3 does.
+
+| Mutation | Must go red | Measured |
+| --- | --- | --- |
+| note template → the fixed literal `'… parent_of (explicit) …'` | `the legend does not claim an encoding the stage does not draw` | exit 1, 12/13 |
+| `JSON.stringify([type, origin])` → `\u0000` join | `two relation kinds that differ only across the key boundary stay two rows` | exit 1, 12/13 |
+| `JSON.stringify([type, origin])` → `\|` join | same test | exit 1, 12/13 |
+| `JSON.stringify([type, origin])` → naive `["${type}","${origin}"]` join | same test | exit 1, 12/13 |
+| `token: depthTokenName(node.depth)` → `token: '--depth-0'` | `the hierarchy legend shows the depths that really occur…` **and** `an absent depth is never displayed…` | exit 1, 11/13 |
+| `String(node.depth)` → the removed `depth === null ? 'none'` ternary | **nothing — it must stay green** | exit 0, 13/13 |
+
+The last row is the point of the fourth repair rather than a coverage gap: `String(null)` is `'null'`, which no numeric depth can spell, so the ternary guarded nothing while reading as though it guarded something. It is removed and the reason is written at the line.
+
+No **must-not-change** file was mutated this round. After the battery the module is back at `d6100b077e95615b151333670f7211390e0d3908c7085e4139014aee0f616a4a` — printed by the battery after every row — and `git status --porcelain` lists only this task's own files.
+
+**Corrected 2026-08-19 (review of Task 5).** The block above is the shipped file verbatim, at **13** tests rather than the 11 the first draft carried. **The module below did not change in that round** — it was shipped byte-for-byte as this plan spelled it, at `82a42c70d2d79a9aea201c2b1c564d1408647ddad7f57680441520aa41b1173c`. **That is no longer the file below:** the second review recorded above changed two statements in it, and the module block now carries `d6100b077e95615b151333670f7211390e0d3908c7085e4139014aee0f616a4a`. Four repairs to the suite, each answering a measurement:
 
 1. **The draft's purity test could not pass against the draft's own module.** It was a raw whole-file `source.includes(token)` list whose tokens included `localeCompare`, and the module's own comment explains the rule it follows by naming it — "deliberately not localeCompare". Measured on the plan's two blocks written out untouched: exit 1, **10/11**, failing `legend.mjs references localeCompare`. So Step 4's "PASS, 11/11" was not reachable from Step 1 and Step 3 as written, and this is the fourth time this repository has measured the same raw-substring pattern: §2 names `test/helpers/purity.mjs` as "the one purity guard every pure-core suite is scanned with", and Tasks 2, 3 and 4 each removed a re-spelling of it. The draft's list was also blind in the other direction — it names neither `import` nor MODULE_SPECIFIER, nor `fetch`, `setTimeout`, `crypto`, `eval`, `process`, `globalThis`, `navigator`, `performance` or `localStorage`. The repair is Task 4's, unchanged in shape: strip the comments with the shared scanner, allow the one import statement exactly once, run the whole shared guard over everything else, and keep `localeCompare` and `innerHTML` as this module's own two extra rules — checked over the **code**, so the comment that explains the first may name it. Measured after the repair: the shared guard returns `[]` on the module body.
-2. **The composite key's separator was unpinned, and a mutant fabricates a relation kind.** `\u0000` changed to `|` survived at exit 0, 12/12. On two edges that differ only across the separator it does not merely merge two rows — it reports **one** row, `parent_of|v2 (explicit)`, with `count: 2`, attributing a relation kind to an edge that does not have it. The module's comment claimed the separator prevented exactly this; nothing could lose the claim. One test closes it.
+2. **The composite key's separator was unpinned, and a mutant fabricates a relation kind.** `\u0000` changed to `|` survived at exit 0, 12/12. On two edges that differ only across the separator it does not merely merge two rows — it reports **one** row, `parent_of|v2 (explicit)`, with `count: 2`, attributing a relation kind to an edge that does not have it. The module's comment claimed the separator prevented exactly this; nothing could lose the claim. One test closes it. **Superseded by the second review above:** that test probed `|` only, and the module's claim about its own separator was false in the same way — the NUL pair collided into one fabricated row on the very module this round shipped. The key is the JSON text of the pair now, and both separators are asserted.
 3. **Two entries cannot reach both halves of the depth comparator.** `if (a.depth === null) return b.depth === null ? 0 : 1` mutated to `: -1` — leaving a comparator that contradicts itself — still yields `[4, null]` for the file's two-node case and survived at exit 0, 12/12, because V8 asks that pair through the `b.depth === null` branch alone. It is not academic: the same mutant sorts node order `[2, null, 0, 1]` to `[0, 1, null, 2]` and `[0, 1, 2, null]` to `[null, 0, 1, 2]`, putting unrooted pages in the middle of the hierarchy rows and, in the second case, above the root. Pinned over a four-depth set from three different node orders, which also shows the result does not depend on the order nodes arrive in.
 4. **`buildDepthLegend`'s `empty` was returned but never read.** `empty: entries.length === 0` mutated to `empty: false` survived at exit 0, 12/12. It is part of the contract Task 6 reads. Two assertions close it.
 
@@ -3605,7 +3711,7 @@ One test was **added** beyond the draft's scope, for a claim the slice makes and
 
 | Mutation | Must go red | Measured |
 | --- | --- | --- |
-| `\u0000` → `\|` (key separator) | `two relation kinds that differ only across the separator stay two rows` | exit 1, 12/13 |
+| `\u0000` → `\|` (key separator) — **superseded, see the second review above** | `two relation kinds that differ only across the separator stay two rows` (since renamed) | exit 1, 12/13 |
 | `empty: entries.length === 0` → `empty: false` | `an absent depth is never displayed, and unrooted nodes sort last` | exit 1, 12/13 |
 | `if (a.depth === null) return … : 1` → `: -1` | `an absent depth is never displayed, and unrooted nodes sort last` | exit 1, 12/13 |
 | `if (b.depth === null) return -1` → `return 1` | `an absent depth is never displayed, and unrooted nodes sort last` | exit 1, 12/13 |
@@ -3677,20 +3783,48 @@ import { depthTokenName } from './scene.mjs'
 // itself because the process locale changed.
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 
-/** The design token every explicit relation is actually stroked with. */
+// The design token every explicit relation is actually stroked with.
+//
+// Exported with no production reader. Measured across the whole worktree,
+// excluding .git and node_modules: the only occurrences of this name are this
+// declaration, its use in buildEdgeLegend below, and the plan. Task 6 imports
+// buildEdgeLegend, edgeLegendNote, buildDepthLegend and depthCaption, and paints
+// the edge swatch from a re-spelled `var(--line-strong)` in shell CSS instead of
+// reading the name from here — so the token the legend NAMES and the token the
+// swatch USES are two independent spellings of one claim. It is exported anyway
+// so that pair can be collapsed onto one source. Keeping an export only tests
+// read is the same call Task 2 left open for isPanning()/isClickSuppressed() and
+// Task 3 for VIEW_MODES; the three are named in the plan as ONE open PO decision
+// rather than settled here.
 export const EDGE_ENCODING_TOKEN = '--line-strong'
 
 /**
  * @param {object} model a view model, or the projected model of a view
  * @returns {{entries:Array, total:number, distinguishesTypes:boolean,
  *            encodingToken:string, empty:boolean}}
+ *
+ * `total` counts the edges this model DRAWS. On a neighbourhood that is
+ * `applyView(...).scope.shownEdges`, never `scope.totalEdges` — measured on the
+ * SPRINT neighbourhood of the accepted snapshot, scope
+ * `{shownNodes:2, totalNodes:5, shownEdges:1, totalEdges:4}` against
+ * `buildEdgeLegend(applied.model).total === 1`. The two objects spell "total"
+ * for different quantities and a shell caption reads them side by side, so the
+ * difference is stated here rather than left to be rediscovered.
  */
 export function buildEdgeLegend(model) {
   const counts = new Map()
   for (const edge of model.edges) {
-    // A NUL separator, so a relation type containing the separator cannot
-    // collide with a different (type, origin) pair.
-    const key = `${edge.relation_type}\u0000${edge.origin}`
+    // The key is the JSON text of the PAIR, not the two fields joined on a
+    // separator. A joined key is injective only while no value can contain the
+    // separator, and the NUL this used to join on did not have that property
+    // either. Measured on the shipped module, with [NUL] standing for the byte:
+    // `parent_of[NUL]v2 / explicit` and `parent_of / v2[NUL]explicit` produced
+    // ONE row, `{relationType:'parent_of[NUL]v2', origin:'explicit', count:2}`,
+    // total 2 — the exact fabrication the separator comment claimed to prevent,
+    // performed with the separator itself. JSON.stringify escapes every quote
+    // and backslash inside a value, so distinct pairs of strings always produce
+    // distinct key text and no value can forge the boundary between the two.
+    const key = JSON.stringify([edge.relation_type, edge.origin])
     const entry = counts.get(key)
     if (entry) entry.count += 1
     else counts.set(key, { relationType: edge.relation_type, origin: edge.origin, count: 1 })
@@ -3724,11 +3858,29 @@ export function edgeLegendNote(legend) {
  * strokes the disc with. This is NOT the ATLAS-40 edge legend and is headed as
  * hierarchy; it exists because depth is what the node colours encode, and an
  * unexplained colour is its own small lie.
+ *
+ * What this group does NOT distinguish, written here because the edge legend
+ * states its own limit and this one must not be discovered while wiring the
+ * shell: depthTokenName collapses every depth >= 3 onto `--depth-n`, so a graph
+ * deeper than three levels produces several differently-labelled rows carrying
+ * an IDENTICAL swatch. Measured on a six-level graph — `Root -> --depth-0`,
+ * `Level 1 -> --depth-1`, `Level 2 -> --depth-2`, `Level 3 -> --depth-n`,
+ * `Level 4 -> --depth-n`, `Level 5 -> --depth-n`: 4 distinct tokens over 6 rows.
+ * Nothing is wrong on the accepted snapshot, which is three levels deep and
+ * gives every row its own token. No flag is returned for it, because the fact is
+ * already in the rows — a shell that must say "Level 3 and deeper share one
+ * colour" derives it from `new Set(entries.map((e) => e.token)).size <
+ * entries.length` rather than from a field only tests would read. D7 records the
+ * limitation and assigns the sentence to the shell.
  */
 export function buildDepthLegend(model) {
   const counts = new Map()
   for (const node of model.nodes) {
-    const key = node.depth === null ? 'none' : String(node.depth)
+    // `String(null)` is 'null', which no numeric depth can spell, so this is
+    // already injective over the `number|null` the model guarantees. The
+    // `depth === null ? 'none'` special case this replaced guarded nothing while
+    // reading as though it guarded something.
+    const key = String(node.depth)
     const entry = counts.get(key)
     if (entry) entry.count += 1
     else counts.set(key, { depth: node.depth, token: depthTokenName(node.depth), count: 1 })
