@@ -3322,6 +3322,13 @@ import { buildViewModel } from '../viewer/atlas39/core/view-model.mjs'
 import { applyView } from '../viewer/atlas39/core/view-state.mjs'
 import { depthTokenName } from '../viewer/atlas39/core/scene.mjs'
 import { buildEdgeLegend, edgeLegendNote, buildDepthLegend, depthCaption } from '../viewer/atlas39/core/legend.mjs'
+import {
+  stripComments,
+  purityViolations,
+  FORBIDDEN_TOKENS,
+  FORBIDDEN_IDENTIFIERS,
+  MODULE_SPECIFIER
+} from './helpers/purity.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const EVIDENCE = join(repoRoot, 'docs/evidence/atlas-65')
@@ -3424,6 +3431,7 @@ test('the hierarchy legend shows the depths that really occur, with the token th
     assert.equal(entry.token, depthTokenName(entry.depth), 'the swatch token is not the stroked token')
   }
   assert.deepEqual(legend.entries.map((e) => depthCaption(e.depth)), ['Root', 'Level 1', 'Level 2'])
+  assert.equal(legend.empty, false)
 })
 
 test('an absent depth is never displayed, and unrooted nodes sort last', () => {
@@ -3440,6 +3448,57 @@ test('an absent depth is never displayed, and unrooted nodes sort last', () => {
   for (const absent of ['Root', 'Level 1', 'Level 2']) {
     assert.equal(shown.includes(absent), false, `the legend invented "${absent}"`)
   }
+
+  // Two entries can only ever ask the comparator about ONE of its two null
+  // branches, and V8 asks this pair through the `b.depth === null` branch alone:
+  // measured, `if (a.depth === null) return b.depth === null ? 0 : 1` mutated to
+  // `: -1` — a comparator that then contradicts itself — still yields [4, null]
+  // here and survived the whole suite at exit 0, 12/12. It is not academic. The
+  // same mutant reorders a realistic set: node order [2, null, 0, 1] came out
+  // [0, 1, null, 2] and [0, 1, 2, null] came out [null, 0, 1, 2], putting
+  // unrooted pages in the middle of the hierarchy rows and, in the second case,
+  // above the root. So the rule is pinned over a set big enough to reach both
+  // branches, from two different node orders, to also show the result does not
+  // depend on the order the nodes happen to arrive in.
+  const mk = (depth, i) => ({
+    node_id: `n${i}`, source_ref: String(i), label: `n${i}`, depth, degree: 0, provenance: null
+  })
+  for (const order of [[2, null, 0, 1], [0, 1, 2, null], [null, 2, 0, 1]]) {
+    const ordered = buildDepthLegend(synthetic([], order.map(mk)))
+    assert.deepEqual(
+      ordered.entries.map((e) => e.depth),
+      [0, 1, 2, null],
+      `node order ${JSON.stringify(order)} changed the hierarchy rows`
+    )
+  }
+
+  // A graph with no nodes states that it has no hierarchy rather than showing a
+  // row. `empty` is part of the contract the shell reads, and nothing else in
+  // this file asked for it: `empty: entries.length === 0` mutated to
+  // `empty: false` survived at exit 0, 12/12.
+  const none = buildDepthLegend(synthetic([], []))
+  assert.deepEqual(none.entries, [])
+  assert.equal(none.empty, true)
+})
+
+test('two relation kinds that differ only across the separator stay two rows', () => {
+  // buildEdgeLegend groups on a composite key, and the key's separator is the
+  // one character a relation type must not be able to forge. The module joins on
+  // NUL for that reason; nothing in the plan's suite could lose it. Measured:
+  // the separator changed from `\u0000` to `|` survived at exit 0, 12/12, and on
+  // the two edges below it does not merely merge the rows — it reports ONE row,
+  // `parent_of|v2 (explicit)`, with count 2, attributing a relation kind to an
+  // edge that does not have it. That is the invention AC7 exists to prevent,
+  // so the property is asserted rather than left to a comment.
+  const legend = buildEdgeLegend(synthetic([
+    { edge_id: '1', from: 'a', to: 'b', relation_type: 'parent_of|v2', origin: 'explicit' },
+    { edge_id: '2', from: 'a', to: 'b', relation_type: 'parent_of', origin: 'v2|explicit' }
+  ]))
+  assert.deepEqual(legend.entries, [
+    { relationType: 'parent_of', origin: 'v2|explicit', count: 1 },
+    { relationType: 'parent_of|v2', origin: 'explicit', count: 1 }
+  ])
+  assert.equal(legend.total, 2)
 })
 
 test('relation types are echoed exactly, never normalised or prettified', () => {
@@ -3448,13 +3507,116 @@ test('relation types are echoed exactly, never normalised or prettified', () => 
   assert.equal(legend.entries[0].relationType, odd)
 })
 
-test('the module carries no clock, randomness or DOM', () => {
+// The purity guard is the shared one every pure-core suite is scanned with,
+// imported rather than re-spelled. The plan's Task 5 drafted a private
+// `source.includes(token)` list over the RAW file instead, and that draft could
+// never pass: the module's own comment "deliberately not localeCompare" turns
+// its own denylist red on a byte-identically pure file. Measured at 10/11
+// before this repair, failing on `legend.mjs references localeCompare`.
+const ALLOWED_IMPORT = "import { depthTokenName } from './scene.mjs'"
+
+/**
+ * Two rules that belong to THIS module and to no shared denylist, so they are
+ * spelled here: D7 fixes the legend's order in code units, never in the process
+ * locale's collation, and the legend returns data for the shell to place through
+ * `textContent` rather than markup of its own. Both are checked over the
+ * comment-free code, so the comment that explains the first may name it.
+ */
+const LEGEND_FORBIDDEN = ['localeCompare', 'innerHTML']
+
+test('the module carries no clock, randomness or DOM, imports only the scene, and never localeCompare', () => {
   const source = readFileSync(join(repoRoot, 'viewer/atlas39/core/legend.mjs'), 'utf8')
-  for (const forbidden of ['Date.', 'Math.random', 'document', 'window', 'localeCompare', 'innerHTML']) {
-    assert.equal(source.includes(forbidden), false, `legend.mjs references ${forbidden}`)
+  const code = stripComments(source)
+  // The strip is load-bearing, so it is proved not to have eaten the code it was
+  // meant to leave standing — one probe per region of the module.
+  assert.match(code, /export function buildEdgeLegend/, 'the comment strip removed buildEdgeLegend')
+  assert.match(code, /export function edgeLegendNote/, 'the comment strip removed edgeLegendNote')
+  assert.match(code, /export function buildDepthLegend/, 'the comment strip removed buildDepthLegend')
+  assert.match(code, /export function depthCaption/, 'the comment strip removed depthCaption')
+
+  // The carve-out is narrowed to the one import rather than widened to a weaker
+  // guard: that exact statement must appear exactly once, and the WHOLE shared
+  // guard — `import` and MODULE_SPECIFIER included — then runs over everything
+  // else, so a second import, static or dynamic, is still caught.
+  assert.equal(
+    code.split(ALLOWED_IMPORT).length - 1,
+    1,
+    'legend.mjs no longer imports exactly the depth token function, exactly once'
+  )
+  const body = code.replace(ALLOWED_IMPORT, '')
+  for (const forbidden of FORBIDDEN_TOKENS) {
+    assert.equal(body.includes(forbidden), false, `legend.mjs references ${forbidden}`)
+  }
+  for (const forbidden of FORBIDDEN_IDENTIFIERS) {
+    assert.doesNotMatch(
+      body,
+      new RegExp(`\\b${forbidden}\\b`),
+      `legend.mjs references the bare identifier ${forbidden}`
+    )
+  }
+  assert.doesNotMatch(body, MODULE_SPECIFIER, 'legend.mjs imports from a second module specifier')
+  assert.deepEqual(purityViolations(body), [], 'the purity rules disagree with each other')
+  for (const forbidden of LEGEND_FORBIDDEN) {
+    assert.equal(body.includes(forbidden), false, `legend.mjs references ${forbidden}`)
   }
 })
+
+test('the encoding token the legend names is the token the stage really strokes a relation with', () => {
+  // The legend states a token by NAME, and the shell paints its swatch with it.
+  // Nothing else in this slice pins that name: D8's parity work covers the DEPTH
+  // ladder only, so a repointed edge colour would leave the legend describing a
+  // stroke the stage no longer draws — the swatch-drifts-from-the-stroke defect
+  // D8 exists to prevent, one token over.
+  //
+  // Both drawing paths are pinned, because the stage has two: the WebGL renderer
+  // strokes an idle relation with `palette.edgeIdle` (render-webgl.mjs:221-222),
+  // which resolvePalette reads from the token named here, and the SVG/golden path
+  // takes `.a39-edge { stroke: … }` from stage.css. Both files are on the
+  // must-not-change list for this slice, so this reads them and changes nothing.
+  const legend = buildEdgeLegend(vm)
+  const sceneSource = readFileSync(join(repoRoot, 'viewer/atlas39/core/scene.mjs'), 'utf8')
+  const edgeIdle = /\bedgeIdle:\s*'([^']+)'/.exec(sceneSource)
+  assert.notEqual(edgeIdle, null, 'scene.mjs no longer resolves an `edgeIdle` palette entry')
+  assert.equal(
+    legend.encodingToken,
+    edgeIdle[1],
+    'the legend names a token the WebGL stage does not stroke an idle relation with'
+  )
+
+  const stageCss = readFileSync(join(repoRoot, 'viewer/atlas39/stage.css'), 'utf8')
+  const edgeRule = /\.a39-edge\s*\{[^}]*\}/.exec(stageCss)
+  assert.notEqual(edgeRule, null, 'stage.css no longer carries an .a39-edge rule')
+  assert.match(
+    edgeRule[0],
+    new RegExp(`stroke:\\s*var\\(${legend.encodingToken}\\)`),
+    'the legend names a token the SVG stage does not stroke a relation with'
+  )
+})
 ```
+
+**Corrected 2026-08-19 (review of Task 5).** The block above is the shipped file verbatim, at **13** tests rather than the 11 the first draft carried. **The module below did not change** — it is shipped byte-for-byte as this plan spelled it, at `82a42c70d2d79a9aea201c2b1c564d1408647ddad7f57680441520aa41b1173c`. Four repairs to the suite, each answering a measurement:
+
+1. **The draft's purity test could not pass against the draft's own module.** It was a raw whole-file `source.includes(token)` list whose tokens included `localeCompare`, and the module's own comment explains the rule it follows by naming it — "deliberately not localeCompare". Measured on the plan's two blocks written out untouched: exit 1, **10/11**, failing `legend.mjs references localeCompare`. So Step 4's "PASS, 11/11" was not reachable from Step 1 and Step 3 as written, and this is the fourth time this repository has measured the same raw-substring pattern: §2 names `test/helpers/purity.mjs` as "the one purity guard every pure-core suite is scanned with", and Tasks 2, 3 and 4 each removed a re-spelling of it. The draft's list was also blind in the other direction — it names neither `import` nor MODULE_SPECIFIER, nor `fetch`, `setTimeout`, `crypto`, `eval`, `process`, `globalThis`, `navigator`, `performance` or `localStorage`. The repair is Task 4's, unchanged in shape: strip the comments with the shared scanner, allow the one import statement exactly once, run the whole shared guard over everything else, and keep `localeCompare` and `innerHTML` as this module's own two extra rules — checked over the **code**, so the comment that explains the first may name it. Measured after the repair: the shared guard returns `[]` on the module body.
+2. **The composite key's separator was unpinned, and a mutant fabricates a relation kind.** `\u0000` changed to `|` survived at exit 0, 12/12. On two edges that differ only across the separator it does not merely merge two rows — it reports **one** row, `parent_of|v2 (explicit)`, with `count: 2`, attributing a relation kind to an edge that does not have it. The module's comment claimed the separator prevented exactly this; nothing could lose the claim. One test closes it.
+3. **Two entries cannot reach both halves of the depth comparator.** `if (a.depth === null) return b.depth === null ? 0 : 1` mutated to `: -1` — leaving a comparator that contradicts itself — still yields `[4, null]` for the file's two-node case and survived at exit 0, 12/12, because V8 asks that pair through the `b.depth === null` branch alone. It is not academic: the same mutant sorts node order `[2, null, 0, 1]` to `[0, 1, null, 2]` and `[0, 1, 2, null]` to `[null, 0, 1, 2]`, putting unrooted pages in the middle of the hierarchy rows and, in the second case, above the root. Pinned over a four-depth set from three different node orders, which also shows the result does not depend on the order nodes arrive in.
+4. **`buildDepthLegend`'s `empty` was returned but never read.** `empty: entries.length === 0` mutated to `empty: false` survived at exit 0, 12/12. It is part of the contract Task 6 reads. Two assertions close it.
+
+One test was **added** beyond the draft's scope, for a claim the slice makes and nothing pinned: `the encoding token the legend names is the token the stage really strokes a relation with`. The legend states `--line-strong` by name and Task 6 paints its swatch with it, but D8's parity work covers the **depth** ladder only — a repointed edge colour would leave the legend describing a stroke the stage no longer draws, which is the swatch-drifts-from-the-stroke defect D8 exists to prevent, one token over. Both drawing paths are pinned by reading, and changing, nothing: `scene.mjs:131` `edgeIdle: '--line-strong'`, which `render-webgl.mjs:221-222` strokes idle **and** dim relations with, and `stage.css:37` `.a39-edge { stroke: var(--line-strong) }` for the SVG/golden path. D7's claim that the only per-edge variation is the focus highlight was verified against those same three lines rather than assumed.
+
+| Mutation | Must go red | Measured |
+| --- | --- | --- |
+| `\u0000` → `\|` (key separator) | `two relation kinds that differ only across the separator stay two rows` | exit 1, 12/13 |
+| `empty: entries.length === 0` → `empty: false` | `an absent depth is never displayed, and unrooted nodes sort last` | exit 1, 12/13 |
+| `if (a.depth === null) return … : 1` → `: -1` | `an absent depth is never displayed, and unrooted nodes sort last` | exit 1, 12/13 |
+| `if (b.depth === null) return -1` → `return 1` | `an absent depth is never displayed, and unrooted nodes sort last` | exit 1, 12/13 |
+| `byCodeUnit` → `a.localeCompare(b)` | `the module carries no clock, randomness or DOM, imports only the scene, and never localeCompare` | exit 1, 12/13 |
+| `depthCaption` drops the `Root` branch | `the hierarchy legend shows the depths that really occur, with the token that is really stroked` | exit 1, 12/13 |
+| `EDGE_ENCODING_TOKEN` → `'--accent'` | both encoding tests | exit 1, 11/13 |
+| `distinguishesTypes: false` → `true` | `the legend does not claim an encoding the stage does not draw` | exit 1, 12/13 |
+| `scene.mjs` `edgeIdle` → `'--accent'` | `the encoding token the legend names is the token the stage really strokes a relation with` | exit 1, 12/13 |
+| `stage.css` `.a39-edge` stroke → `var(--accent)` | `the encoding token the legend names is the token the stage really strokes a relation with` | exit 1, 12/13 |
+
+Every row was restored and re-verified with `shasum -a 256`, never with an empty `diff`. The two rows that mutate a **must-not-change** file did so as a measurement only: `viewer/atlas39/core/scene.mjs` is back at `caadfe9f29cff846b39b6babae98e4af522411891b7e2811392c0e46fa228a8c` and `viewer/atlas39/stage.css` at `061e1426bb6cc3423e1dfd396183a11c9ce9aeaee11e5d69379d12885ee71483`, the hashes recorded before the round, and neither appears in `git status --porcelain`.
 
 Before running, confirm the depth distribution assumed above:
 
@@ -3593,7 +3755,7 @@ export function depthCaption(depth) {
 ```
 node --test test/atlas40-legend.test.mjs
 ```
-Expected: PASS, 11/11.
+Expected: PASS, 13/13.
 
 **Step 5: Counterexample proof (do not commit the mutation)**
 
