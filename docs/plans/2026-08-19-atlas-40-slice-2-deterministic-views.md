@@ -56,6 +56,8 @@ Consequence: `computeLayout` and `buildScene` need **zero** changes.
 
 Edges *between two neighbours* are included. They are real explicit edges between two nodes that are on screen; hiding them would also draw a graph the snapshot does not contain.
 
+**Corrected 2026-08-19 (review of Task 3).** The accepted snapshot cannot witness this rule: it is a tree, and the number of its nodes whose two neighbours are joined by an edge is `0`. No assertion over the real snapshot can tell this rule apart from "every edge incident to the anchor" — measured, not assumed — so Task 3 pins it with a four-node witness graph instead, and says in the test file that the witness is not evidence about ATLAS content.
+
 "Cluster" in AC5 is interpreted strictly as *a UI projection over explicit graph state*. No cluster label, no community detection, no similarity, no kNN.
 
 ### D3 — Full-graph search and navigator are preserved; focus can leave a view
@@ -1439,7 +1441,7 @@ test('a neighbourhood is the anchor plus the nodes its explicit edges reach', ()
   assert.equal(applied.scope.complete, false)
 })
 
-test('a neighbourhood keeps an edge between two neighbours, because that edge is real', () => {
+test('a neighbourhood draws no edge with an endpoint off view, and a grandchild is not a neighbour', () => {
   // The root has three real children; anchoring on it must not drop the
   // root->delivery->sprint chain's first hop, and must not add the second.
   const applied = applyView(vm, { mode: 'neighbourhood', anchorId: ROOT })
@@ -1448,6 +1450,51 @@ test('a neighbourhood keeps an edge between two neighbours, because that edge is
   for (const edge of applied.model.edges) {
     assert.equal(ids.has(edge.from) && ids.has(edge.to), true, `${edge.edge_id} has an endpoint off view`)
   }
+})
+
+// D2 says an edge BETWEEN TWO NEIGHBOURS is drawn, because both of its ends are
+// on screen and hiding it would draw a graph the snapshot does not contain. The
+// accepted snapshot cannot witness that rule: it is a tree, and the number of
+// its nodes whose two neighbours are joined by a real edge is 0 — measured over
+// all five. So a projection that kept only the edges TOUCHING THE ANCHOR passes
+// every assertion above and every other assertion in this file.
+//
+// This is the smallest graph that tells the two rules apart. It is a witness for
+// the projection rule and nothing else: it is never rendered, it is not evidence
+// about ATLAS content, and no assertion about the real graph is made through it.
+const TRIANGLE = {
+  contract_version: '1.0.0',
+  project_id: 'ATLAS',
+  id_scheme: 'projection-local/v1',
+  canonical_entity_ids: false,
+  source: { source_kind: 'confluence', source_id: 'witness' },
+  nodes: [
+    { node_id: 'W:a', source_ref: 'a', label: 'A' },
+    { node_id: 'W:b', source_ref: 'b', label: 'B' },
+    { node_id: 'W:c', source_ref: 'c', label: 'C' },
+    { node_id: 'W:d', source_ref: 'd', label: 'D' }
+  ],
+  edges: [
+    { edge_id: 'W:ab', from: 'W:a', to: 'W:b', relation_type: 'parent_of', origin: 'explicit' },
+    { edge_id: 'W:ac', from: 'W:a', to: 'W:c', relation_type: 'parent_of', origin: 'explicit' },
+    { edge_id: 'W:bc', from: 'W:b', to: 'W:c', relation_type: 'parent_of', origin: 'explicit' },
+    { edge_id: 'W:cd', from: 'W:c', to: 'W:d', relation_type: 'parent_of', origin: 'explicit' }
+  ]
+}
+
+test('an edge between two neighbours is drawn, because both of its ends are on screen', () => {
+  const witness = buildViewModel(TRIANGLE, null)
+  const applied = applyView(witness, { mode: 'neighbourhood', anchorId: 'W:a' })
+  assert.deepEqual(applied.model.nodes.map((n) => n.node_id), ['W:a', 'W:b', 'W:c'])
+  // W:bc touches neither the anchor nor anything off view. Keeping only the
+  // edges incident to the anchor would drop it and draw two neighbours that the
+  // snapshot says are related as though they were not.
+  assert.deepEqual(applied.model.edges.map((e) => e.edge_id), ['W:ab', 'W:ac', 'W:bc'])
+  // W:cd has an endpoint off view and stays off, so "both endpoints" is a real
+  // restriction and not just "every edge of every shown node".
+  assert.equal(applied.model.edges.some((e) => e.edge_id === 'W:cd'), false)
+  assert.equal(applied.scope.shownEdges, 3)
+  assert.equal(applied.scope.totalEdges, 4)
 })
 
 test('a leaf neighbourhood is the leaf and its parent, never an empty stage', () => {
@@ -1480,16 +1527,42 @@ test('applying the same view twice produces the same view, node for node and edg
 })
 
 test('view order follows the view model, not insertion or identifier accident', () => {
-  const applied = applyView(vm, { mode: 'neighbourhood', anchorId: DELIVERY })
   const full = vm.nodes.map((n) => n.node_id)
-  const shown = applied.model.nodes.map((n) => n.node_id)
-  assert.deepEqual(shown, full.filter((id) => shown.includes(id)), 'the view reordered the graph')
+  for (const anchorId of [ROOT, DELIVERY]) {
+    const applied = applyView(vm, { mode: 'neighbourhood', anchorId })
+    const shown = applied.model.nodes.map((n) => n.node_id)
+    assert.deepEqual(shown, full.filter((id) => shown.includes(id)), 'the view reordered the graph')
+  }
+  // That assertion can only see an identifier sort for an anchor whose two
+  // orders actually differ. For DELIVERY they coincide, so with that anchor
+  // alone the test proved nothing about the "identifier accident" it is named
+  // for. ROOT is the anchor that tells them apart — pinned here so a future
+  // change to the graph or to the node ordering cannot quietly disarm it again.
+  const rootShown = applyView(vm, { mode: 'neighbourhood', anchorId: ROOT }).model.nodes.map((n) => n.node_id)
+  assert.notDeepEqual(
+    rootShown,
+    [...rootShown].sort(),
+    'this anchor no longer distinguishes view-model order from identifier order'
+  )
 })
 
 test('an unknown mode is refused, never coerced into overview', () => {
   for (const mode of ['cluster', 'Overview', '', null, 42, undefined]) {
     const result = applyView(vm, { mode, anchorId: null })
     assert.equal(result.ok, false, `mode ${JSON.stringify(mode)} was accepted`)
+    assert.equal(result.code, E_VIEW_MODE)
+    assert.equal('model' in result, false, 'a refused view still produced a model')
+  }
+})
+
+test('a view descriptor that is not an object is refused as a value, never thrown', () => {
+  // This is the guard Task 4 leans on: a saved view arrives as the output of
+  // JSON.parse, where null, an array, a string and a number are the realistic
+  // inputs. Every refusal in this slice is a VALUE — a TypeError here would be
+  // a crash at the one seam that exists to fail closed.
+  for (const descriptor of [null, undefined, [], ['overview'], 'overview', 42, true]) {
+    const result = applyView(vm, descriptor)
+    assert.equal(result.ok, false, `${JSON.stringify(descriptor)} was accepted`)
     assert.equal(result.code, E_VIEW_MODE)
     assert.equal('model' in result, false, 'a refused view still produced a model')
   }
@@ -1524,11 +1597,32 @@ test('the caption counts what is drawn and what exists, and nothing else', () =>
 
 test('the module carries no clock, randomness or DOM', () => {
   const source = readFileSync(join(repoRoot, 'viewer/atlas39/core/view-state.mjs'), 'utf8')
-  for (const forbidden of ['Date.', 'Math.random', 'document', 'window', 'localStorage', 'fetch(']) {
+  const forbiddenTokens = [
+    // clock
+    'Date.', 'Date(', 'performance.', 'setTimeout', 'setInterval',
+    // randomness
+    'Math.random', 'crypto',
+    // DOM
+    'document', 'window', 'localStorage',
+    // IO and the ambient routes that reach all three around the tokens above
+    'fetch(', 'node:', 'require(', 'process.', 'globalThis'
+  ]
+  for (const forbidden of forbiddenTokens) {
     assert.equal(source.includes(forbidden), false, `view-state.mjs references ${forbidden}`)
   }
 })
 ```
+
+**Corrected 2026-08-19 (review of Task 3).** The assertions above were mutation-tested against the module they guard, one regression at a time. Three of them did not fail when it regressed, so three claims in this task were not being paid for. All three are repaired in the block above — the block is the file — and **the module's own code is unchanged from the draft below**, verified by checksum after every mutation.
+
+1. **D2's neighbour-to-neighbour rule had no witness, and the test named for it did not test it.** The accepted snapshot is a tree: measured over all five nodes, the number of anchors whose two neighbours are joined by a real edge is `0`. Replacing the projection's edge rule with `edge.from === resolved.anchorId || edge.to === resolved.anchorId` — which drops exactly the edges D2 says are drawn — left all 13 tests **green**. The test that claimed the property is renamed to what it actually proves (no endpoint off view, a grandchild is not a neighbour), and a four-node witness graph built through `buildViewModel` now pins the rule. That witness is not evidence about ATLAS content and is never rendered; it exists because the real snapshot cannot express this case at all.
+2. **The order test's anchor could not see an identifier sort.** For anchor `DELIVERY` the view-model order and the identifier order coincide, so re-sorting the projected nodes by `node_id` left all 13 tests **green** — under a test named "not insertion or identifier accident". Measured per anchor, only the root and `…14680066` distinguish the two orders. The test now asserts over the root as well, *and* asserts that the root still distinguishes them, so a later change to the graph or to the node ordering cannot quietly disarm it again.
+3. **The purity guard was narrower than its own name.** `'Date.'` does not match `new Date()`, and no token in the list matched a `node:` import, so both a clock and an IO import passed a guard named "no clock, randomness or DOM". The denylist now names the clock, randomness, DOM and IO routes explicitly. It stays a raw substring scan over the whole source, comments included — strictly weaker than the comment-stripping scanner Task 2 built for `gesture.mjs`, and it fails closed on a comment that happens to contain a token. Unifying the two guards behind one shared helper is **deferred, not silently carried**.
+
+4. **`normalizeView`'s non-object guard was never exercised.** Deleting it left every test green, and it is the guard Task 4 leans on: a saved view is `JSON.parse` output, so `null`, an array, a string and a number are its realistic inputs, and without the guard `applyView(vm, null)` **throws a TypeError** instead of returning a refusal — a crash at the one seam D4/D5 require to fail closed with a value. A test now pins that every non-object descriptor is refused as a value.
+
+After the repair all 15 mutations fail the suite. One further mutation is recorded as **not** a defect: dropping the `Array.isArray` branch survives, and is an **equivalent mutant** — an array carries no `mode`, so it is refused by the very next check with the identical public outcome (`ok: false`, `E_VIEW_MODE`); only the internal reason string differs. Measured on all three of `[]`, `['overview']` and `[1, 2]`. No assertion was contorted to kill it.
+
 
 **Step 2: Run test to verify it fails**
 
@@ -1672,7 +1766,7 @@ export function viewCaption(scope, anchorLabel = null) {
 ```
 node --test test/atlas40-view-state.test.mjs
 ```
-Expected: PASS, 13/13.
+Expected: PASS, 15/15.
 
 **Step 5: Commit**
 
