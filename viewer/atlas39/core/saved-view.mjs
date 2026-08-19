@@ -170,7 +170,13 @@ export function validateSavedView(raw) {
   return {
     ok: true,
     value: {
-      saved_view_version: raw.saved_view_version,
+      // `saved_view_version` is deliberately NOT carried into the validated
+      // value. It could only ever be SAVED_VIEW_VERSION — every other value was
+      // refused by the version gate above — so it would be a constant with no
+      // reader, and an unread field is a field no test can pay for: the rule
+      // view-state.mjs states where it deleted `anchorId` and `complete`.
+      // Measured before it was dropped: replacing it with `saved_view_version:
+      // 99` left this suite green at exit 0, 16/16.
       snapshot: identity,
       view: view.view,
       focusId: raw.focus_id ?? null,
@@ -184,12 +190,25 @@ export function validateSavedView(raw) {
  * Binds a validated saved view to the graph that is actually loaded.
  *
  * @param {object} viewModel from buildViewModel()
- * @param {object} parsed the `value` of a successful parseSavedView()
+ * @param {object} parsed the `value` of a successful parseSavedView(); anything
+ *        else is refused as a value, never thrown
  * @param {{width:number,height:number}} viewport the stage size right now
  * @returns {{ok:true, view:object, focusId:(string|null), transform:object, viewportChanged:boolean}
  *          |{ok:false, code:string, reason:string}}
  */
 export function restoreSavedView(viewModel, parsed, viewport) {
+  // A refusal is a VALUE in this module, so being handed the wrong shape is
+  // answered rather than thrown at a caller that did not read `ok` first — the
+  // same contract `isInView` states in view-state.mjs. The concrete mistake is
+  // passing the whole parseSavedView RESULT instead of its `.value`: both a
+  // success envelope and a refusal carry no `snapshot`, and both used to raise
+  // `TypeError: Cannot read properties of undefined (reading 'project_id')`
+  // (measured) — which D5 forbids, because a bad saved view must never tear the
+  // stage down.
+  if (!isObject(parsed) || !isObject(parsed.snapshot) || !isObject(parsed.view)) {
+    return refusal(E_SAVED_VIEW_INVALID, 'restoreSavedView was not given a validated saved view')
+  }
+
   const identity = snapshotIdentity(viewModel)
   for (const key of IDENTITY_FIELDS) {
     if (parsed.snapshot[key] !== identity[key]) {

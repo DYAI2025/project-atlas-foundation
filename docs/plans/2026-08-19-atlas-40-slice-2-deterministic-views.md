@@ -2280,6 +2280,7 @@ import { fileURLToPath } from 'node:url'
 import { buildViewModel } from '../viewer/atlas39/core/view-model.mjs'
 import {
   SAVED_VIEW_VERSION,
+  IDENTITY_FIELDS,
   captureSavedView,
   serializeSavedView,
   parseSavedView,
@@ -2357,6 +2358,53 @@ test('the six identity fields carry the values the loaded graph really has', () 
     node_count: 5,
     edge_count: 4
   })
+
+  // Literals close the field-to-field swap, but on their own they re-open the
+  // other half of the same question: an implementation that IGNORES its
+  // argument passes them. Measured: replacing the whole body of
+  // snapshotIdentity with exactly those six literals left the suite green at
+  // exit 0, 16/16 — and under that mutant EVERY graph captures ATLAS's
+  // identity, so restoreSavedView compares ATLAS's identity to itself and a
+  // view captured against graph A restores into graph B with ok:true. That is
+  // the cross-graph restore D4's identity check exists to prevent, and the
+  // whole reason node_count/edge_count are part of the identity.
+  //
+  // So the six fields are read a second time off a synthetic view model that
+  // differs in ALL SIX. It witnesses this module's mapping only; it is NOT
+  // evidence about ATLAS content, the same convention Task 3's four-node
+  // witness graph is written under.
+  const other = {
+    project_id: 'OTHER',
+    source: { source_id: '99999999' },
+    contract_version: '2.0.0',
+    id_scheme: 'canonical/v1',
+    counts: { nodes: 2, edges: 1 },
+    // Both saved ids exist here, so a restore that got past the identity check
+    // would answer ok:true rather than E_SAVED_VIEW_STALE_NODE — the failure
+    // below has to be the one actually being pinned.
+    adjacency: new Map([[DELIVERY, new Set([SPRINT])], [SPRINT, new Set([DELIVERY])]])
+  }
+  assert.deepEqual(
+    captureSavedView({
+      viewModel: other,
+      view: { mode: 'neighbourhood', anchorId: DELIVERY },
+      focusId: SPRINT,
+      transform: { scale: 1, tx: 0, ty: 0 },
+      viewport: VIEWPORT
+    }).snapshot,
+    {
+      project_id: 'OTHER',
+      source_id: '99999999',
+      contract_version: '2.0.0',
+      id_scheme: 'canonical/v1',
+      node_count: 2,
+      edge_count: 1
+    }
+  )
+
+  const crossGraph = restoreSavedView(other, parseSavedView(serializeSavedView(sample())).value, VIEWPORT)
+  assert.equal(crossGraph.ok, false, 'a view captured against one graph restored into another')
+  assert.equal(crossGraph.code, E_SAVED_VIEW_SNAPSHOT)
 })
 
 test('serialising is byte-stable, so the same view always stores the same bytes', () => {
@@ -2528,18 +2576,39 @@ test('a supported mode with a missing anchor is refused as malformed, not as a b
 })
 
 test('a malformed shape is refused field by field', () => {
+  // "Field by field" is the title, so EVERY guarded field gets its own row and
+  // every dimension of a two-dimensional field gets its own. A table that
+  // covers one representative per group leaves the rest fail-OPEN: measured on
+  // the previous table, deleting any single one of `!isText(snapshot.source_id)`,
+  // `!isText(snapshot.contract_version)`, `!isText(snapshot.id_scheme)`,
+  // `!Number.isInteger(snapshot.edge_count)`, `!isFiniteNumber(t.ty)`,
+  // `!isFiniteNumber(v.width)` or `!isFiniteNumber(v.height) || v.height <= 0`
+  // left the suite green at exit 0, 16/16, while a record carrying
+  // {"transform":{"scale":1.75,"tx":-412,"ty":"up"}} or
+  // {"viewport":{"width":1092,"height":"tall"}} then parsed and restored
+  // ok:true — the shell would apply a NaN translate, or accept a stage size it
+  // cannot use, and announce a successful restore. Only `project_id` and
+  // `node_count` were pinned, and they are exactly the two rows this table had.
   const base = sample()
   const mutations = [
     ['snapshot', undefined],
     ['snapshot', { ...base.snapshot, project_id: 42 }],
+    ['snapshot', { ...base.snapshot, source_id: 14778372 }],
+    ['snapshot', { ...base.snapshot, contract_version: 1 }],
+    ['snapshot', { ...base.snapshot, id_scheme: null }],
     ['snapshot', { ...base.snapshot, node_count: '5' }],
+    ['snapshot', { ...base.snapshot, edge_count: '4' }],
     ['view', undefined],
     ['focus_id', 42],
     ['transform', { scale: 0, tx: 0, ty: 0 }],
     ['transform', { scale: Number.NaN, tx: 0, ty: 0 }],
     ['transform', { scale: 1, tx: 'left', ty: 0 }],
+    ['transform', { scale: 1, tx: 0, ty: 'up' }],
     ['transform', undefined],
     ['viewport', { width: 0, height: 693 }],
+    ['viewport', { width: 'wide', height: 693 }],
+    ['viewport', { width: 1092, height: 0 }],
+    ['viewport', { width: 1092, height: 'tall' }],
     ['viewport', undefined]
   ]
   for (const [key, value] of mutations) {
@@ -2565,7 +2634,30 @@ test('a saved view from a different graph is refused, per identity field', () =>
     const result = restoreSavedView(vm, drifted, VIEWPORT)
     assert.equal(result.ok, false, `${key} drift was accepted`)
     assert.equal(result.code, E_SAVED_VIEW_SNAPSHOT)
-    assert.match(result.reason, new RegExp(key))
+
+    // Asking only whether the drifted field's NAME appears somewhere passes on
+    // a reason that names every field. Measured: replacing the reason with the
+    // constant string 'the saved view was captured against a different graph
+    // (project_id source_id contract_version id_scheme node_count edge_count
+    // differ)' left the suite green at exit 0, 16/16, and a node_count-only
+    // drift was then reported to the user as all six fields differing. So the
+    // reason must name exactly ONE identity field, and carry both of the values
+    // it is contrasting — otherwise it is not a report about this drift.
+    assert.deepEqual(
+      IDENTITY_FIELDS.filter((field) => result.reason.includes(field)),
+      [key],
+      `the reason named the wrong set of identity fields: ${result.reason}`
+    )
+    assert.equal(
+      result.reason.includes(JSON.stringify(value)),
+      true,
+      `the saved value is missing from the reason: ${result.reason}`
+    )
+    assert.equal(
+      result.reason.includes(JSON.stringify(parsed.snapshot[key])),
+      true,
+      `this graph's value is missing from the reason: ${result.reason}`
+    )
   }
 })
 
@@ -2605,6 +2697,36 @@ test('COUNTEREXAMPLE: a stale node id is refused and is never mapped onto anothe
         `the refusal offered ${node.node_id} as a substitute`
       )
     }
+  }
+})
+
+test('restoreSavedView answers a refusal when it is handed anything but a validated saved view', () => {
+  // A refusal is a VALUE in this module, and the sibling pure module states the
+  // same contract for `isInView` in view-state.mjs — it answers `false` on a
+  // refusal "instead of throwing a TypeError at a caller that did not check ok
+  // first". This module did the opposite. Measured before the guard:
+  // restoreSavedView(vm, parseSavedView(text), viewport) — the whole parse
+  // RESULT rather than its .value — raised `TypeError: Cannot read properties
+  // of undefined (reading 'project_id')`, and so did the same call on a
+  // refusal. Under D5 a saved view that does not apply must never tear the
+  // stage down, so the wrong shape is refused rather than thrown.
+  const wrong = [
+    parseSavedView(serializeSavedView(sample())), // the {ok, value} envelope, not value
+    parseSavedView('not json'), // a refusal
+    null,
+    undefined,
+    'a string',
+    {},
+    { snapshot: sample().snapshot } // an identity, but no view
+  ]
+  for (const argument of wrong) {
+    const result = restoreSavedView(vm, argument, VIEWPORT)
+    assert.equal(result.ok, false, `${JSON.stringify(argument)} was accepted`)
+    assert.equal(result.code, E_SAVED_VIEW_INVALID, `${JSON.stringify(argument)}: ${result.code}`)
+    // Nothing may be handed back that the shell could half-apply.
+    assert.equal('view' in result, false)
+    assert.equal('focusId' in result, false)
+    assert.equal('transform' in result, false)
   }
 })
 
@@ -2844,7 +2966,13 @@ export function validateSavedView(raw) {
   return {
     ok: true,
     value: {
-      saved_view_version: raw.saved_view_version,
+      // `saved_view_version` is deliberately NOT carried into the validated
+      // value. It could only ever be SAVED_VIEW_VERSION — every other value was
+      // refused by the version gate above — so it would be a constant with no
+      // reader, and an unread field is a field no test can pay for: the rule
+      // view-state.mjs states where it deleted `anchorId` and `complete`.
+      // Measured before it was dropped: replacing it with `saved_view_version:
+      // 99` left this suite green at exit 0, 16/16.
       snapshot: identity,
       view: view.view,
       focusId: raw.focus_id ?? null,
@@ -2858,12 +2986,25 @@ export function validateSavedView(raw) {
  * Binds a validated saved view to the graph that is actually loaded.
  *
  * @param {object} viewModel from buildViewModel()
- * @param {object} parsed the `value` of a successful parseSavedView()
+ * @param {object} parsed the `value` of a successful parseSavedView(); anything
+ *        else is refused as a value, never thrown
  * @param {{width:number,height:number}} viewport the stage size right now
  * @returns {{ok:true, view:object, focusId:(string|null), transform:object, viewportChanged:boolean}
  *          |{ok:false, code:string, reason:string}}
  */
 export function restoreSavedView(viewModel, parsed, viewport) {
+  // A refusal is a VALUE in this module, so being handed the wrong shape is
+  // answered rather than thrown at a caller that did not read `ok` first — the
+  // same contract `isInView` states in view-state.mjs. The concrete mistake is
+  // passing the whole parseSavedView RESULT instead of its `.value`: both a
+  // success envelope and a refusal carry no `snapshot`, and both used to raise
+  // `TypeError: Cannot read properties of undefined (reading 'project_id')`
+  // (measured) — which D5 forbids, because a bad saved view must never tear the
+  // stage down.
+  if (!isObject(parsed) || !isObject(parsed.snapshot) || !isObject(parsed.view)) {
+    return refusal(E_SAVED_VIEW_INVALID, 'restoreSavedView was not given a validated saved view')
+  }
+
   const identity = snapshotIdentity(viewModel)
   for (const key of IDENTITY_FIELDS) {
     if (parsed.snapshot[key] !== identity[key]) {
@@ -2904,7 +3045,7 @@ export function restoreSavedView(viewModel, parsed, viewport) {
 ```
 node --test test/atlas40-saved-view.test.mjs
 ```
-Expected: PASS, 16/16.
+Expected: PASS, 17/17.
 
 **Corrected 2026-08-19 (review of Task 4).** Four defects in this task were measured and repaired; the test block above is the repaired one, and the expected count moved from 14 to 15.
 
@@ -2932,6 +3073,22 @@ Two things that are **not** defects, recorded because they were checked rather t
 **Corrected 2026-08-19 (third review of Task 4).** One further defect was measured in the test block above, and it is the repaired one. It is an unpinned invariant, not wrong behaviour: `shasum -a 256 viewer/atlas39/core/saved-view.mjs` is `550fddafb8056d79724e4770e8522b4612e32b94fbad337dd33b9987e70e7b75` before and after this round, unchanged since the first review. The expected count moves from 15 to 16, because this repair is a new test rather than an assertion bolted onto an existing one: the property it pins matches no title already in the file, and filing it under one of them would be the "the title promises X while the assertions measure Y" defect the earlier rounds of this task were themselves correcting.
 
 7. **`snapshotIdentity()`'s mapping onto D4's six fields was unpinned.** Capture and compare both go through `snapshotIdentity`, so the mapping is symmetric and no roundtrip, drift or refusal assertion can see it: the roundtrip tests stay green because the same wrong mapping is applied on both sides, and the per-field drift test only asserts that *some* value differs and that the key name appears in the reason. Measured: swapping the two sources in `viewer/atlas39/core/saved-view.mjs:snapshotIdentity` — `project_id: viewModel.id_scheme` and `id_scheme: viewModel.project_id` — left the suite **green at 15/15, exit 0**, while `captureSavedView(...).snapshot` then read `{"project_id":"projection-local/v1","source_id":"14778372","contract_version":"1.0.0","id_scheme":"ATLAS","node_count":5,"edge_count":4}` instead of the pristine `{"project_id":"ATLAS","source_id":"14778372","contract_version":"1.0.0","id_scheme":"projection-local/v1","node_count":5,"edge_count":4}` — D4's example exactly. Under that mutant every stored record carries the wrong value under each of those two keys, and `restoreSavedView`'s snapshot refusal names the wrong field back to the user (`project_id was … this graph has …` for a drift that is really the id scheme) — the same class as the already-repaired `E_SAVED_VIEW_MODE` vs `E_SAVED_VIEW_INVALID` seam, which is a defect because it tells the user a different, false story. The new test pins the six values against the literals D4 documents rather than reading the expectation back out of the same view model the implementation reads it from, which is what made the swap invisible. Under the same mutant the suite is **red, exit 1, pass 15 / fail 1**, on `the six identity fields carry the values the loaded graph really has`; the counts-swapped mutant (`node_count: viewModel.counts.edges`, `edge_count: viewModel.counts.nodes`) is likewise **red, exit 1, pass 15 / fail 1**; on the pristine module the suite is green at **16/16, exit 0**.
+
+**Corrected 2026-08-19 (fourth review of Task 4).** Six further defects were measured and repaired; the test block AND the implementation block above are the repaired ones. Four are guards that fail **open**, one is an implementation that could ignore its argument, one is a refusal that could name every field, one is a field with no reader, and one is a shape that threw instead of answering. The expected count moves from 16 to 17 — one repair is a new test, the rest are assertions and rows added to tests that already existed — and `shasum -a 256 viewer/atlas39/core/saved-view.mjs` moves from `550fddafb8056d79724e4770e8522b4612e32b94fbad337dd33b9987e70e7b75` to `07e4452ac4a373d9dd370ecf4d63491dcf89f2068788b77bc894f52a309be880`, because two of the repairs change the module. Every mutant below was staged with `git add` before the mutation and restored with `git checkout --` to a `shasum -a 256` equal to the pristine hash; the "after" column is the same mutant re-run against the repaired files.
+
+8. **Seven of the shape guards failed open, and the table that was titled "field by field" carried one row per group.** Each mutant below, applied alone to `validateSavedView`, left the suite **green at exit 0, 16/16** before this round and is **red at exit 1, pass 16 / fail 1** after it: dropping ` || !isFiniteNumber(t.ty)`, dropping ` || !isFiniteNumber(v.height) || v.height <= 0`, dropping either half of that pair on its own, dropping ` || !isFiniteNumber(v.width)`, and dropping ` || v.width <= 0`. Under the `t.ty` mutant a stored `{"transform":{"scale":1.75,"tx":-412,"ty":"up"}}` parsed and `restoreSavedView` answered `{"ok":true,…,"transform":{"scale":1.75,"tx":-412,"ty":"up"}}` — the shell would apply a NaN translate and announce a successful restore, against this module's own "never partially applied, never adapted". Under the height mutants both `{"viewport":{"width":1092,"height":"tall"}}` and `{"viewport":{"width":1092,"height":0}}` parsed and restored `ok:true` with `viewportChanged:true`, so a record whose stage size is unusable was reported as a re-fit rather than refused. The one-dimension-only blindness the third review of Task 3 repaired for the viewportChanged **comparison** had been left in place on the **validation**. The table now carries `['transform', { scale: 1, tx: 0, ty: 'up' }]`, `['viewport', { width: 'wide', height: 693 }]`, `['viewport', { width: 1092, height: 0 }]` and `['viewport', { width: 1092, height: 'tall' }]`. Note that `!isFiniteNumber(v.width)` alone was **also** unpinned — `['viewport', { width: 0, height: 693 }]` still refuses through `v.width <= 0` — so the non-numeric width row is part of this repair even though only the height half was reported.
+
+9. **Four of the six snapshot-identity type guards failed open, and each one made the module tell the user a false story.** Dropping any single one of `!isText(snapshot.source_id)`, `!isText(snapshot.contract_version)`, `!isText(snapshot.id_scheme)` or `!Number.isInteger(snapshot.edge_count)` left the suite **green at exit 0, 16/16**; all four are now **red at exit 1, pass 16 / fail 1**. Measured verbatim under the `edge_count` mutant: `{"edge_count":"4"}` parsed, and `restoreSavedView` returned `{"ok":false,"code":"E_SAVED_VIEW_SNAPSHOT","reason":"the saved view was captured against a different graph (edge_count was \"4\", this graph has 4)"}` — a malformed record reported as a re-scanned Confluence tree, the same wrong-code class as findings 3 and 7 above. The two that were pinned, `project_id` and `node_count`, were exactly the two rows the table had. It now carries one row per identity field.
+
+10. **`snapshotIdentity()` could ignore its argument entirely.** Finding 7 traded "read back out of the same view model" for six literals, which closes a field-to-field swap but re-opens "does not read the view model at all": replacing the whole body of `snapshotIdentity` with the six literals `'ATLAS' / '14778372' / '1.0.0' / 'projection-local/v1' / 5 / 4` left the suite **green at exit 0, 16/16**. Under that mutant every graph captures ATLAS's identity and `restoreSavedView` compares ATLAS's identity to itself, so a view captured against graph A restores into graph B with `ok:true` — the cross-graph restore D4's identity check exists to prevent, and the whole reason `node_count`/`edge_count` are part of the identity. The repair is the idiom this branch already uses (Task 3's four-node witness, and D2's correction): the six fields are read a second time off a synthetic view model that differs in **all six** — `{ project_id: 'OTHER', source: { source_id: '99999999' }, contract_version: '2.0.0', id_scheme: 'canonical/v1', counts: { nodes: 2, edges: 1 }, adjacency: … }` — and a view captured against `vm` is asserted refused `E_SAVED_VIEW_SNAPSHOT` when restored against it. The witness's adjacency deliberately contains both saved node ids, so under the mutant the restore really does answer `ok:true` rather than `E_SAVED_VIEW_STALE_NODE`: the failure the assertion sees is the one being pinned. All six values differ on purpose rather than only four: with the two shared values a *partial* literal mutant (`contract_version: '1.0.0'`, `id_scheme: 'projection-local/v1'` hard-coded, the other four still read) would have survived; measured against the repaired suite it is **red at exit 1, pass 16 / fail 1**. The test says in place that the witness is not evidence about ATLAS content.
+
+11. **The per-field drift test asked only whether the field's NAME appears somewhere in the reason.** `assert.match(result.reason, new RegExp(key))` passes on a reason that names every field: replacing the reason with the constant `'the saved view was captured against a different graph (project_id source_id contract_version id_scheme node_count edge_count differ)'` left the suite **green at exit 0, 16/16**, and a `node_count`-only drift was then reported to the user as all six fields differing. The test now asserts that the reason names **exactly one** identity field — `IDENTITY_FIELDS.filter((field) => result.reason.includes(field))` deep-equals `[key]` — and that it carries both JSON-serialised values it is contrasting. Under the same mutant the suite is **red at exit 1, pass 16 / fail 1**.
+
+12. **`saved_view_version` in the value `validateSavedView` returns had no reader, and was dropped.** Replacing it with `saved_view_version: 99` left the suite **green at exit 0, 16/16**. It could only ever be `SAVED_VIEW_VERSION` — every other value is refused by the version gate above it — so it was a constant no consumer reads: `restoreSavedView` never reads it, Task 6 imports only `SAVED_VIEW_VERSION`, `captureSavedView`, `serializeSavedView`, `parseSavedView`, `restoreSavedView` and `E_SAVED_VIEW_STORAGE` and passes `parsed.value` straight through, and `grep -rn saved_view_version` over the worktree finds no other reader. This is the rule `viewer/atlas39/core/view-state.mjs` states where it deleted `anchorId` and `complete` for the same reason. The captured record still carries the field — that one is the contract on disk, and is pinned by the version-gate tests.
+
+13. **`restoreSavedView` threw instead of answering when handed a parse RESULT rather than its `.value`.** Measured: `restoreSavedView(vm, parseSavedView(text), viewport)` raised `TypeError: Cannot read properties of undefined (reading 'project_id')`, and so did the same call on a refusal. The sibling pure module does the opposite for `isInView` (`if (applied?.ok !== true) return false`, with a comment saying it answers "instead of throwing a TypeError at a caller that did not check `ok` first"), and D5 requires a bad saved view never to tear the stage down. One guard clause now refuses the wrong shape as a value, `E_SAVED_VIEW_INVALID`, and the new test — the one test this round adds — covers the `{ok, value}` envelope, a refusal, `null`, `undefined`, a string, `{}` and an identity with no view, and asserts no `view`/`focusId`/`transform` comes back. Deleting the guard makes the suite **red at exit 1, pass 16 / fail 1**.
+
+Bookkeeping: the only fixed count this plan states for this suite is the `Expected: PASS` line above, corrected here from 16 to 17. The slice-wide gates at Task 8 are stated as bounds — "greater than 408" tests and "greater than 131" checks — so they need no correction. Measured after this round in this worktree: `npm run check` exits **0**, `tests 467 / pass 467 / fail 0`, `VALIDATION PASSED`, **131** validator checks (the validator additions belong to Task 7, which has not run yet).
 
 **Step 5: Commit**
 
