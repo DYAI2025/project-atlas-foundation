@@ -68,6 +68,30 @@ test('a saved view carries UI state and identity only — never the graph', () =
   assert.equal(text.includes('provenance'), false)
 })
 
+test('the six identity fields carry the values the loaded graph really has', () => {
+  // Capture and compare BOTH go through snapshotIdentity(), so the mapping from
+  // the view model onto D4's six fields is symmetric, and no roundtrip, drift or
+  // refusal test can see it. Measured: swapping the two sources inside
+  // snapshotIdentity — `project_id: viewModel.id_scheme` and
+  // `id_scheme: viewModel.project_id` — left this suite green at 15/15, exit 0,
+  // while every stored record then carried
+  // {"project_id":"projection-local/v1", ..., "id_scheme":"ATLAS"} and a later
+  // drift would have been reported back to the user against the wrong field
+  // name, which is the same false story as reporting the wrong refusal code.
+  //
+  // So the six values are pinned against the literals D4 documents, not read
+  // back out of the same view model the implementation reads them from: doing
+  // that is exactly what made the swap invisible.
+  assert.deepEqual(sample().snapshot, {
+    project_id: 'ATLAS',
+    source_id: '14778372',
+    contract_version: '1.0.0',
+    id_scheme: 'projection-local/v1',
+    node_count: 5,
+    edge_count: 4
+  })
+})
+
 test('serialising is byte-stable, so the same view always stores the same bytes', () => {
   const canonical = serializeSavedView(sample())
   assert.equal(serializeSavedView(sample()), canonical)

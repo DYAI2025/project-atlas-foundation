@@ -2335,6 +2335,30 @@ test('a saved view carries UI state and identity only — never the graph', () =
   assert.equal(text.includes('provenance'), false)
 })
 
+test('the six identity fields carry the values the loaded graph really has', () => {
+  // Capture and compare BOTH go through snapshotIdentity(), so the mapping from
+  // the view model onto D4's six fields is symmetric, and no roundtrip, drift or
+  // refusal test can see it. Measured: swapping the two sources inside
+  // snapshotIdentity — `project_id: viewModel.id_scheme` and
+  // `id_scheme: viewModel.project_id` — left this suite green at 15/15, exit 0,
+  // while every stored record then carried
+  // {"project_id":"projection-local/v1", ..., "id_scheme":"ATLAS"} and a later
+  // drift would have been reported back to the user against the wrong field
+  // name, which is the same false story as reporting the wrong refusal code.
+  //
+  // So the six values are pinned against the literals D4 documents, not read
+  // back out of the same view model the implementation reads them from: doing
+  // that is exactly what made the swap invisible.
+  assert.deepEqual(sample().snapshot, {
+    project_id: 'ATLAS',
+    source_id: '14778372',
+    contract_version: '1.0.0',
+    id_scheme: 'projection-local/v1',
+    node_count: 5,
+    edge_count: 4
+  })
+})
+
 test('serialising is byte-stable, so the same view always stores the same bytes', () => {
   const canonical = serializeSavedView(sample())
   assert.equal(serializeSavedView(sample()), canonical)
@@ -2880,7 +2904,7 @@ export function restoreSavedView(viewModel, parsed, viewport) {
 ```
 node --test test/atlas40-saved-view.test.mjs
 ```
-Expected: PASS, 15/15.
+Expected: PASS, 16/16.
 
 **Corrected 2026-08-19 (review of Task 4).** Four defects in this task were measured and repaired; the test block above is the repaired one, and the expected count moved from 14 to 15.
 
@@ -2904,6 +2928,10 @@ Two things that are **not** defects, recorded because they were checked rather t
 5. **D4's version gate was pinned on its code but not on its order.** D4 requires `saved_view_version` to be "checked **first**, before any field is read", and the test was named for it — `an unsupported version is refused before any field is interpreted` — but every case it ran varied `saved_view_version` alone while every other field stayed valid, so it could not tell "version first" from "version last". Measured: moving the whole version-gate block from the top of `validateSavedView` down to just above `const identity = {}` left the suite **green at 15/15, exit 0**, and under that mutant `parseSavedView(JSON.stringify({ saved_view_version: 99 }))` returned `E_SAVED_VIEW_INVALID` where the pristine module returns `E_SAVED_VIEW_VERSION` — the fields were interpreted before the version after all. The ordering is only visible on a record broken in *both* ways at once, so the test now parses four of those (a bad version with a missing snapshot, with an unsupported mode, with an unusable transform, and a bare `{saved_view_version: 99}`) and asserts `E_SAVED_VIEW_VERSION` for each. Under the same mutant the suite is now **red, exit 1, pass 14 / fail 1**, on `a field was interpreted before the version was checked: E_SAVED_VIEW_INVALID`.
 
 6. **The COUNTEREXAMPLE's node-id scan was quote-anchored, so a substitute offered in prose was invisible to it.** The scan asked whether the serialised refusal contains `"<node_id>"` *with* the surrounding quotes, which only matches a node id that is a whole JSON string value — while the refusal's `reason` is the one field where a substitute would actually be offered. Measured: rewriting the stale-node reason to name `viewModel.nodes[0].node_id` as "the nearest surviving page … restore that one instead" left the suite **green at 15/15, exit 0**, while the refusal literally read `the saved anchor node is not in this graph; the nearest surviving page is ATLAS:confluence:14778372:14778372 - restore that one instead` — real node ids present in the refusal: `["ATLAS:confluence:14778372:14778372"]`, real node ids as quoted values: `[]`. The test's own comment states the property ("a refusal must carry NO usable node of this graph"), so the scan is now unanchored. Under the same mutant the suite is **red, exit 1, pass 14 / fail 1**, on `the refusal offered ATLAS:confluence:14778372:14778372 as a substitute`; on the pristine module it stays green at 15/15.
+
+**Corrected 2026-08-19 (third review of Task 4).** One further defect was measured in the test block above, and it is the repaired one. It is an unpinned invariant, not wrong behaviour: `shasum -a 256 viewer/atlas39/core/saved-view.mjs` is `550fddafb8056d79724e4770e8522b4612e32b94fbad337dd33b9987e70e7b75` before and after this round, unchanged since the first review. The expected count moves from 15 to 16, because this repair is a new test rather than an assertion bolted onto an existing one: the property it pins matches no title already in the file, and filing it under one of them would be the "the title promises X while the assertions measure Y" defect the earlier rounds of this task were themselves correcting.
+
+7. **`snapshotIdentity()`'s mapping onto D4's six fields was unpinned.** Capture and compare both go through `snapshotIdentity`, so the mapping is symmetric and no roundtrip, drift or refusal assertion can see it: the roundtrip tests stay green because the same wrong mapping is applied on both sides, and the per-field drift test only asserts that *some* value differs and that the key name appears in the reason. Measured: swapping the two sources in `viewer/atlas39/core/saved-view.mjs:snapshotIdentity` — `project_id: viewModel.id_scheme` and `id_scheme: viewModel.project_id` — left the suite **green at 15/15, exit 0**, while `captureSavedView(...).snapshot` then read `{"project_id":"projection-local/v1","source_id":"14778372","contract_version":"1.0.0","id_scheme":"ATLAS","node_count":5,"edge_count":4}` instead of the pristine `{"project_id":"ATLAS","source_id":"14778372","contract_version":"1.0.0","id_scheme":"projection-local/v1","node_count":5,"edge_count":4}` — D4's example exactly. Under that mutant every stored record carries the wrong value under each of those two keys, and `restoreSavedView`'s snapshot refusal names the wrong field back to the user (`project_id was … this graph has …` for a drift that is really the id scheme) — the same class as the already-repaired `E_SAVED_VIEW_MODE` vs `E_SAVED_VIEW_INVALID` seam, which is a defect because it tells the user a different, false story. The new test pins the six values against the literals D4 documents rather than reading the expectation back out of the same view model the implementation reads it from, which is what made the swap invisible. Under the same mutant the suite is **red, exit 1, pass 15 / fail 1**, on `the six identity fields carry the values the loaded graph really has`; the counts-swapped mutant (`node_count: viewModel.counts.edges`, `edge_count: viewModel.counts.nodes`) is likewise **red, exit 1, pass 15 / fail 1**; on the pristine module the suite is green at **16/16, exit 0**.
 
 **Step 5: Commit**
 
