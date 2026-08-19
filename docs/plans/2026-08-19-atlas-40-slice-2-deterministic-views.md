@@ -3679,13 +3679,28 @@ test('the encoding token the legend names is the token the stage really strokes 
 })
 ```
 
+**Corrected 2026-08-19 (third review of Task 5).** Still **13** tests, and **the suite did not change**: `cmp` between the block above and `test/atlas40-legend.test.mjs` reports no difference, both at `78201206a2bbd828dfcf9f6d752c91fdb7ac9f02a5a535e24804f06d16982524`. **The module changed** — one statement and two comment blocks — and the module block below is the shipped file verbatim at `2a11b70f57fe3bbb2591d692af50e3461d7db02e7865617f159269e7200838c9`, verified with `cmp`, never with an empty `diff`. Four defects, each measured against the module the previous round shipped, `d6100b077e95615b151333670f7211390e0d3908c7085e4139014aee0f616a4a`:
+
+1. **The JSDoc written last round to name the `total` ambiguity claimed a consumer that does not exist, and the reason given for declining the rename rested on the same false premise.** The comment read "a shell caption reads them side by side" and item 4 below gave "Task 6's spec below already reads this contract" as the reason not to rename. Measured: `grep -rnE 'legend\.total|edgeLegend\.total' --exclude-dir=.git --exclude-dir=node_modules --exclude='*.md' .` returns exactly four hits, all assertions in `test/atlas40-legend.test.mjs` (`:43`, `:92`, `:138`, `:257`). Task 6's `paintLegend` reads `.entries` and `.empty` and passes the object to `edgeLegendNote`; it never reads `.total`. Task 7's contract assertions and Task 8's runbook do not mention it either. Overclaiming a reader is the defect class this module's own header says it exists to refuse — "never claim more than the code can show" — one function down from the note that refuses it. The comment now states "no reader today", and because `total` is itself an unread returned fact the open-decision inventory at the `EDGE_ENCODING_TOKEN` declaration is corrected from **three** items to four: the same YAGNI argument that rejected a `sharedToken` field applies to a field already in the return, so it is named in the decision rather than exempt from it. The field is kept, not deleted, because deleting it would take the four assertions with it; which branch the PO takes is the open decision, not this round's to settle.
+2. **The depth grouping key converted to a string before comparing, which is strictly less injective than the value it converts.** `const key = String(node.depth)` collapses `depth: 1` onto `depth: '1'` and `null` onto `'null'`. Measured on the module last round shipped, over four nodes with those four depths: **two** rows, `[{"depth":1,"token":"--depth-1","count":2},{"depth":null,"token":"--depth-none","count":2}]` — the same one-fabricated-row-per-collision defect the round removed from the *edge* key one function up, left standing in the depth key. `const key = node.depth` is behaviour-identical for the `number|null` the model guarantees, because `Map` compares with SameValueZero, and on the same four nodes it now returns four rows. It also removes the three-line comment that existed only to argue the conversion was safe. Not reachable through the loader — `buildViewModel` computes `depth` itself — so this is a simplification and a removed collision, not a shipped defect.
+3. **The JSON key's injectivity was stated in this plan without its scope.** Item 2 below said the key "has no forgeable boundary" full stop; it is injective over pairs of *strings*, which is what the module's own comment says and what the loader guarantees. `JSON.stringify` serialises `undefined` as `null`, so `relation_type: undefined` and `relation_type: null` share the key `[null,"explicit"]` and produce one row. The scope clause and the measurement are now in item 2.
+4. **D7's new requirement had no landing site, so the overclaim it was written to prevent would have shipped anyway.** D7 says the hierarchy limitation is not returned as a flag and that **Task 6 must say it**. Measured before this round: `grep -n 'share one colour'` over this plan returned exactly two hits — D7 and the module's own comment — while Task 6's `paintLegend` ended at `dom.legendDepth.replaceChildren(depthRows)`, its `index.html` block gave the Hierarchy group no note element, its `dom` map had no entry for one, Task 7 asserted only `id="legend-edges"` and `id="legend-depth"`, and Task 8's runbook described the group without the limit. A decision recorded in the audited scope contract with nothing downstream able to execute it is not a decision that shipped. Task 6 now creates `#legend-depth-note` (reusing `.a39-legend-note`, so no CSS change), maps it as `dom.legendDepthNote`, and derives the sentence in `paintLegend` from `new Set(depthLegend.entries.map((e) => e.token)).size < depthLegend.entries.length` — so it appears only when the swatches really do collapse, and stays empty on the accepted three-level snapshot. Task 7 asserts the element and the derivation; Task 8's runbook states the limit and the note's wording.
+
+| Mutation | Must go red | Measured |
+| --- | --- | --- |
+| `const key = node.depth` → `const key = String(node.depth)` (the removed conversion) | **nothing — it must stay green** | exit 0, 13/13 |
+| `token: depthTokenName(node.depth)` → `token: '--depth-0'` (re-measured on the new key) | `the hierarchy legend shows the depths that really occur…` **and** `an absent depth is never displayed…` | exit 1, 11/13 |
+| `total: model.edges.length` → `total: 0` | four assertions across three tests | exit 1, 10/13 |
+
+The first row is recorded rather than closed by a test, and the reason is the same one the previous round recorded for its own equivalent row: a string `depth` cannot reach `buildDepthLegend` through the shell, because `buildViewModel` computes `depth` itself, so the only way to pin it would be a synthetic node whose shape the model does not permit. The last row is the honest counterweight to the first defect above: `total` has no production reader, but it is pinned by four assertions, so "delete the field" is a real cost and belongs to the PO decision rather than to this round.
+
 **Corrected 2026-08-19 (second review of Task 5).** Still **13** tests (13 before, 13 after) carrying **7** more assertions — 49 to 56, measured with `grep -c 'assert\.'` — across two widened tests and one that was renamed and rewritten (`…across the separator…` became `…across the key boundary…`). **The module changed too**, and its only non-comment change is the two grouping keys: `/usr/bin/diff` between the previous module and this one, filtered to the lines that are not comments, prints exactly two removals and two additions — the NUL-joined edge key against `JSON.stringify([edge.relation_type, edge.origin])`, and the depth ternary against `String(node.depth)`. Everything else that moved in it is comment. Both blocks in this task are the shipped files verbatim: the suite at `78201206a2bbd828dfcf9f6d752c91fdb7ac9f02a5a535e24804f06d16982524` and the module at `d6100b077e95615b151333670f7211390e0d3908c7085e4139014aee0f616a4a`. The five findings below were each measured on the module the previous round shipped, `82a42c70d2d79a9aea201c2b1c564d1408647ddad7f57680441520aa41b1173c`, and every mutation was restored and re-verified with `shasum -a 256`, never with an empty `diff`.
 
 1. **The legend's user-facing sentence was not pinned as a template, and a surviving mutant turns it into a fixed string.** Replacing the template `Every relation drawn here is ${only.relationType} (${only.origin}); …` with the literal `Every relation drawn here is parent_of (explicit); …` scored **exit 0, 13/13**, and `edgeLegendNote(buildEdgeLegend({edges:[{relation_type:'links_to', origin:'derived', …}]}))` then returned `"Every relation drawn here is parent_of (explicit); all are drawn with the same stroke."` verbatim. That is exactly the AC7 defect this suite exists to prevent — slice 1's fixed rows, which happened to be accurate at five nodes, moved out of the rows and into the sentence — and `legend.mjs` names that pattern in its own header as the thing it fixes. The rows were pinned against invention; the **note** was not, because the only single-row note assertion read the real snapshot, where the honest answer is `parent_of (explicit)` anyway, so it could not tell a template from a constant. The relation-type half is reachable with real data (`view-model.mjs:81` requires only `isText(edge.relation_type)`); the origin half is not today (`view-model.mjs:87` refuses any origin but `'explicit'`). One assertion over a `links_to`/`derived` model pins both halves.
-2. **The NUL separator's comment claimed a property the key did not have, and the previous round's repair could not see it.** The key was `${relation_type}\u0000${origin}` under a comment saying a relation type containing the separator "cannot collide with a different (type, origin) pair". Measured on that module: `relation_type: 'parent_of<NUL>v2', origin: 'explicit'` and `relation_type: 'parent_of', origin: 'v2<NUL>explicit'` produced **ONE** row, `{relationType:'parent_of<NUL>v2', origin:'explicit', count:2}`, total 2 — the same fabrication the previous round's new test was written to prevent, performed **with the separator itself**, and invisible to that test because it probed `|`. Not reachable through the real path (`view-model.mjs:87`), so this was a false claim rather than a shipped defect. The claim is made true instead of narrowed: the key is now `JSON.stringify([edge.relation_type, edge.origin])`, which has no forgeable boundary because every quote and backslash inside a value is escaped. The test now asserts both separators and a value that spells the JSON boundary `","` literally.
+2. **The NUL separator's comment claimed a property the key did not have, and the previous round's repair could not see it.** The key was `${relation_type}\u0000${origin}` under a comment saying a relation type containing the separator "cannot collide with a different (type, origin) pair". Measured on that module: `relation_type: 'parent_of<NUL>v2', origin: 'explicit'` and `relation_type: 'parent_of', origin: 'v2<NUL>explicit'` produced **ONE** row, `{relationType:'parent_of<NUL>v2', origin:'explicit', count:2}`, total 2 — the same fabrication the previous round's new test was written to prevent, performed **with the separator itself**, and invisible to that test because it probed `|`. Not reachable through the real path (`view-model.mjs:87`), so this was a false claim rather than a shipped defect. The claim is made true instead of narrowed: the key is now `JSON.stringify([edge.relation_type, edge.origin])`, which has no forgeable boundary **between two strings**, because every quote and backslash inside a value is escaped. The test now asserts both separators and a value that spells the JSON boundary `","` literally. **Corrected 2026-08-19 (third review of Task 5):** that sentence stated the injectivity without its scope, and the scope is real in one direction the NUL join did not lose. `JSON.stringify` serialises `undefined` as `null`, so `relation_type: undefined` and `relation_type: null` produce the identical key `[null,"explicit"]`. Measured on the shipped module: one row for the two edges — `[{"origin":"explicit","count":2}]` with the `undefined` edge first, `[{"relationType":null,"origin":"explicit","count":2}]` with the `null` edge first — `total=2` either way, and the same holds for the origin field (`[{"relationType":"parent_of","count":2}]`, `total=2`). The NUL join kept them apart (`undefined\0explicit` vs `null\0explicit`). Unreachable through the loader, which requires `isText(edge.relation_type)` at `view-model.mjs:81` and refuses any origin but `'explicit'` at `:87`, and the module's own comment is already scoped to "distinct pairs of strings"; this sentence is now scoped to match it.
 3. **The hierarchy group stated no limit of its own.** Recorded as a decision under **D7** above rather than discovered during Task 6, with the six-level measurement, and pinned by test.
-4. **`legend.total` and `scope.totalEdges` spell "total" for different quantities, and Task 6 reads both objects.** Measured on the SPRINT neighbourhood: `scope = {shownNodes:2, totalNodes:5, shownEdges:1, totalEdges:4}` while `buildEdgeLegend(applied.model).total = 1` — so `legend.total === scope.shownEdges`. The behaviour was already pinned; only the name was ambiguous across the two modules a shell caption reads side by side. The field is **not** renamed, because Task 6's spec below already reads this contract and a rename there is not this task's to make; the `@returns` JSDoc now states which quantity it is, with the measurement.
-5. **`EDGE_ENCODING_TOKEN` has no importer.** Measured across the whole worktree, excluding `.git` and `node_modules`: its only occurrences are the declaration, its use at `legend.mjs:60` inside the same module, and this plan. Task 6 below re-spells `var(--line-strong)` in shell CSS for the edge swatch instead of reading the name from here. This is the **third** unread export in the slice, after `VIEW_MODES` (Task 3) and `isPanning()`/`isClickSuppressed()` (Task 2), and it is **one open PO decision covering all three**, not three: keep them, so the shell reads each of these facts from one source instead of re-spelling it, or delete all three with the assertions that read them. The module records the open decision at the declaration, as Task 3 does.
+4. **`legend.total` and `scope.totalEdges` spell "total" for different quantities.** Measured on the SPRINT neighbourhood: `scope = {shownNodes:2, totalNodes:5, shownEdges:1, totalEdges:4}` while `buildEdgeLegend(applied.model).total = 1` — so `legend.total === scope.shownEdges`. The behaviour was already pinned; only the name was ambiguous. The field is **not** renamed, and the `@returns` JSDoc now states which quantity it is, with the measurement. **Corrected 2026-08-19 (third review of Task 5):** the heading of this item said "and Task 6 reads both objects", and the JSDoc written for it claimed "a shell caption reads them side by side" and gave "Task 6's spec below already reads this contract" as the reason not to rename. Both are false as measured. `grep -rnE 'legend\.total|edgeLegend\.total' --exclude-dir=.git --exclude-dir=node_modules --exclude='*.md' .` returns exactly four hits, all assertions in `test/atlas40-legend.test.mjs` (`:43`, `:92`, `:138`, `:257`); Task 6's `paintLegend` below reads `.entries` and `.empty` and hands the object to `edgeLegendNote`, and reads `.total` nowhere; Task 7's contract assertions and Task 8's runbook do not mention it. So the decline rests on a wrong fact, and `total` is itself an unread returned fact — the same YAGNI argument used against a `sharedToken` field in item 3 applies to a field already in the return. Both statements are corrected to "no reader today", and `total` joins the open-decision inventory in item 5 below rather than being quietly exempt from it.
+5. **`EDGE_ENCODING_TOKEN` has no importer.** Measured across the whole worktree, excluding `.git` and `node_modules`: its only occurrences are the declaration, its use inside the same module, and this plan. Task 6 below re-spells `var(--line-strong)` in shell CSS for the edge swatch instead of reading the name from here. This is the **third** unread export in the slice, after `VIEW_MODES` (Task 3) and `isPanning()`/`isClickSuppressed()` (Task 2), and it is **one open PO decision covering all of them**, not one each: keep them, so the shell reads each of these facts from one source instead of re-spelling it, or delete them with the assertions that read them. The module records the open decision at the declaration, as Task 3 does. **Corrected 2026-08-19 (third review of Task 5):** this item cited "its use at `legend.mjs:60` inside the same module". That was true of the module the previous round measured, `82a42c70…`, and is not true of the module this paragraph names by hash — `grep -n EDGE_ENCODING_TOKEN viewer/atlas39/core/legend.mjs` prints `46` and `88` there, and line 60 is ` */`. The line number is dropped rather than re-pinned, because it is the third time it would have to move. The inventory also **undercounted**: `buildEdgeLegend`'s `total` field is a fourth unread fact of exactly this kind (item 4), so "all three" is now "all of them" and the module names `total` in the same comment.
 
 | Mutation | Must go red | Measured |
 | --- | --- | --- |
@@ -3696,7 +3711,7 @@ test('the encoding token the legend names is the token the stage really strokes 
 | `token: depthTokenName(node.depth)` → `token: '--depth-0'` | `the hierarchy legend shows the depths that really occur…` **and** `an absent depth is never displayed…` | exit 1, 11/13 |
 | `String(node.depth)` → the removed `depth === null ? 'none'` ternary | **nothing — it must stay green** | exit 0, 13/13 |
 
-The last row is the point of the fourth repair rather than a coverage gap: `String(null)` is `'null'`, which no numeric depth can spell, so the ternary guarded nothing while reading as though it guarded something. It is removed and the reason is written at the line.
+The last row is the point of the fourth repair rather than a coverage gap: `String(null)` is `'null'`, which no numeric depth can spell, so the ternary guarded nothing while reading as though it guarded something. It is removed and the reason is written at the line. **Superseded 2026-08-19 (third review of Task 5):** the rows above were measured against the module this round shipped, `d6100b07…`, and the `String(node.depth)` key they name is gone — it converted before comparing, which is strictly *less* injective than the value itself, and the third-review block above carries the replacement and its own measurements.
 
 No **must-not-change** file was mutated this round. After the battery the module is back at `d6100b077e95615b151333670f7211390e0d3908c7085e4139014aee0f616a4a` — printed by the battery after every row — and `git status --porcelain` lists only this task's own files.
 
@@ -3793,9 +3808,10 @@ const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 // reading the name from here — so the token the legend NAMES and the token the
 // swatch USES are two independent spellings of one claim. It is exported anyway
 // so that pair can be collapsed onto one source. Keeping an export only tests
-// read is the same call Task 2 left open for isPanning()/isClickSuppressed() and
-// Task 3 for VIEW_MODES; the three are named in the plan as ONE open PO decision
-// rather than settled here.
+// read is the same call Task 2 left open for isPanning()/isClickSuppressed(),
+// Task 3 for VIEW_MODES, and this module for buildEdgeLegend's `total` field
+// below — which no consumer reads either; the four are named in the plan as ONE
+// open PO decision rather than settled here.
 export const EDGE_ENCODING_TOKEN = '--line-strong'
 
 /**
@@ -3807,9 +3823,13 @@ export const EDGE_ENCODING_TOKEN = '--line-strong'
  * `applyView(...).scope.shownEdges`, never `scope.totalEdges` — measured on the
  * SPRINT neighbourhood of the accepted snapshot, scope
  * `{shownNodes:2, totalNodes:5, shownEdges:1, totalEdges:4}` against
- * `buildEdgeLegend(applied.model).total === 1`. The two objects spell "total"
- * for different quantities and a shell caption reads them side by side, so the
- * difference is stated here rather than left to be rediscovered.
+ * `buildEdgeLegend(applied.model).total === 1`. `scope` spells "total" for the
+ * other quantity, which is why this one is named here — but no consumer reads
+ * it today: Task 6's paintLegend renders the per-row counts and hands this whole
+ * object to edgeLegendNote, and reads `total` nowhere, so the only reads
+ * anywhere outside .git and node_modules are four assertions in
+ * test/atlas40-legend.test.mjs. It is therefore the fourth unread fact this
+ * slice leaves to the one open PO decision recorded above.
  */
 export function buildEdgeLegend(model) {
   const counts = new Map()
@@ -3876,11 +3896,10 @@ export function edgeLegendNote(legend) {
 export function buildDepthLegend(model) {
   const counts = new Map()
   for (const node of model.nodes) {
-    // `String(null)` is 'null', which no numeric depth can spell, so this is
-    // already injective over the `number|null` the model guarantees. The
-    // `depth === null ? 'none'` special case this replaced guarded nothing while
-    // reading as though it guarded something.
-    const key = String(node.depth)
+    // The depth itself, not its text. `String(node.depth)` grouped `1` with
+    // `'1'` and `null` with `'null'` — one fabricated row each, measured — while
+    // Map's SameValueZero keeps every value apart for free.
+    const key = node.depth
     const entry = counts.get(key)
     if (entry) entry.count += 1
     else counts.set(key, { depth: node.depth, token: depthTokenName(node.depth), count: 1 })
@@ -3978,11 +3997,13 @@ Replace lines 60-72 (`.a39-stage-controls` group through the closing `</div>` of
     <p class="a39-legend-note" id="legend-note"></p>
     <h3 class="a39-legend-title" id="legend-depth-title">Hierarchy</h3>
     <div class="a39-legend-group" id="legend-depth" aria-labelledby="legend-depth-title"></div>
+    <p class="a39-legend-note" id="legend-depth-note"></p>
   </section>
 ```
 
 Notes that matter:
 - The legend loses `aria-hidden="true"`. AC7 asks for a *visible* legend; a legend hidden from assistive technology is visible to some users only.
+- `#legend-depth-note` is the Hierarchy group's own limitation, which **D7 assigns to this task**: `depthTokenName` collapses every depth from 3 onward onto `--depth-n`, so on a graph deeper than three levels differently-labelled rows carry an identical swatch. It reuses `.a39-legend-note`, so it needs no new CSS, and `paintLegend` fills it only when the rows really do share a token — on the accepted three-level snapshot it stays empty. **Added 2026-08-19 (third review of Task 5):** D7 stated the requirement and this task had nowhere to put it.
 - `#saved-view-state` gets **no** `role="status"`. `#live` is the one live region; a second would announce everything twice.
 - The new group carries `class="a39-stage-controls"` deliberately: `onStageKeydown` already skips `.a39-stage-controls`, so arrow keys on the new buttons cannot be hijacked into graph traversal. Reusing the class is what makes that true without a second guard.
 
@@ -4095,7 +4116,8 @@ import { createDragGesture } from './core/gesture.mjs'
   savedViewState: el('saved-view-state'),
   legendEdges: el('legend-edges'),
   legendNote: el('legend-note'),
-  legendDepth: el('legend-depth')
+  legendDepth: el('legend-depth'),
+  legendDepthNote: el('legend-depth-note')
 ```
 
 `state` — add:
@@ -4196,6 +4218,15 @@ function paintLegend() {
     depthRows.append(row)
   }
   dom.legendDepth.replaceChildren(depthRows)
+  // What the Hierarchy group does NOT distinguish, said by the shell because D7
+  // assigns the sentence here: depthTokenName collapses every depth from 3
+  // onward onto `--depth-n`, so on a deeper graph differently-labelled rows
+  // carry an identical swatch. Derived from the rows themselves rather than from
+  // a flag, so it can only appear when it is true — on the accepted three-level
+  // snapshot every row has its own token and this stays empty.
+  const sharedSwatch =
+    new Set(depthLegend.entries.map((e) => e.token)).size < depthLegend.entries.length
+  dom.legendDepthNote.textContent = sharedSwatch ? 'Level 3 and deeper share one colour.' : ''
 }
 
 function paintViewControls() {
@@ -4603,6 +4634,14 @@ test('the legend is derived at render time and is no longer three fixed rows of 
   assert.equal(/>Level 2</.test(html), false)
   assert.match(html, /id="legend-edges"/)
   assert.match(html, /id="legend-depth"/)
+  // D7 assigns the Hierarchy group's own limitation to this shell: rows whose
+  // swatches collapse onto one token must say so. Without a landing site the
+  // decision would stand in the scope contract with nothing implementing it, so
+  // both the element and the derivation are asserted rather than the wording
+  // alone — a note that is never written is indistinguishable from no note.
+  assert.match(html, /id="legend-depth-note"/)
+  assert.match(app, /new Set\(depthLegend\.entries\.map\(\(e\) => e\.token\)\)\.size < depthLegend\.entries\.length/)
+  assert.match(app, /dom\.legendDepthNote\.textContent = sharedSwatch \? 'Level 3 and deeper share one colour\.' : ''/)
   // AC7 asks for a VISIBLE legend, so it is no longer hidden from assistive tech.
   const legend = /<section class="a39-legend"[\s\S]*?<\/section>/.exec(html)?.[0]
   assert.ok(legend, 'the legend section is missing')
@@ -4827,6 +4866,13 @@ Hierarchy remains, under its own **Hierarchy** heading, derived from the depths
 actually present, with each swatch bound to the same design token
 `core/scene.mjs` strokes the disc with. It is not the edge legend and is not
 presented as one.
+
+That group has one limit of its own, and it says so rather than leaving it to be
+inferred from the swatches: `core/scene.mjs` collapses every depth from 3 onward
+onto a single token, so on a graph deeper than three levels differently-labelled
+rows carry an identical colour. When that happens the group carries the note
+“Level 3 and deeper share one colour.”; the accepted snapshot is three levels
+deep, every row there has its own token, and the note is empty.
 
 **Repaired: the pointer gesture (slice-1 Minor).** After a drag crossed the
 movement threshold, `pointercancel` left the click suppression armed. A cancelled

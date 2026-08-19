@@ -40,9 +40,10 @@ const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 // reading the name from here — so the token the legend NAMES and the token the
 // swatch USES are two independent spellings of one claim. It is exported anyway
 // so that pair can be collapsed onto one source. Keeping an export only tests
-// read is the same call Task 2 left open for isPanning()/isClickSuppressed() and
-// Task 3 for VIEW_MODES; the three are named in the plan as ONE open PO decision
-// rather than settled here.
+// read is the same call Task 2 left open for isPanning()/isClickSuppressed(),
+// Task 3 for VIEW_MODES, and this module for buildEdgeLegend's `total` field
+// below — which no consumer reads either; the four are named in the plan as ONE
+// open PO decision rather than settled here.
 export const EDGE_ENCODING_TOKEN = '--line-strong'
 
 /**
@@ -54,9 +55,13 @@ export const EDGE_ENCODING_TOKEN = '--line-strong'
  * `applyView(...).scope.shownEdges`, never `scope.totalEdges` — measured on the
  * SPRINT neighbourhood of the accepted snapshot, scope
  * `{shownNodes:2, totalNodes:5, shownEdges:1, totalEdges:4}` against
- * `buildEdgeLegend(applied.model).total === 1`. The two objects spell "total"
- * for different quantities and a shell caption reads them side by side, so the
- * difference is stated here rather than left to be rediscovered.
+ * `buildEdgeLegend(applied.model).total === 1`. `scope` spells "total" for the
+ * other quantity, which is why this one is named here — but no consumer reads
+ * it today: Task 6's paintLegend renders the per-row counts and hands this whole
+ * object to edgeLegendNote, and reads `total` nowhere, so the only reads
+ * anywhere outside .git and node_modules are four assertions in
+ * test/atlas40-legend.test.mjs. It is therefore the fourth unread fact this
+ * slice leaves to the one open PO decision recorded above.
  */
 export function buildEdgeLegend(model) {
   const counts = new Map()
@@ -123,11 +128,10 @@ export function edgeLegendNote(legend) {
 export function buildDepthLegend(model) {
   const counts = new Map()
   for (const node of model.nodes) {
-    // `String(null)` is 'null', which no numeric depth can spell, so this is
-    // already injective over the `number|null` the model guarantees. The
-    // `depth === null ? 'none'` special case this replaced guarded nothing while
-    // reading as though it guarded something.
-    const key = String(node.depth)
+    // The depth itself, not its text. `String(node.depth)` grouped `1` with
+    // `'1'` and `null` with `'null'` — one fabricated row each, measured — while
+    // Map's SameValueZero keeps every value apart for free.
+    const key = node.depth
     const entry = counts.get(key)
     if (entry) entry.count += 1
     else counts.set(key, { depth: node.depth, token: depthTokenName(node.depth), count: 1 })
