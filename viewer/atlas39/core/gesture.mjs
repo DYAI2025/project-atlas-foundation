@@ -57,22 +57,39 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
   return {
     /**
      * @returns {boolean} true when a gesture actually started. False on a
-     *   non-primary button, and false when a pan is already in flight.
+     *   non-primary button, and false while a DIFFERENT pointer is panning.
      */
     start(event) {
       if (event.button !== 0) return false
-      // A pan in flight owns the stage until it ends. A second primary press —
-      // the ordinary accidental second touch on a surface with
+      // A pan in flight owns the stage until it ends. A second primary press by
+      // ANOTHER pointer — the ordinary accidental second touch on a surface with
       // `touch-action: none` — must not take the gesture away from the finger
       // that is moving: the replaced pointer could then neither move nor end,
       // and because the shell gates its cleanup on `end()` reporting `ended`,
       // its pointer capture would never be released and `body[data-panning]`
       // would stay set, with nothing on screen to explain it.
       //
-      // The guard is keyed on `panning`, not on `active`: a press that has not
-      // yet panned stays replaceable, so a pointer whose up/cancel the shell
-      // never sees cannot dead-lock the stage against every later press.
-      if (active?.panning === true) return false
+      // Two exemptions keep that guard from becoming a dead-lock, because a
+      // gesture this module never sees the end of would otherwise be permanent:
+      //
+      // 1. A press that has not yet panned is always replaceable (the guard is
+      //    keyed on `panning`, not on `active`).
+      // 2. The panning pointer's OWN id re-anchors. A second `pointerdown` for
+      //    a pointer this module still believes is panning can only mean its
+      //    `pointerup`/`pointercancel` was never delivered — a window blur
+      //    mid-drag, a native drag or context-menu takeover, or an `up` that
+      //    landed outside the listening element because pointer capture was
+      //    unavailable. Re-anchoring restores slice 1's self-healing behaviour,
+      //    which re-armed the gesture on every primary `pointerdown`. For a
+      //    mouse, whose pointer id is always the same, that closes the lost
+      //    pointer case completely.
+      //
+      // Not closed, and deliberately so: a lost *touch* pointer, whose next
+      // finger arrives with a new id and is refused until the lost one presses
+      // again. The alternative — letting any id re-anchor — hands every genuine
+      // second touch the power to kill the pan it does not own, which is the
+      // defect this guard exists for.
+      if (active?.panning === true && active.id !== event.pointerId) return false
       // A fresh press always disarms: whatever a previous gesture left behind,
       // the click that belongs to THIS press must be allowed through.
       suppressClick = false
