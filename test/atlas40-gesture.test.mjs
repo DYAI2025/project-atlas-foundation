@@ -19,7 +19,11 @@ import {
 } from '../viewer/atlas39/core/gesture.mjs'
 
 const down = (over = {}) => ({ type: 'pointerdown', pointerId: 1, button: 0, clientX: 100, clientY: 100, ...over })
-const move = (over = {}) => ({ type: 'pointermove', pointerId: 1, clientX: 100, clientY: 100, ...over })
+// `buttons` is part of the record the module reads: 0 means the press is over.
+// A move fixture without it would leave the whole "the button is still held"
+// invariant untested, and the module refuses a step whose button state it
+// cannot read rather than assuming one is held.
+const move = (over = {}) => ({ type: 'pointermove', pointerId: 1, buttons: 1, clientX: 100, clientY: 100, ...over })
 const up = (over = {}) => ({ type: 'pointerup', pointerId: 1, ...over })
 const cancel = (over = {}) => ({ type: 'pointercancel', pointerId: 1, ...over })
 
@@ -58,12 +62,12 @@ test('the threshold is 4 screen pixels, and exactly that far already pans', () =
   // The value and the boundary are both hand-written here on purpose. Every
   // other test spells the threshold symbolically, so without this table a
   // tenfold change to an accepted, human-visually-signed-off interaction
-  // constant — or a `<` quietly becoming `<=` — passes with nothing red.
+  // constant — or a `>=` quietly becoming `>` — passes with nothing red.
   assert.equal(DRAG_THRESHOLD, 4, 'the accepted drag threshold changed')
   const g = createDragGesture()
   g.start(down())
   const step = g.move(move({ clientX: 100 + DRAG_THRESHOLD }))
-  assert.equal(step.panning, true, 'a movement of exactly the threshold must pan (the comparison is strict <)')
+  assert.equal(step.panning, true, 'a movement of exactly the threshold must pan (the comparison is >=)')
   assert.equal(step.dx, DRAG_THRESHOLD)
   assert.equal(step.dy, 0)
 })
@@ -120,6 +124,14 @@ test('a threshold-crossing drag suppresses exactly the click it produced', () =>
   const g = panned()
   assert.equal(g.isClickSuppressed(), true)
   g.end(up())
+  // Read once more AFTER the pan ended, which is the one moment the accessor
+  // exists for and the only moment where `suppressClick` and `active?.panning`
+  // DISAGREE. Every other reading of it in this file is taken where the two
+  // agree, which let `isClickSuppressed()` be rewired to report the panning
+  // flag instead with the whole suite green — the same surviving-mutant class
+  // already found and repaired for its sibling `isPanning()`.
+  assert.equal(g.isPanning(), false, 'the pan is over once its pointer lifted')
+  assert.equal(g.isClickSuppressed(), true, 'the suppression the pan armed did not survive its own pointerup')
   assert.equal(g.consumeClick(), true, 'the click that ends a pan must be swallowed')
   // Spent, not sticky: a second click is a real click again.
   assert.equal(g.consumeClick(), false, 'the suppression leaked into a second click')
@@ -151,13 +163,43 @@ test('the state machine ignores a second, unrelated pointer', () => {
   assert.equal(g.isPanning(), true, 'the real gesture was cancelled by an unrelated pointer')
 })
 
-test('a second primary press cannot take the stage away from a pan in flight', () => {
+test('a pointercancel from a pointer this gesture does not own leaves the suppression alone', () => {
+  // The mirror image of the REGRESSION test above, and the assertion that pins
+  // WHERE the repair sits: hoisting `if (event.type === 'pointercancel')` above
+  // the ownership early-return is a one-line reordering that keeps every other
+  // test in this file green. On a multi-touch stage (`touch-action: none`) the
+  // browser cancels unrelated pointers routinely, and a foreign cancel that
+  // disarmed the owner's suppression would hand the pan's own synthesised click
+  // to whatever node the pan ended over — a silent selection the user never made.
+  const g = panned()
+  const foreign = g.end(cancel({ pointerId: 2 }))
+  assert.deepEqual(
+    foreign,
+    { ended: false, wasPanning: false, pointerId: null },
+    'a foreign pointercancel ended a gesture it does not own'
+  )
+  assert.equal(g.isClickSuppressed(), true, 'a foreign pointercancel disarmed a suppression it does not own')
+  assert.equal(g.isPanning(), true, 'a foreign pointercancel stopped the pan')
+  const done = g.end(up())
+  assert.equal(done.ended, true)
+  assert.equal(done.wasPanning, true)
+  assert.equal(g.consumeClick(), true, "the pan's own click was let through onto a node")
+})
+
+test('an accidental second press by another pointer is refused while the panning pointer is alive', () => {
   // The ordinary accidental second touch on a stage with `touch-action: none`.
   // Unguarded, start() overwrote the active gesture and cleared its suppression:
   // the finger that was moving could then neither move nor end, and because the
   // shell gates its cleanup on end() reporting `ended`, the pointer capture was
   // never released and body[data-panning] never removed — the pan dies under the
   // user's finger with nothing on screen to explain it.
+  //
+  // The name says "an accidental second press" and not "no second press",
+  // because the module deliberately does not guarantee the stronger claim: the
+  // panning pointer's OWN id re-anchors (the test below), and a second foreign
+  // press that the owner answers with nothing re-anchors too (the test after
+  // it). Both exemptions exist so a gesture whose end this module never sees
+  // cannot disable the stage permanently.
   const g = panned()
   assert.equal(g.start(down({ pointerId: 2, clientX: 500, clientY: 500 })), false, 'a second press hijacked a pan in flight')
   assert.equal(g.isPanning(), true, 'the second press cancelled the pan it does not own')
@@ -166,10 +208,66 @@ test('a second primary press cannot take the stage away from a pan in flight', (
   assert.equal(step.panning, true, 'the panning pointer could no longer move the stage')
   assert.equal(step.dx, 5)
   assert.equal(step.dy, 0)
+  // That step is proof the owner is alive, so the next accidental touch is
+  // refused again rather than counting as the second unanswered press.
+  assert.equal(
+    g.start(down({ pointerId: 3, clientX: 700, clientY: 700 })),
+    false,
+    'a pointer that had just moved the stage was presumed lost'
+  )
+  assert.equal(g.isPanning(), true)
   const done = g.end(up())
   assert.equal(done.ended, true, 'the panning pointer could no longer end its own gesture')
   assert.equal(done.pointerId, 1)
   assert.equal(done.wasPanning, true)
+})
+
+test('a lost panning TOUCH pointer gives the stage back on the second unanswered press', () => {
+  // The residual the guard above used to leave permanently open. A touch pan
+  // whose pointerup/pointercancel is never delivered cannot re-anchor on its
+  // own id, because that finger is gone and its id never returns: every later
+  // finger was refused, the stage could not be panned again for the life of the
+  // page, body[data-panning] stayed set (the shell removes it only when end()
+  // reports `ended`) and the grabbing cursor with it. Slice 1's app.mjs
+  // self-healed on the very next press; this module must not be worse than the
+  // code it replaces.
+  const g = createDragGesture()
+  assert.equal(g.start(down({ pointerId: 11 })), true)
+  const pan = g.move(move({ pointerId: 11, clientX: 100 + DRAG_THRESHOLD * 4 }))
+  assert.equal(pan.panning, true, 'precondition: a touch pan is in flight')
+  // ...and pointer 11 is never heard from again.
+  assert.equal(
+    g.start(down({ pointerId: 12, clientX: 400, clientY: 400 })),
+    false,
+    'the first fresh finger stole a pan that may still be live'
+  )
+  // That refused tap must not be eaten by the lost pan's suppression either.
+  assert.equal(g.consumeClick(), false, "the fresh finger's tap was swallowed by a pan it has nothing to do with")
+  assert.equal(g.start(down({ pointerId: 13, clientX: 500, clientY: 500 })), true, 'the stage stayed bricked against every later finger')
+  assert.equal(g.isPanning(), false, 're-anchoring left the stale pan running')
+  assert.equal(g.isClickSuppressed(), false, 're-anchoring left the stale suppression armed')
+  const step = g.move(move({ pointerId: 13, clientX: 500 + DRAG_THRESHOLD * 4, clientY: 500 }))
+  assert.equal(step.panning, true, 'the re-anchored finger could not pan')
+  assert.equal(step.began, true)
+  assert.equal(step.dx, DRAG_THRESHOLD * 4, 'the re-anchored finger measured from the lost gesture origin')
+  const done = g.end(up({ pointerId: 13 }))
+  assert.equal(done.ended, true, 'the shell never gets to release the capture or remove body[data-panning]')
+  assert.equal(done.pointerId, 13)
+})
+
+test('a click that arrives while a gesture is still running is not that gesture to swallow', () => {
+  // The browser synthesises a pan's click AFTER its pointerup, so a click that
+  // arrives while the gesture is still in flight belongs to something else — a
+  // second finger tapping a node, or a keyboard-activated click on a stage node
+  // button. Spending the suppression on it is the swallowed click this module
+  // exists to prevent, one gesture removed.
+  const g = panned()
+  assert.equal(g.isClickSuppressed(), true, 'precondition: the pan armed the suppression')
+  assert.equal(g.consumeClick(), false, "a click during a live pan was swallowed as that pan's tail")
+  assert.equal(g.isClickSuppressed(), true, 'a click that is not the pan tail spent the suppression anyway')
+  const done = g.end(up())
+  assert.equal(done.ended, true)
+  assert.equal(g.consumeClick(), true, "the pan's own click was no longer swallowed")
 })
 
 test('a press that never panned is replaceable by any other pointer', () => {
@@ -178,8 +276,8 @@ test('a press that never panned is replaceable by any other pointer', () => {
   // refuse every later press for the lifetime of the page.
   //
   // The name of this test is deliberately narrow. It pins the never-panned half
-  // of the lost-pointer story only; the panning half is the test below, and the
-  // residual neither of them closes is stated there.
+  // of the lost-pointer story only; the panning halves are the tests above and
+  // below it.
   const g = createDragGesture()
   assert.equal(g.start(down()), true)
   assert.equal(g.start(down({ pointerId: 2, clientX: 200, clientY: 200 })), true, 'a press that never panned blocked the next one')
@@ -202,12 +300,9 @@ test('a lost PANNING pointer re-anchors on its own next press instead of dead-lo
   // bare cursor with `began` false and therefore nothing in the DOM to show it.
   // Slice 1's app.mjs re-anchored on every primary pointerdown, so the identical
   // lost pointer self-healed on the user's next click; this test pins that the
-  // module does not regress below that.
-  //
-  // What this does NOT pin, because the module does not do it: a lost panning
-  // TOUCH pointer, whose next finger arrives with a fresh id and is refused
-  // until the lost id presses again. Letting a foreign id re-anchor would undo
-  // the guard in the test above. A mouse, whose id does not change, is closed.
+  // module does not regress below that. For a mouse — whose pointer id does not
+  // change, and whose bare hover also carries `buttons: 0` — this state is
+  // closed twice over: by the drop in `move()` and by this re-anchor.
   const g = panned()
   assert.equal(g.isPanning(), true, 'precondition: a pan is in flight')
   assert.equal(g.isClickSuppressed(), true, 'precondition: the pan armed the suppression')
@@ -229,6 +324,96 @@ test('a lost PANNING pointer re-anchors on its own next press instead of dead-lo
   assert.equal(done.ended, true, 'the re-anchored gesture could not end')
   assert.equal(done.wasPanning, true)
   assert.equal(done.pointerId, 1)
+})
+
+test('a press whose end this module never sees is dropped by the first move with no button held', () => {
+  // Ordinary mouse, no lost-pointer exoticism required. A press that stays
+  // under the threshold never makes the shell take a pointer capture (Task 6
+  // takes it on `began`), so a pointerup released over a SIBLING of
+  // `#stage-host` — `.a39-stage-controls` and the sidebar both are, which
+  // index.html:58-60 proves — never reaches the shell's listener and `end()`
+  // is never called. Trusting `active` alone, the next bare hover measured a
+  // large delta from the stale press origin, crossed the threshold, panned the
+  // graph under a cursor with no button held, and armed a click suppression
+  // that swallowed the user's next real click.
+  const g = createDragGesture()
+  g.start(down())
+  assert.equal(g.move(move({ clientX: 101 })).panning, false, 'precondition: the press stayed under the threshold')
+  // The pointerup happens somewhere this module never hears about it. Then the
+  // user hovers back over the stage with NO button held.
+  const hover = g.move(move({ clientX: 260, clientY: 180, buttons: 0 }))
+  assert.deepEqual(hover, { panning: false, began: false, dx: 0, dy: 0 }, 'a bare hover panned the stage from a stale press origin')
+  assert.equal(g.isPanning(), false)
+  assert.equal(g.isClickSuppressed(), false, 'a bare hover armed a click suppression')
+  // The stale press is gone, not merely skipped: even a later move that does
+  // report a held button cannot resurrect it without a fresh pointerdown.
+  assert.equal(g.move(move({ clientX: 900, clientY: 900 })).panning, false, 'a dropped press still drove the stage')
+  assert.equal(g.consumeClick(), false)
+
+  // Same story one step further along: a pan that crossed the threshold and
+  // whose pointerup the module never saw. Here the suppression is already
+  // armed, and the click it was waiting for — if the browser synthesised one at
+  // all — was dispatched before this hover ever arrived.
+  const p = panned()
+  assert.equal(p.isClickSuppressed(), true, 'precondition: the pan armed the suppression')
+  const hover2 = p.move(move({ clientX: 500, clientY: 500, buttons: 0 }))
+  assert.equal(hover2.panning, false, 'a bare hover kept panning the stage')
+  assert.equal(p.isPanning(), false, 'a pan with no button held is still a pan')
+  assert.equal(p.isClickSuppressed(), false, 'a lost pan left a suppression with no click left to spend it on')
+  assert.equal(p.consumeClick(), false, "the user's next real click was swallowed")
+})
+
+test('a step whose button state or coordinates cannot be read is refused, not treated as a pan', () => {
+  // `Math.hypot(NaN, NaN) < 4` and `Math.hypot(Infinity, 0) < 4` are both
+  // false — the identical fail-open mechanism this module documents and guards
+  // against for the `threshold` operand, on the delta operand. Written as `<`,
+  // a delta the module cannot measure fell straight through: a ZERO-pixel move
+  // reported `{panning: true, began: true, dx: NaN}`, armed a click suppression
+  // for a pan that never happened, and fed NaN to the shell's panBy, which
+  // poisons the stage transform permanently.
+  const g = createDragGesture()
+  assert.equal(
+    g.start({ type: 'pointerdown', pointerId: 1, button: 0 }),
+    false,
+    'a press with no coordinates started a gesture'
+  )
+  assert.equal(g.start(down({ clientX: Number.NaN })), false, 'a press at NaN started a gesture')
+  assert.equal(g.start(down({ clientY: Infinity })), false, 'a press at Infinity started a gesture')
+  assert.equal(g.isPanning(), false)
+
+  assert.equal(g.start(down()), true)
+  for (const bad of [{ clientX: Number.NaN }, { clientY: Infinity }, { clientX: undefined }, { clientY: -Infinity }]) {
+    assert.deepEqual(
+      g.move(move(bad)),
+      { panning: false, began: false, dx: 0, dy: 0 },
+      `a move at ${JSON.stringify(bad)} was treated as movement`
+    )
+  }
+  assert.equal(g.isPanning(), false, 'a delta the module cannot measure started a pan')
+  assert.equal(g.isClickSuppressed(), false, 'a pan that never happened armed a click suppression')
+  // A pan already in flight skips the threshold comparison entirely, so up
+  // there the delta guard is the only thing between NaN and the shell's panBy —
+  // which renders the stage transform permanently unusable.
+  const p = panned()
+  assert.deepEqual(
+    p.move(move({ clientX: Number.NaN })),
+    { panning: false, began: false, dx: 0, dy: 0 },
+    'a running pan fed NaN straight through to the shell'
+  )
+  assert.equal(p.isPanning(), true, 'a refused step ended a live pan')
+  // A step whose button state is missing is refused the same way — but a stream
+  // this module cannot read must not be able to cancel a real gesture, so the
+  // press survives it.
+  assert.equal(
+    g.move({ type: 'pointermove', pointerId: 1, clientX: 200, clientY: 100 }).panning,
+    false,
+    'a step with no button state was treated as a held button'
+  )
+  assert.equal(
+    g.move(move({ clientX: 100 + DRAG_THRESHOLD * 4 })).panning,
+    true,
+    'a refused step discarded the live gesture instead of just refusing itself'
+  )
 })
 
 test('only the primary button starts a gesture', () => {
@@ -255,56 +440,201 @@ test('end() reports the pointer id so the shell releases the capture it took', (
   assert.equal(done.wasPanning, true)
 })
 
+// ---------------------------------------------------------------------------
+// The purity guard, and the guard on the guard.
+//
+// Scan the CODE, not the English. This module's comments are long and
+// load-bearing, and 'window', 'document', 'navigator' and 'performance' are
+// ordinary words inside them — a raw substring scan fires on vocabulary rather
+// than on capability use, and it already did once: the comment "a window losing
+// the pointer" tripped this guard while the code was pure.
+//
+// Removing the comments with two regexes over raw text was itself defeatable,
+// and measured to be: `source.replace(/\/\*[\s\S]*?\*\//g, '')` cannot tell a
+// block-comment delimiter from an ordinary string literal, so appending
+// `const OPEN_MARK = '/*'` … `const CLOSE_MARK = '*/'` around a probe that
+// really referenced document, window and navigator deleted the probe BEFORE the
+// denylists ever saw it, and the suite stayed green. The comment stripper is
+// therefore a small scanner that knows where strings begin and end, and it is
+// itself pinned by the test below over the exact mutation that defeated its
+// predecessor.
+// ---------------------------------------------------------------------------
+
+/**
+ * Removes `//` and block comments the way a JavaScript reader does: string and
+ * template literals are code, so comment delimiters inside them are text, and
+ * text that merely looks like a comment delimiter cannot switch the scan off.
+ */
+function stripComments(source) {
+  let out = ''
+  let quote = null
+  let i = 0
+  while (i < source.length) {
+    const ch = source[i]
+    const next = source[i + 1]
+    if (quote !== null) {
+      out += ch
+      if (ch === '\\') {
+        out += next ?? ''
+        i += 2
+        continue
+      }
+      if (ch === quote) quote = null
+      i += 1
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch
+      out += ch
+      i += 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      i += 2
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1
+      i += 2
+      continue
+    }
+    out += ch
+    i += 1
+  }
+  return out
+}
+
+/** Property-access spellings, which prose does not produce. */
+const FORBIDDEN_TOKENS = [
+  'Date.', 'new Date', 'Math.random', 'performance.',
+  'document.', 'window.', 'globalThis', 'navigator.', 'localStorage',
+  'requestAnimationFrame', 'crypto.'
+]
+
+/**
+ * Bare identifiers, matched on word boundaries over already comment-free code.
+ * Property-access spellings alone cannot see `typeof document`, `fetch(...)`,
+ * `setTimeout(...)`, a static `import` or `crypto.getRandomValues` — the last
+ * two being the most direct ways to make this module impure, and both invisible
+ * to the first two versions of this guard.
+ */
+const FORBIDDEN_IDENTIFIERS = [
+  'window', 'document', 'navigator', 'performance', 'globalThis',
+  'localStorage', 'sessionStorage', 'indexedDB', 'process', 'fetch',
+  'setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask',
+  'requestAnimationFrame', 'Date', 'XMLHttpRequest', 'WebSocket', 'require',
+  'import', 'crypto', 'eval', 'Worker'
+]
+
+/** `import … from '…'` and `export … from '…'` both spell this. */
+const MODULE_SPECIFIER = /\bfrom\s*['"]/
+
+/** Every rule above, applied to one source text. Returns what it found. */
+function purityViolations(source) {
+  const code = stripComments(source)
+  const found = []
+  for (const token of FORBIDDEN_TOKENS) if (code.includes(token)) found.push(token)
+  for (const identifier of FORBIDDEN_IDENTIFIERS) {
+    if (new RegExp(`\\b${identifier}\\b`).test(code)) found.push(identifier)
+  }
+  if (MODULE_SPECIFIER.test(code)) found.push("from '<specifier>'")
+  return found
+}
+
+/** The exact mutation that defeated the regex strip this scanner replaced. */
+const STRING_MARKER_MUTANT = [
+  "const OPEN_MARK = '/*'",
+  'function leakProbe() { return document.title + window.name + navigator.userAgent }',
+  "const CLOSE_MARK = '*/'",
+  'export const MARKS = [OPEN_MARK, CLOSE_MARK, leakProbe]'
+].join('\n')
+
 test('the gesture carries no clock, randomness or DOM', () => {
   const source = readFileSync(new URL('../viewer/atlas39/core/gesture.mjs', import.meta.url), 'utf8')
-  // Scan the CODE, not the English. This module's comments are long and
-  // load-bearing, and 'window', 'document', 'navigator' and 'performance' are
-  // ordinary words inside them — a raw substring scan fires on vocabulary
-  // rather than on capability use, and it already did once: the comment "a
-  // window losing the pointer" tripped this guard while the code was pure.
-  // Two independent defences, so neither has to be perfect: comments are
-  // removed, and the property-access tokens are spelled with their dot, which
-  // prose does not produce.
-  //
-  // BOTH comment forms are stripped. Stripping only `//` lines left every JSDoc
-  // block in the module scanned as code, so a future `@param` or `@returns`
-  // that spelled `window.` would have re-created the exact prose-fires-the-guard
-  // failure this guard was already reworked once to repair. Full lines only for
-  // the `//` form (never partial lines, which a string containing '//' would let
-  // truncate real code away); the block form is delimited, so it is safe whole.
-  const code = source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '')
-  // Both strips are load-bearing, so both are proved not to have eaten the code
-  // they were meant to leave standing — one probe per region of the module.
+  const code = stripComments(source)
+  // The strip is load-bearing, so it is proved not to have eaten the code it
+  // was meant to leave standing — one probe per region of the module.
   assert.match(code, /export function createDragGesture/, 'the comment strip removed the code as well')
-  assert.match(code, /Math\.hypot\(dx, dy\) < threshold/, 'the comment strip removed the threshold comparison')
+  assert.match(code, /!\(Math\.hypot\(dx, dy\) >= threshold\)/, 'the comment strip removed the threshold comparison')
   assert.match(code, /event\.type === 'pointercancel'/, 'the comment strip removed the pointercancel repair')
   assert.match(code, /return active\?\.panning === true/, 'the comment strip removed isPanning')
-  const forbiddenTokens = [
-    'Date.', 'new Date', 'Math.random', 'performance.',
-    'document.', 'window.', 'globalThis', 'navigator.', 'localStorage',
-    'requestAnimationFrame'
-  ]
-  for (const forbidden of forbiddenTokens) {
+  for (const forbidden of FORBIDDEN_TOKENS) {
     assert.equal(code.includes(forbidden), false, `gesture.mjs references ${forbidden}`)
   }
-  // Property-access spellings alone cannot see bare environment sniffing:
-  // `typeof document !== 'undefined'`, `typeof window`, `process.argv`,
-  // `fetch(...)`, `setTimeout(...)` and `queueMicrotask(...)` all passed the
-  // token list above. The code is comment-free at this point, so the bare
-  // identifiers can be matched on word boundaries without firing on prose.
-  const forbiddenIdentifiers = [
-    'window', 'document', 'navigator', 'performance', 'globalThis',
-    'localStorage', 'sessionStorage', 'indexedDB', 'process', 'fetch',
-    'setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask',
-    'requestAnimationFrame', 'Date', 'XMLHttpRequest', 'WebSocket', 'require'
-  ]
-  for (const forbidden of forbiddenIdentifiers) {
+  for (const forbidden of FORBIDDEN_IDENTIFIERS) {
     assert.doesNotMatch(
       code,
       new RegExp(`\\b${forbidden}\\b`),
       `gesture.mjs references the bare identifier ${forbidden}`
     )
   }
+  assert.doesNotMatch(code, MODULE_SPECIFIER, 'gesture.mjs imports from a module specifier')
+  assert.deepEqual(purityViolations(source), [], 'the purity rules disagree with each other')
+})
+
+test('the purity guard cannot be switched off by a string literal, and sees imports and randomness', () => {
+  // Without this test the guard proves only that four PRE-EXISTING regions
+  // survived the strip, which says nothing about a newly added region the strip
+  // ate. These assertions are about the guard's own capability.
+
+  // 1. The superseded regex strip really did have the hole, so this is a repair
+  //    and not decoration.
+  const supersededStrip = STRING_MARKER_MUTANT
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  assert.doesNotMatch(supersededStrip, /document\.title/, 'the superseded strip no longer reproduces its own hole')
+
+  // 2. The scanner keeps that code, so the denylists get to see it.
+  const scanned = stripComments(STRING_MARKER_MUTANT)
+  assert.match(scanned, /function leakProbe/, 'two string literals deleted the code between them')
+  assert.equal(
+    scanned.split('document.title').length - 1,
+    1,
+    'the code between two string-literal comment markers was eaten by the strip'
+  )
+  assert.ok(
+    purityViolations(STRING_MARKER_MUTANT).includes('document.'),
+    'a probe hidden between two string literals passed the purity guard'
+  )
+
+  // 3. Comments are still removed, so prose still cannot fire the guard — the
+  //    failure this guard was already reworked twice to repair.
+  const prose = [
+    '// a window losing the pointer, and document.title, and navigator.userAgent',
+    '/** @param {number} x — window.name, document.body, performance.now() */',
+    'const kept = 1'
+  ].join('\n')
+  assert.deepEqual(purityViolations(prose), [], 'prose fired the purity guard')
+  assert.match(stripComments(prose), /const kept = 1/, 'the strip ate the code around the prose')
+
+  // 4. A string whose CONTENT looks like a comment marker stays code.
+  assert.match(
+    stripComments("const s = 'a // and a /* inside a string are text'"),
+    /a \/\/ and a \/\* inside a string are text/,
+    'the scanner treated a string literal as a comment'
+  )
+
+  // 5. The denylists see the two capabilities they were blind to: module
+  //    imports (static, re-exported and dynamic) and randomness.
+  assert.ok(
+    purityViolations("import { readFileSync } from 'node:fs'").includes('import'),
+    'a static import passed the purity guard'
+  )
+  assert.ok(
+    purityViolations("export { readFileSync } from 'node:fs'").includes("from '<specifier>'"),
+    'a re-export from a module specifier passed the purity guard'
+  )
+  assert.ok(
+    purityViolations("const load = () => import('node:fs')").includes('import'),
+    'a dynamic import passed the purity guard'
+  )
+  assert.ok(
+    purityViolations('const jitter = crypto.getRandomValues(new Uint8Array(1))[0]').includes('crypto'),
+    'crypto.getRandomValues passed the purity guard'
+  )
+  assert.ok(
+    purityViolations('const t = setTimeout(fn, 0)').includes('setTimeout'),
+    'setTimeout passed the purity guard'
+  )
 })

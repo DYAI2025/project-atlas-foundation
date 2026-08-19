@@ -13,9 +13,20 @@
 // wrong, nothing errors, the application simply ignores the user once. So the
 // state machine lives here, where the defect is a test rather than a comment.
 //
+// Three invariants keep a gesture this module never sees the end of from
+// outliving the press that started it, because every one of them shipped as a
+// measured defect in an earlier round of this file:
+//
+//   1. A pan needs a button to still be held (`move()` reads `buttons`).
+//   2. A click that arrives while a gesture is still running is not that
+//      gesture's tail, so it is not swallowed (`consumeClick()`).
+//   3. A pan whose owner answers nothing while two presses arrive is presumed
+//      lost, so it cannot disable the stage for the life of the page
+//      (`start()`).
+//
 // This module knows nothing about the DOM. It consumes plain records
-// {type, pointerId, button, clientX, clientY} and returns what the shell should
-// do about them.
+// {type, pointerId, button, buttons, clientX, clientY} and returns what the
+// shell should do about them.
 //
 // Pure: no IO, no clock, no randomness, no DOM.
 
@@ -57,10 +68,19 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
   return {
     /**
      * @returns {boolean} true when a gesture actually started. False on a
-     *   non-primary button, and false while a DIFFERENT pointer is panning.
+     *   non-primary button, false on a press whose coordinates this module
+     *   cannot measure from, and false on the FIRST press by a different
+     *   pointer while a pan is in flight.
      */
     start(event) {
       if (event.button !== 0) return false
+      // Fail closed on the origin. Everything this module reports is measured
+      // from it, so a press at a coordinate that is not a finite number makes
+      // every later delta NaN — and `Math.hypot(NaN, NaN) < threshold` is
+      // false, which used to mean a zero-pixel move started a pan, armed a
+      // click suppression for a pan that never happened, and fed NaN to the
+      // shell's panBy, poisoning the stage transform permanently.
+      if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return false
       // A pan in flight owns the stage until it ends. A second primary press by
       // ANOTHER pointer — the ordinary accidental second touch on a surface with
       // `touch-action: none` — must not take the gesture away from the finger
@@ -69,7 +89,7 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
       // its pointer capture would never be released and `body[data-panning]`
       // would stay set, with nothing on screen to explain it.
       //
-      // Two exemptions keep that guard from becoming a dead-lock, because a
+      // Three exemptions keep that guard from becoming a dead-lock, because a
       // gesture this module never sees the end of would otherwise be permanent:
       //
       // 1. A press that has not yet panned is always replaceable (the guard is
@@ -83,17 +103,26 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
       //    which re-armed the gesture on every primary `pointerdown`. For a
       //    mouse, whose pointer id is always the same, that closes the lost
       //    pointer case completely.
-      //
-      // Not closed, and deliberately so: a lost *touch* pointer, whose next
-      // finger arrives with a new id and is refused until the lost one presses
-      // again. The alternative — letting any id re-anchor — hands every genuine
-      // second touch the power to kill the pan it does not own, which is the
-      // defect this guard exists for.
-      if (active?.panning === true && active.id !== event.pointerId) return false
+      // 3. A SECOND foreign press with no sign of life from the owner in
+      //    between re-anchors. A lost *touch* pointer never presses again — its
+      //    id is gone with the finger — so keying the refusal on the owner's id
+      //    alone made that state permanent: every later finger was refused, the
+      //    stage could never be panned again, and `body[data-panning]` stayed
+      //    set for the life of the page. Refusing once per contest keeps the
+      //    accidental second touch from stealing a live pan (the defect this
+      //    guard exists for) while making the lost-touch state cost the user
+      //    one extra press instead of a reload. Any owned move clears the
+      //    contest, so a pointer that is demonstrably alive is defended again.
+      if (active?.panning === true && active.id !== event.pointerId) {
+        if (active.contested !== true) {
+          active.contested = true
+          return false
+        }
+      }
       // A fresh press always disarms: whatever a previous gesture left behind,
       // the click that belongs to THIS press must be allowed through.
       suppressClick = false
-      active = { id: event.pointerId, x: event.clientX, y: event.clientY, panning: false }
+      active = { id: event.pointerId, x: event.clientX, y: event.clientY, panning: false, contested: false }
       return true
     },
 
@@ -105,11 +134,44 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
     move(event) {
       const idle = { panning: false, began: false, dx: 0, dy: 0 }
       if (!active || event.pointerId !== active.id) return idle
+      // A pan needs a button to still be held. Trusting `active` alone left a
+      // press whose end this module never saw alive for the life of the page:
+      // a press that stayed under the threshold takes no pointer capture (the
+      // shell takes it on `began`), so a `pointerup` over a SIBLING of
+      // `#stage-host` — `.a39-stage-controls` and the sidebar both are — never
+      // reaches the shell's listener and `end()` is never called. The next bare
+      // hover then measured a large delta from the stale origin, crossed the
+      // threshold, and panned the graph under a cursor with no button held.
+      //
+      // `buttons` is the bitmask of buttons currently held, so 0 means the
+      // press is over. Its ABSENCE is refused rather than assumed, because "no
+      // button state" is not evidence that a button is held; every real
+      // PointerEvent carries it and Task 6 forwards the event itself. A
+      // malformed step is refused without discarding the gesture — a stream
+      // this module cannot read must not be able to cancel a real pan.
+      if (!Number.isFinite(event.buttons)) return idle
+      if (event.buttons === 0) {
+        // The press ended where this module could not see it. Nothing is left
+        // to swallow either: the click it would have produced, if any, was
+        // dispatched before this hover ever arrived.
+        active = null
+        suppressClick = false
+        return idle
+      }
       const dx = event.clientX - active.x
       const dy = event.clientY - active.y
+      // Fail closed on the delta, for the same reason the `threshold` option
+      // fails closed above and by the identical mechanism: `Math.hypot(NaN,
+      // NaN) < 4` and `Math.hypot(Infinity, 0) < 4` are both false, so a
+      // comparison written as `<` treats a delta it cannot measure as "far
+      // enough to pan".
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return idle
+      // A move this module owns is proof the pointer is alive, so the stage is
+      // defended against the next accidental second press again.
+      active.contested = false
       let began = false
       if (!active.panning) {
-        if (Math.hypot(dx, dy) < threshold) return idle
+        if (!(Math.hypot(dx, dy) >= threshold)) return idle
         active.panning = true
         began = true
         // Above the threshold this gesture is a pan, so the click the browser
@@ -123,6 +185,12 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
 
     /** @returns {{ended:boolean, wasPanning:boolean, pointerId:(number|null)}} */
     end(event) {
+      // Ownership first. A `pointercancel` for a pointer this gesture does not
+      // own must not disarm the suppression the owner armed: on a multi-touch
+      // stage the browser cancels unrelated pointers routinely, and a repair
+      // hoisted above this early return would let a foreign cancel hand the
+      // pan's own synthesised click straight to whatever node the pan ended
+      // over — the mirror image of the defect this module was created to fix.
       if (!active || event.pointerId !== active.id) {
         return { ended: false, wasPanning: false, pointerId: null }
       }
@@ -136,7 +204,11 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
       return { ended: true, wasPanning, pointerId }
     },
 
-    /** True when the next click is the tail of a pan and must be swallowed. */
+    /**
+     * True while a click suppression is armed — i.e. a pan crossed the
+     * threshold and the click it produces has not been spent or cancelled yet.
+     * Armed is not the same as spendable: see `consumeClick`.
+     */
     isClickSuppressed() {
       return suppressClick
     },
@@ -144,9 +216,17 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
     /**
      * Swallows at most one click. Returns true when the caller should stop it.
      * The suppression is spent either way, so it can never reach a second click.
+     *
+     * A click that arrives while a gesture is STILL running is not that
+     * gesture's tail — the browser synthesises the pan's click after its
+     * pointerup — so it is neither swallowed nor allowed to spend the
+     * suppression. That is what stops a pan this module never saw the end of
+     * from eating an unrelated click: the fresh finger that taps a node while a
+     * lost pan is still believed to be in flight is delivered, not ignored.
      */
     consumeClick() {
       if (!suppressClick) return false
+      if (active !== null) return false
       suppressClick = false
       return true
     },
