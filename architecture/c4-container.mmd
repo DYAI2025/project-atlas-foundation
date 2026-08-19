@@ -3,28 +3,29 @@
 %% Authoritative reasoning: architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md
 %%
 %% STATUS OF THIS DIAGRAM — read before citing it as evidence:
-%%   Both lanes below are TARGET STATE. Neither lane asserts that its containers exist.
-%%   This repository currently contains contracts, gates, validators and evidence only
-%%   (reports/release-decision.json: NOT_READY; AD-001 status: conditional).
+%%   Lane A is now an IMPLEMENTED LOCAL PILOT boundary: ATLAS-65 provides the
+%%   real-source capture/projection/readback path and ATLAS-39/40 provide the
+%%   local Semantic Atlas WebGL consumer. This remains a bounded developer-machine
+%%   pilot and does NOT assert production isolation, publication controls or scale.
+%%   Lane B remains TARGET STATE and is not an implementation-status claim.
+%%   reports/release-decision.json may continue to report NOT_READY for production;
+%%   that is compatible with Lane A being implemented and Lane B remaining open.
 %%
-%% The two lanes are deliberately separate and must not be read as one pipeline:
-%%   Lane A is a bounded local pilot slice that may use real content and real local
-%%   persistence, and claims no production isolation, publisher or deployment controls.
-%%   Lane B is the later production target, where those controls are the whole point.
+%% The two lanes are deliberately separate and must not be read as one production pipeline:
 %%   Lane A produces evidence for Lane B. It never substitutes for it, and passing
 %%   Lane A never discharges a Lane B release gate.
 %%
-%% No graph UI stack is selected at this level (approval-boundary.md item 7); the
-%% read-side containers are stack-neutral.
+%% The current local browser consumer uses the ATLAS-39/40 WebGL workspace. Lane B
+%% remains stack-neutral: no production graph UI stack is selected by this diagram.
 flowchart TB
 
-  subgraph LANE_A["Lane A — Sprint-2 local pilot (target slice, not implemented)"]
+  subgraph LANE_A["Lane A — implemented local pilot; production controls not implemented (ATLAS-65 + ATLAS-39/40)"]
     direction TB
     A_SRC["Approved ATLAS source revision<br/>real content, bounded and explicitly selected"]
-    A_IMPORT["Bounded project-scoped import and projection step<br/>single project scope, idempotent, rebuildable from source"]
+    A_IMPORT["Bounded project-scoped capture, import and projection<br/>single project scope, deterministic, rebuildable from source"]
     A_STORE["Local pinned GBrain persistence<br/>developer machine only, real local derived data,<br/>projection-local/v1 identifiers, discardable and rebuildable"]
-    A_READ["gbrain-read/v1 read contract<br/>contracts/gbrain-read/v1, read-only and fail-closed"]
-    A_VIEW["Local browser viewer<br/>read-side consumer, stack-neutral at this level"]
+    A_READ["Persisted readback + gbrain-read/v1 contract<br/>contracts/gbrain-read/v1, read-only and fail-closed"]
+    A_VIEW["Local Semantic Atlas browser workspace<br/>WebGL read-side consumer with evidence inspector"]
     A_SRC --> A_IMPORT --> A_STORE --> A_READ --> A_VIEW
   end
 

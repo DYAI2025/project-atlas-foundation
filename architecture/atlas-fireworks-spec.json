@@ -1,0 +1,57 @@
+{
+  "template_type": "architecture",
+  "style": 7,
+  "width": 1400,
+  "height": 920,
+  "title": "Project ATLAS Foundation",
+  "subtitle": "Governed knowledge to inspectable graph — current pilot separated from production target",
+  "containers": [
+    {"id":"current-pilot","label":"Implemented local pilot","status":"current"},
+    {"id":"production-target","label":"Production target","status":"target"}
+  ],
+  "nodes": [
+    {"id":"confluence","label":"Confluence source set","shape":"rectangle","container":"current-pilot"},
+    {"id":"project-registry","label":"Project scope gate","shape":"hexagon","container":"current-pilot"},
+    {"id":"capture","label":"Verified capture","shape":"double-rectangle","container":"current-pilot"},
+    {"id":"projection","label":"Deterministic projection","shape":"double-rectangle","container":"current-pilot"},
+    {"id":"gbrain-local","label":"Pinned GBrain + PGLite","shape":"cylinder","container":"current-pilot"},
+    {"id":"readback","label":"Persisted readback","shape":"double-rectangle","container":"current-pilot"},
+    {"id":"read-contract","label":"gbrain-read/v1 validation","shape":"hexagon","container":"current-pilot"},
+    {"id":"provenance","label":"Provenance sidecar","shape":"cylinder","container":"current-pilot"},
+    {"id":"semantic-atlas","label":"Semantic Atlas workspace","shape":"rectangle","container":"current-pilot"},
+    {"id":"ci-gates","label":"CI + secret scan","shape":"hexagon","container":"current-pilot"},
+    {"id":"target-core","label":"ATLAS canonical control plane","shape":"double-rectangle","container":"production-target"},
+    {"id":"target-postgres","label":"PostgreSQL + project_id + RLS","shape":"cylinder","container":"production-target"},
+    {"id":"target-approval","label":"Approval / publish separation","shape":"hexagon","container":"production-target"},
+    {"id":"target-projection","label":"Reconciled GBrain projection","shape":"cylinder","container":"production-target"},
+    {"id":"target-consumers","label":"MCP / search / graph UI","shape":"rectangle","container":"production-target"}
+  ],
+  "arrows": [
+    {"from":"confluence","to":"capture","type":"data","label":"verified pages"},
+    {"from":"project-registry","to":"capture","type":"feedback","label":"scope"},
+    {"from":"capture","to":"projection","type":"data","label":"capture"},
+    {"from":"projection","to":"gbrain-local","type":"data","label":"pages + hierarchy"},
+    {"from":"gbrain-local","to":"readback","type":"data","label":"persisted state"},
+    {"from":"readback","to":"read-contract","type":"feedback","label":"validate"},
+    {"from":"readback","to":"provenance","type":"data","label":"source evidence"},
+    {"from":"read-contract","to":"semantic-atlas","type":"control","label":"accepted graph"},
+    {"from":"provenance","to":"semantic-atlas","type":"data","label":"evidence"},
+    {"from":"ci-gates","to":"semantic-atlas","type":"feedback","label":"quality gates"},
+    {"from":"capture","to":"target-core","type":"neutral","label":"pilot evidence only"},
+    {"from":"target-core","to":"target-postgres","type":"data","label":"canonical state"},
+    {"from":"target-approval","to":"target-core","type":"feedback","label":"human governance"},
+    {"from":"target-postgres","to":"target-projection","type":"data","label":"approved revisions"},
+    {"from":"target-projection","to":"target-consumers","type":"data","label":"read projection"}
+  ],
+  "legend": ["Solid/current: implemented local pilot", "Target: later production architecture", "GBrain is derived, rebuildable, and non-canonical"],
+  "_adapter": {
+    "name": "architecture_to_fireworks_spec",
+    "source": "architecture/architecture.json",
+    "target": "publication render",
+    "warnings": [
+      "The committed atlas-architecture-3d.svg is a custom isometric communication render, not a pixel render of this specification.",
+      "The production-target nodes are architectural intent, not implementation-status claims.",
+      "The canonical semantic model is architecture/architecture.json; this file is derived."
+    ]
+  }
+}
