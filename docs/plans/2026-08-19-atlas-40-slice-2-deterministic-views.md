@@ -6702,6 +6702,26 @@ check(
 
 The existing slice-1 checks — including `/##\s*Not delivered by slice 1/i` — stay exactly as they are. Nothing in section 17 is regenerated, renamed or removed: slice-1 evidence is history and is only added to.
 
+**Corrected 2026-08-20 (review of Task 8), the section comment and three more checks.**
+
+*The section comment* said "the behaviour is owned by the atlas40-\* suites and by the headed acceptance run". The second owner is not a repository artifact: measured, `git ls-files | grep -i "accept\|playwright\|headed"` exits **1** with no output. A validator comment may not send a reader to a proof the repository does not contain, so the comment now states that every check in section 18 is structural and names the atlas40-\* suites — which a reader can run — as the only place the behaviour is pinned.
+
+*Check 1* was named `the workspace shell draws a view projection rather than the raw graph` over the condition `imports view-state.mjs && includes('function resolveDisplayed()')`. An import and a declaration cannot establish what a function does, and the gap is not theoretical: two mutations that keep the import, the declaration and every comment byte-identical — `state.displayed = { ...applied, model: state.viewModel }` (the caption reports the restricted counts while the whole graph is drawn) and `applyView(state.viewModel, DEFAULT_VIEW)` (the Neighbourhood button becomes inert) — each left the validator at `VALIDATION PASSED` / 146 checks with `✓ the workspace shell draws a view projection rather than the raw graph` printed, and the suites at their control score. The check is renamed to the structural fact it really carries, and the behaviour it used to claim is asserted on the *code* of `resolveDisplayed()` in `test/atlas40-shell.test.mjs` (`const applied = applyView(state.viewModel, state.view)` and `state.displayed = applied`, both over `stripComments`), where both mutations are now red — measured `tests 33 / pass 32 / fail 1` each against control `tests 33 / pass 33 / fail 0`.
+
+*Check 4*'s markup half was the single literal `>Level 1<` — the exact row `index.html` used to hardcode. A re-hardcoded row spelled `>Depth 1<`, or carried in an attribute, walks straight past it; measured, that mutation left the check green. The property with no spellings is emptiness, so both legend groups are now required to ship empty and the same mutation is red: `✗ … index.html does not ship both legend groups empty: legend-edges="" legend-depth="<span class=\"a39-legend-row\" title=\"Depth 1\">Depth 1</span>"`.
+
+*Check 6* was named `the ATLAS-40 slice-2 boundary still makes no performance claim` while its condition only asserts the *disclaimer is present*. Measured: appending `- Measured on the accepted snapshot, pan/zoom holds a p95 of 62 FPS and search returns in a p95 of 40 ms, so DEC-07 is comfortably met today` to that very section, disclaimer untouched, left the validator at `VALIDATION PASSED` / 146 with `✓ the ATLAS-40 slice-2 boundary still makes no performance claim` printed over the fabrication — in a repository whose D10 reads "No performance claim is made anywhere in this slice." The check is renamed to what it proves, and D10's negative half becomes a **seventh** check that scans the boundary section for `p95`-, `FPS`- and millisecond-shaped figures outside DEC-07's own pinned target sentence. Measured on the same mutation: `VALIDATION FAILED` / `✗ the ATLAS-40 slice-2 boundary makes no performance claim of its own — … : p95`.
+
+**Corrected 2026-08-20 (second review of Task 8), four checks.**
+
+*The seventh check's scope.* The correction directly above scoped D10's negative half to "the boundary section". That is only one of the two sections this task authors, and it is not the one a fabricated measurement would most naturally land in. Measured, inserted into `## Delivered by slice 2` — the section that describes what slice 2 *did*: `Panning the accepted snapshot holds a steady 60 FPS and search returns in a p95 of 40 ms, so DEC-07 is already met.` → `EXIT=0`, `1:VALIDATION PASSED`, 147 `✓` lines, with `147: ✓ the ATLAS-40 slice-2 boundary still states that DEC-07 is unmeasured` and `148: ✓ the ATLAS-40 slice-2 boundary makes no performance claim of its own` printed over it. The fabrication uses the exact `FPS` and `p95`/`ms` shapes the pattern was built to catch; only the section differed. The scan now covers `## Delivered by slice 2` as well as `## Not delivered by slice 2`, which is green on the runbook as written — measured before the edit, `MEASURED matches delivered section: false null`.
+
+*The seventh check's name.* `makes no performance claim of its own` is a universal, and the condition is three regex shapes (`\bp\d{2}\b`, `\bfps\b`, `\d\s*ms\b`, `\bframes\s+per\s+second\b`). Measured, appended inside the boundary section: `- Measured on the accepted snapshot, search returns in 40 milliseconds and pan / holds sixty frames a second, so DEC-07 is comfortably met today` → `EXIT=0`, `1:VALIDATION PASSED`, 147 `✓` lines, `148: ✓ the ATLAS-40 slice-2 boundary makes no performance claim of its own`. No regex can prove the universal, so the name is corrected to the shapes the condition actually looks for — the same correction the round above applied to check 6.
+
+*The third check.* `savedViewDocVersion` pinned one of the runbook's **four** copies of the contract version, while the comment above it says a second copy that can disagree with the module is worse than no copy. Measured with `export const SAVED_VIEW_VERSION = 2` in `viewer/atlas39/core/saved-view.mjs:24` and only the prose line updated to `2`: `EXIT=0`, `1:VALIDATION PASSED`, 147 `✓` lines, `144: ✓ the runbook documents the saved-view version the module actually implements` — over a runbook still telling the reader the key is `atlas40.saved-view.v1` and that anything but version 1 is refused. All four shapes (the storage key, the JSON field, the prose sentence and the refusal-table row) are now derived from the module's number.
+
+*The fifth check* asserted the two headings only, so `- **AC6 Minimap** — explicitly deferred to the next slice` and `The ticket stays **In Arbeit**.` could both be deleted with the validator green — the two statements that make the section a *deferral* rather than a heading. Both are literals of the section the check is already named for, so they are folded in as two more conjuncts instead of an eighth check.
+
 **Step 3: Extend the runbook**
 
 Add to `docs/atlas-40-webgl-renderer.md`, after `## Not delivered by slice 1` and before `## Pilot boundary (unchanged)`:
@@ -6771,10 +6791,17 @@ tears the renderer down because the data cannot be trusted; a saved view that
 does not apply leaves a graph that is still real and still drawn, so it is
 refused loudly and locally instead.
 
-Mode, anchor and focus restore exactly. Zoom and position restore exactly when
-the stage is the same size and are re-fitted otherwise — which the restore
-announcement says, because claiming pixel-identical restoration across viewport
-sizes would be an overclaim.
+Mode, anchor and focus restore exactly, with one stated exception. A record whose
+`focus_id` is a real node of this graph that the saved `view` does not draw
+passes every contract check — the contract can prove a node exists, not that a
+projection shows it — so on restore the same guard `setFocus` uses runs again:
+the view returns to Overview, the whole graph is shown, and the announcement adds
+*The saved focus is not drawn by the saved view, so the whole graph is shown
+instead.* Only a hand-edited record reaches that shape, which is precisely the
+untrusted input the parse and restore steps exist for. Zoom and position restore
+exactly when the stage is the same size and are re-fitted otherwise — which the
+restore announcement says too, because claiming pixel-identical restoration
+across viewport sizes would be an overclaim.
 
 **Edge legend (AC7).** The legend is computed from the model the stage is
 drawing: one row per distinct `(relation_type, origin)` pair that really occurs,
@@ -6789,7 +6816,7 @@ colour would be inventing an encoding.
 
 Hierarchy remains, under its own **Hierarchy** heading, derived from the depths
 actually present, with each swatch bound to the same design token
-`core/scene.mjs` strokes the disc with. It is not the edge legend and is not
+`core/scene.mjs` computes for the disc. It is not the edge legend and is not
 presented as one.
 
 That group has one limit of its own, and it says so rather than leaving it to be
@@ -6826,7 +6853,17 @@ These remain open ATLAS-40 acceptance criteria. The ticket stays **In Arbeit**.
 - AC13 and the final story DoD
 ```
 
-Update the title line to `# ATLAS-40 — WebGL Renderer, Core Navigation and Deterministic Views (Slices 1–2)`, leaving the `Slice 1` string intact elsewhere so the slice-1 validator check keeps passing.
+**Corrected 2026-08-20 (review of Task 8), two sentences of the runbook text above.**
+
+*The hierarchy attribution* read "each swatch bound to the same design token `core/scene.mjs` strokes the disc with", and `core/scene.mjs` strokes nothing: `depthTokenName` (`scene.mjs:187`) returns a token *name* and `depthColor` (`:227`) resolves it, while the same runbook two paragraphs later correctly names "`core/render-webgl.mjs` — the code that actually strokes the disc on the GPU". Only the attribution was wrong — the token-sharing claim is true by construction, since `legend.mjs:145` fills each row's `token` from `depthTokenName(node.depth)` and `app.mjs:617` paints the swatch with `var(${entry.token})` — so the fix is "computes for the disc". Checked across the unit, not just the cited line: `grep -rn "strokes the disc"` over the non-plan files returns four hits, and the other three (`scene.mjs:169`, `legend.mjs:110`, `app.mjs:606`) all say *the renderer*, which is correct.
+
+*The restore paragraph* read "Mode, anchor and focus restore exactly" and stopped there, omitting a third restore outcome the code implements and announces: `app.mjs:762-764` computes `leavesView(bound.view, bound.focusId)` and, when true, sets `state.view = { ...DEFAULT_VIEW }` and appends *The saved focus is not drawn by the saved view, so the whole graph is shown instead.* The runbook enumerated the six refusal codes and the re-fit announcement but not this one, so its list of what a restore can do to the stage was incomplete — and the omitted case is exactly the untrusted-input case the parse and restore steps exist for. It is now stated, with its reachability (a hand-edited record) rather than left to be inferred.
+
+**Corrected 2026-08-20 (second review of Task 8), one sentence of the runbook text above.** The saved-view paragraph read "carrying UI state only — never graph data", which the record printed four lines below it contradicts: the JSON block shows `"node_count": 5, "edge_count": 4` and `"anchor_id"`, with `"focus_id"` under it — graph counts and graph node identifiers. The claim that is true, and worth stating precisely, is that no node label, page body or edge payload is stored, so the sentence now reads "carrying UI state and the snapshot identity it must match — never node or edge payload". The identity is load-bearing rather than incidental: the same section states two paragraphs later that `node_count` and `edge_count` are part of the identity **on purpose**, so a paragraph that denies storing graph data at all argues against its own contract.
+
+Update the title line to `# ATLAS-40 — WebGL Renderer, Core Navigation and Deterministic Views (Slice 1 and Slice 2)`.
+
+**Corrected 2026-08-20 (review of Task 8).** This instruction read "Update the title line to `… (Slices 1–2)`, leaving the `Slice 1` string intact elsewhere so the slice-1 validator check keeps passing." `Slices 1–2` does not contain the substring `Slice 1`, and the H1 was the last structural occurrence of it: measured on the runbook as Task 8 shipped it, `grep -n "Slice 1"` returned exactly two hits, at `:212` and `:336`, both mid-sentence in body prose. So section 17's `atlas40Doc.includes('Slice 1')` — a slice-1 check the plan promised to leave untouched — was moved off a heading and onto two ordinary sentences, where an unrelated copy-edit turns it red. The subordinate clause is the tell: an instruction that has to name which prose must survive for a check to pass is describing an anchor that is not structural. The title now carries `Slice 1` and `Slice 2` as literals, which restores the anchor in the most stable line in the document, and section 17 still is not touched.
 
 **Step 4: Run the full gates**
 
@@ -6836,16 +6873,20 @@ npm run secret-scan 2>&1 | tail -6
 ```
 
 Expected: `tests <N> / fail 0`, `VALIDATION PASSED`, `SECRET-SCAN PASSED`.
-Baseline was 408 tests / 131 checks; expect **131 + 8 file checks + 6 new checks = 145** validator checks. **Report the measured numbers, do not assume these.** If the count differs, find out why before continuing — a check that silently did not register is a check that is not protecting anything.
+Baseline was 408 tests / 131 checks; expect **131 + 9 file checks + 7 new checks = 147** validator checks. **Report the measured numbers, do not assume these.** If the count differs, find out why before continuing — a check that silently did not register is a check that is not protecting anything.
+
+**Corrected 2026-08-20 (review of Task 8).** This arithmetic read `131 + 8 file checks + 6 new checks = 145` and was stale twice over: Step 1's own correction of the same day raised the file-check count to **nine** (`test/helpers/purity.mjs`), and the review of Task 8 above adds a **seventh** structural check — D10's negative half. Measured at the corrected head: `node scripts/validate-current-repository.mjs` exits 0 with `VALIDATION PASSED` and **147** `✓` lines, and `npm run check` exits 0 at `ℹ tests 497 / ℹ pass 497 / ℹ fail 0`.
 
 **Corrected 2026-08-20 (review of Task 8).** The **145** above is superseded by the Step-1 correction. The 131-check half of the baseline is confirmed, not moved: measured on this branch, the validator at `HEAD` `93071345` still prints **131** checks. The 408-test half is stale for an ordinary reason — Tasks 1-7 added suites — and Step 4 already says to report the measured number rather than this one. After Task 8 the validator prints **146** = 131 + **9** file checks + 6 new checks. The extra one is `test/helpers/purity.mjs`. `/usr/bin/diff` of the two `✓` listings is purely additive — fifteen inserted lines, nothing removed and nothing renamed — so no slice-1 check was regenerated to reach that number.
 
 **Step 5: Commit**
 
 ```bash
-git add scripts/validate-current-repository.mjs docs/atlas-40-webgl-renderer.md README.md docs/plans/2026-08-19-atlas-40-slice-2-deterministic-views.md
+git add scripts/validate-current-repository.mjs docs/atlas-40-webgl-renderer.md README.md test/atlas40-shell.test.mjs docs/plans/2026-08-19-atlas-40-slice-2-deterministic-views.md
 git commit -m "ATLAS-40: bind the slice-2 view, saved-view and legend claims to the repository validator and runbook"
 ```
+
+**Corrected 2026-08-20 (second review of Task 8).** The `git add` list named four paths and omitted `test/atlas40-shell.test.mjs`, which this task modifies: §2 already lists it under **Modify** (`- \`test/atlas40-shell.test.mjs\` (pointer assertions move to the gesture module; new wiring assertions)`), and the review of Task 8 above added the `resolveDisplayed()` assertions to it as the *replacement* for the claim check 1 was renamed out of. Committing as originally instructed ships the validator comment "the behaviour it used to claim is asserted on the code of `resolveDisplayed()` in `test/atlas40-shell.test.mjs`, where both mutations are now red" while the assertions that make it true stay uncommitted — and nothing turns red, because a suite with fewer assertions still passes. A commit step that drops the evidence for a comment in the same commit is a plan defect, not a preference. The path is added; the other four are unchanged and stay in their original order.
 
 ---
 

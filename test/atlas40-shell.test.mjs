@@ -281,6 +281,32 @@ test('the shell routes the stage through the view-state projection, not the raw 
   // resolveDisplayed()` intact, so the assertion has to name the sentence.
   // Measured: shipped=true, announce-deleted mutant=false.
   assert.match(app, /announce\(`That view could not be shown: \$\{applied\.reason\}\. Showing the whole graph instead\.`\)/)
+  // The two assertions above are the presence of a projection, not the use of
+  // one, and neither this suite nor the repository validator saw the difference
+  // until it was measured. Two mutations, each keeping the import, the `function
+  // resolveDisplayed()` declaration and every comment in this file byte-identical:
+  //
+  //   state.displayed = { ...applied, model: state.viewModel }
+  //     — `scope` still reports the RESTRICTED counts, so #view-readout says
+  //       "2 of 5 pages" while all five nodes are on the stage.
+  //   const applied = applyView(state.viewModel, DEFAULT_VIEW)
+  //     — the Neighbourhood button becomes inert; every mode draws the whole graph.
+  //
+  // Measured on both, before these lines existed: `npm run check` at
+  // `VALIDATION PASSED / 146` with `✓ the workspace shell draws a view projection
+  // rather than the raw graph` printed, and the suites at their control score. So
+  // the projection is asserted on the CODE of the function that performs it: it
+  // must be applied to the LIVE view rather than to a constant, and its result
+  // must be stored unmodified, because rewriting `model` on the way into
+  // state.displayed is what puts a caption and a stage into disagreement.
+  const resolveDisplayed = /function resolveDisplayed\(\)[\s\S]*?\n\}/.exec(app)?.[0]
+  assert.ok(resolveDisplayed, 'resolveDisplayed is missing')
+  // Over the COMMENT-FREE source, for the reason test/helpers/purity.mjs gives:
+  // this function's own comments name `state.view` and `DEFAULT_VIEW`, so a raw
+  // scan would be satisfied by the prose that documents the code.
+  const resolveDisplayedCode = stripComments(resolveDisplayed)
+  assert.match(resolveDisplayedCode, /const applied = applyView\(state\.viewModel, state\.view\)/)
+  assert.match(resolveDisplayedCode, /^\s*state\.displayed = applied$/m)
 })
 
 test('both view modes are reachable, labelled and reflected in the controls', () => {

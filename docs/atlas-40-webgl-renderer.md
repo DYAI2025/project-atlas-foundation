@@ -1,4 +1,4 @@
-# ATLAS-40 — WebGL Renderer, Core Navigation and Deterministic Views (Slices 1–2)
+# ATLAS-40 — WebGL Renderer, Core Navigation and Deterministic Views (Slice 1 and Slice 2)
 
 ## What this is
 
@@ -242,7 +242,8 @@ announces it. A selection the user cannot see is the same defect as losing the
 graph.
 
 **Saved views (AC5).** One deterministic slot in `localStorage`, keyed
-`atlas40.saved-view.v1`, carrying UI state only — never graph data:
+`atlas40.saved-view.v1`, carrying UI state and the snapshot identity it must
+match — never node or edge payload:
 
 ```json
 {
@@ -285,10 +286,17 @@ refused loudly and locally instead — `body[data-saved-view="refused"]`, the
 reason and its code next to the control, and an announcement that ends by saying
 nothing on the stage was changed.
 
-Mode, anchor and focus restore exactly. Zoom and position restore exactly when
-the stage is the same size and are re-fitted otherwise — which the restore
-announcement says, because claiming pixel-identical restoration across viewport
-sizes would be an overclaim.
+Mode, anchor and focus restore exactly, with one stated exception. A record whose
+`focus_id` is a real node of this graph that the saved `view` does not draw
+passes every contract check — the contract can prove a node exists, not that a
+projection shows it — so on restore the same guard `setFocus` uses runs again:
+the view returns to Overview, the whole graph is shown, and the announcement adds
+*The saved focus is not drawn by the saved view, so the whole graph is shown
+instead.* Only a hand-edited record reaches that shape, which is precisely the
+untrusted input the parse and restore steps exist for. Zoom and position restore
+exactly when the stage is the same size and are re-fitted otherwise — which the
+restore announcement says too, because claiming pixel-identical restoration
+across viewport sizes would be an overclaim.
 
 **Edge legend (AC7).** The legend is computed from the model the stage is
 drawing: one row per distinct `(relation_type, origin)` pair that really occurs,
@@ -303,7 +311,7 @@ colour would be inventing an encoding.
 
 Hierarchy remains, under its own **Hierarchy** heading, derived from the depths
 actually present, with each swatch bound to the same design token
-`core/scene.mjs` strokes the disc with. It is not the edge legend and is not
+`core/scene.mjs` computes for the disc. It is not the edge legend and is not
 presented as one.
 
 That binding is pinned by test, not asserted by construction, and the difference
