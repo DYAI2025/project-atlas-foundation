@@ -4713,15 +4713,39 @@ Replace lines 60-72 (`.a39-stage-controls` group through the closing `</div>` of
     <span class="a39-saved-view-state" id="saved-view-state"></span>
   </div>
 
-  <section class="a39-legend" id="legend" aria-labelledby="legend-title">
+  <section class="a39-legend" aria-label="Graph legend">
     <h2 class="a39-legend-title" id="legend-title">Edge legend</h2>
-    <div class="a39-legend-group" id="legend-edges"></div>
+    <div class="a39-legend-group" id="legend-edges" role="group" aria-labelledby="legend-title"></div>
     <p class="a39-legend-note" id="legend-note"></p>
     <h3 class="a39-legend-title" id="legend-depth-title">Hierarchy</h3>
-    <div class="a39-legend-group" id="legend-depth" aria-labelledby="legend-depth-title"></div>
+    <div class="a39-legend-group" id="legend-depth" role="group" aria-labelledby="legend-depth-title"></div>
     <p class="a39-legend-note" id="legend-depth-note"></p>
   </section>
 ```
+
+**Corrected 2026-08-20 (third review of Task 6).** Three defects in the first draft of this
+block, all of them in what the markup *claims* to expose:
+
+1. `aria-labelledby="legend-depth-title"` sat on a role-less `<div>`. ARIA 1.2 prohibits
+   naming on role `generic`, so the Hierarchy group had **no** exposed accessible name
+   while the attribute read as if it did — a claim about assistive technology that
+   assistive technology does not honour. Both group divs now carry `role="group"`, and
+   the edges group is bound to `#legend-title` for the same reason: otherwise the fix
+   would have turned `legend-title` into a second identifier with no reader (defect 3).
+2. The `<section aria-labelledby="legend-title">` was named **"Edge legend"** while
+   containing the Hierarchy group and both notes, so the region's name under-described
+   its own contents. The container is named `Graph legend`; the `Edge legend` heading
+   stays where it belongs, on the edges group.
+3. `id="legend"` had no reader anywhere in the worktree. Measured at `09a53f3`:
+   `grep -rnE "'legend'|\"legend\"|#legend([^-]|$)" --include='*.mjs' --include='*.css'
+   --include='*.js' --include='*.md' --include='*.html' --include='*.json' .` (node_modules
+   excluded) returns exactly two lines — this plan block and the markup itself — and no
+   reader. It is dropped rather than carried: the shell has no skip-link target for the
+   legend, and inventing one is new UI this slice does not own.
+
+Task 7's `assert.match(legend, /aria-labelledby="legend-title"/)` is re-stated with this
+block, because under the new markup it would have gone on passing by matching the inner
+group instead of the section it names — a green assertion proving something else.
 
 Notes that matter:
 - The legend loses `aria-hidden="true"`. AC7 asks for a *visible* legend; a legend hidden from assistive technology is visible to some users only.
@@ -4744,8 +4768,9 @@ Change the `@media (max-width: 960px)` rule (currently `:718-720`) from hiding t
     gap: var(--s2) var(--s3);
   }
 
-  .a39-legend-note {
+  .a39-legend .a39-legend-note {
     flex-basis: 100%;
+    max-width: 100%;
   }
 ```
 
@@ -4755,8 +4780,18 @@ instead of fixing the first. Three facts measured in this worktree decide it:
 `.a39-stage-host` is `position: absolute; inset: 0` inside `.a39-main` (`shell.css`,
 the `.a39-stage-host` rule); `paintStage` sizes the canvas inside it to the whole
 stage viewport (`app.mjs`, `state.canvas.style.width/height`); and the legend's only
-`z-index` is the `z-index: 5` in its base rule — `grep -n 'z-index' viewer/atlas39/shell.css`
-returns five lines, one of them that base rule and none of them inside this media query.
+`z-index` is the `z-index: 5` in its base rule — `grep -cE '^\s*z-index:' viewer/atlas39/shell.css`
+returns **5** declarations, at lines 85, 451, 466, 499 and 668, one of them that base rule
+and none of them inside this media query, which spans lines 689-744.
+*(**Re-measured 2026-08-20, third review of Task 6.** This sentence originally cited
+`grep -n 'z-index'` "returns five lines". That command counts comment prose too: it returned
+5 at `7b88d4f0`, 6 after Task 6's first commit and **7** at `09a53f3`, the commit under
+review — lines 85, 451, 466, 499, 668, 713, 754 — and line 713 IS inside this media query,
+because it is the prose of the very comment this correction wrote. The substantive claim is
+unchanged; it is now stated as a **declaration** count, which is what the argument actually
+rests on and what a comment cannot move. After this round's Step 2 repair the seven mentions
+sit at 85, 451, 466, 499, 668, 713 and 763, the declarations are unchanged, and the media
+query spans 689-744.)*
 Per CSS 2.1 §9.9.1 `z-index` applies to positioned elements only, so an in-flow legend
 loses it, and per CSS 2.1 Appendix E an in-flow, non-positioned box paints in steps 4/7
 while a positioned sibling with `z-index: auto` paints in step 8 — the opaque canvas
@@ -4765,6 +4800,20 @@ facts, not from a rendered measurement; Task 9 measures the rendered result head
 the 960px countercheck viewport and reports either way. The shipped rule keeps the
 legend positioned and turns it into a full-width strip along the bottom of the stage,
 which is compact under either reading and hidden under neither.
+
+**Corrected 2026-08-20 (third review of Task 6).** The first draft of the *second* rule in
+that block — `.a39-legend-note { flex-basis: 100% }` — was inert. Per CSS Flexbox §9.2 an
+item's *hypothetical main size* is its flex base size **clamped by the used max main size**,
+and §9.3 breaks lines on the hypothetical main size — so the appended
+`.a39-legend-note { max-width: 46ch }`, which applies at every width, held the note's
+hypothetical size at 46ch and it went on sharing a row with the legend rows. The rule's only
+purpose is that row break, so it looked load-bearing and did nothing. Two changes make it do
+what it says: the clamp is lifted with `max-width: 100%`, and the selector is raised to
+`.a39-legend .a39-legend-note` (0,2,0) because the media query sits **earlier** in the file
+than the appended rule — `@media` adds no specificity, so a `max-width` declared here at
+(0,1,0) would have lost to the later `46ch` of equal specificity. Task 9 still measures the
+rendered result at the 960px countercheck viewport; this correction only removes a rule whose
+stated effect was unreachable.
 
 Append (colours by token only — `shell.css` may contain no colour literal):
 
@@ -4985,14 +5034,20 @@ function paintLegend() {
   for (const entry of depthLegend.entries) {
     const row = document.createElement('div')
     row.className = 'a39-legend-row'
-    const swatch = document.createElement('span')
-    swatch.className = 'a39-swatch'
-    // The swatch is painted from the same token the renderer strokes the disc
-    // with. The allowlist keeps that assignment mechanically safe.
-    if (DEPTH_TOKEN.test(entry.token)) swatch.style.borderColor = `var(${entry.token})`
     const text = document.createElement('span')
     text.textContent = `${depthCaption(entry.depth)} (${entry.count})`
-    row.append(swatch, text)
+    // The swatch is painted from the same token the renderer strokes the disc
+    // with. The allowlist keeps that assignment mechanically safe — and a token
+    // outside it gets NO swatch at all rather than the base `.a39-swatch`
+    // border, which is `var(--depth-n)`.
+    if (DEPTH_TOKEN.test(entry.token)) {
+      const swatch = document.createElement('span')
+      swatch.className = 'a39-swatch'
+      swatch.style.borderColor = `var(${entry.token})`
+      row.append(swatch, text)
+    } else {
+      row.append(text)
+    }
     depthRows.append(row)
   }
   dom.legendDepth.replaceChildren(depthRows)
@@ -5115,7 +5170,10 @@ function onRestoreView() {
 }
 
 function onClearSavedView() {
-  if (state.store === null) return
+  if (state.store === null) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, 'This browser did not allow the workspace to clear a saved view')
+    return
+  }
   try {
     state.store.removeItem(SAVED_VIEW_KEY)
   } catch (error) {
@@ -5129,6 +5187,22 @@ function onClearSavedView() {
   announce('Saved view cleared.')
 }
 ```
+
+**Corrected 2026-08-20 (third review of Task 6).** Two places in this block degraded where
+the repository rule is to fail closed:
+
+- `onClearSavedView` opened with `if (state.store === null) return` while `onSaveView` and
+  `onRestoreView` refuse the identical condition through `refuseSavedView`. The button is
+  disabled whenever the store is null, so the branch is unreachable today — but it was the
+  one saved-view path that answered a user action with silence, and a false hint to the next
+  reader that a quiet return is acceptable in this family of handlers.
+- `paintLegend` created the depth swatch unconditionally and only *skipped the colour*
+  when `DEPTH_TOKEN.test(entry.token)` was false, which left the base `.a39-swatch` border
+  in place — `var(--depth-n)` (`shell.css`, the `.a39-swatch` rule). That asserts the
+  depth-n colour for a row that is not depth-n. Unreachable today (`depthTokenName` returns
+  only the five admitted tokens, pinned by `test/atlas40-scene.test.mjs`), which is exactly
+  why it must fail closed if the ladder ever changes: the row keeps its label and count and
+  simply carries **no** swatch, so no colour is claimed that this build cannot back.
 
 `paintStage()` — draw the displayed model:
 
@@ -5170,17 +5244,91 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
   if (leftView) state.view = { ...DEFAULT_VIEW }
   state.focusId = known ? nodeId : null
   state.restoreStageFocus = known && moveStageFocus
-  ... // centring block unchanged
+
   render()
-  if (quiet) return
-  if (!known) { announce(`Focus cleared. ${viewCaption(state.displayed.scope, anchorLabel())}`); return }
+
+  // Centring runs AFTER render(), against the layout render() just produced.
+  if (known && center && !state.failed && state.layout) {
+    const placement = state.layout.placements.find((p) => p.node_id === nodeId)
+    if (placement && isOffStage(placement)) {
+      applyTransform(centerOn(state.transform, placement.x, placement.y, state.world))
+    }
+  }
+
+  // Returned, not announced, on the quiet path: announce() overwrites the live
+  // region, so a sentence emitted here would be replaced by the caller's own.
+  const scopeSentence = leftView ? 'Left the focused view. ' : ''
+  if (quiet) return scopeSentence
+  if (!known) { announce(`Focus cleared. ${viewCaption(state.displayed.scope, anchorLabel())}`); return scopeSentence }
   const node = vm.nodes.find((n) => n.node_id === nodeId)
   announce(
-    `${leftView ? 'Left the focused view. ' : ''}${node.label} focused. ` +
+    `${scopeSentence}${node.label} focused. ` +
     `${depthCaption(node.depth)}. ${node.degree} direct ${node.degree === 1 ? 'relation' : 'relations'}.`
   )
+  return scopeSentence
 }
 ```
+
+`runSearch` — a search that leaves the view has to say so as well:
+
+```js
+  let scopeSentence = ''
+  if (result.firstMatchId) {
+    scopeSentence = setFocus(result.firstMatchId, { moveStageFocus: false, quiet: true, center: true })
+  }
+  announce(`${scopeSentence}${searchAnnouncement(result)}`)
+```
+
+`onStageKeydown` — `Home`/`End` walk the displayed order, like the arrows:
+
+```js
+    case 'Home':
+      event.preventDefault()
+      setFocus(state.displayed.model.nodes[0].node_id, { center: true })
+      return
+    case 'End':
+      event.preventDefault()
+      setFocus(state.displayed.model.nodes.at(-1).node_id, { center: true })
+      return
+```
+
+**Corrected 2026-08-20 (third review of Task 6).** Three defects, all of them created by
+this task's own change of preconditions rather than by the lines they sit on:
+
+1. **The centring block was a no-op exactly when it was needed.** It was carried over
+   marked "centring block unchanged", but `paintStage` now runs `computeLayout` on the
+   **projected** model, so `state.layout` no longer holds every graph node — and the block
+   read it *before* `render()`, i.e. from the view being LEFT. Measured over the accepted
+   snapshot at 1092x693 with anchor `ATLAS:confluence:14778372:14778372`: 4 of 5 nodes are
+   placed, `state.layout.placements.find(p => p.node_id === SPRINT)` is `undefined`, so the
+   block was skipped; after the widening render that node sits at `{"x":329,"y":222}`, which
+   under `clampTransform(zoomAt(identity, 2.5, 546, 346.5, world), world)` =
+   `{"scale":2.5,"tx":-819,"ty":-519.75}` projects to `{"x":3.5,"y":35.25}` in a 1092x693
+   stage — `isOffStage` true by its own 48px margin. A navigator click or a search on a node
+   outside the current neighbourhood, while zoomed, focused a node the stage never brought
+   into sight, contradicting the comment directly above the block. In slice 1 this could not
+   happen, because the layout always held every node. The lookup now runs after `render()`
+   and re-centres through `applyTransform`, which repaints the stage alone; with the repair
+   the same node projects to `{"x":546,"y":346.5}`, the stage centre.
+2. **D3's "the view returns to Overview *and says so*" was not honoured on the search
+   path.** `runSearch` calls `setFocus(..., { quiet: true })` and `if (quiet) return`
+   short-circuited before the `Left the focused view. ` sentence, so a search landing
+   outside the current view dropped the whole scope change for the live-region user —
+   the same class as the stage and the live region disagreeing, as silence instead of a
+   false sentence. Announcing it inside `setFocus` does not work: `announce` assigns
+   `dom.live.textContent`, and `runSearch`'s own `announce` one line later would overwrite
+   it. So `setFocus` **returns** the sentence and the caller prefixes it. One spelling, in
+   `setFocus`. Measured after the repair, same snapshot, searching for the sprint plan from
+   the neighbourhood of `…:14778372`: the single announcement is
+   `Left the focused view. 1 node matches "sprint 2 – visible real semantic atlas – sprint
+   plan". Sprint 2 – Visible Real Semantic Atlas – Sprint Plan focused.`
+3. **`Home`/`End` still traversed the full graph** while `stepFocus` had been moved to the
+   displayed order for the reason D3 states. Measured in the neighbourhood of `…:14778372`:
+   the `End` target was `Sprint 2 – Visible Real Semantic Atlas – Sprint Plan`, `isInView`
+   **false** — one key press left the view. It was announced, so nothing was misleading, but
+   the two halves of the same gesture disagreed under the same rule. They now read
+   `state.displayed.model.nodes`, whose `End` target is `14 – Delivery Model, Program
+   Increment and Sprint Plan`, `isInView` **true**.
 
 **Corrected 2026-08-20 (second review of Task 6).** The `!known` branch above said
 `'Focus cleared. Showing the whole graph.'` — slice 1's sentence, carried into a slice
@@ -5500,6 +5648,38 @@ test('keyboard traversal walks the view that is actually drawn', () => {
   const stepFocus = /function stepFocus\([\s\S]*?\n\}/.exec(app)?.[0]
   assert.ok(stepFocus)
   assert.match(stepFocus, /state\.displayed\.model\.nodes/)
+  // Home/End are the same gesture under the same rule. Walking the full graph
+  // there stepped straight out of the view — measured in the neighbourhood of
+  // ATLAS:confluence:14778372:14778372, the End target was the sprint plan with
+  // isInView false. See the third Task 6 correction of 2026-08-20.
+  assert.match(app, /setFocus\(state\.displayed\.model\.nodes\[0\]\.node_id, \{ center: true \}\)/)
+  assert.match(app, /setFocus\(state\.displayed\.model\.nodes\.at\(-1\)\.node_id, \{ center: true \}\)/)
+  assert.equal(/state\.viewModel\.nodes\[0\]\.node_id/.test(app), false)
+  assert.equal(/state\.viewModel\.nodes\.at\(-1\)\.node_id/.test(app), false)
+})
+
+test('a search that leaves the view says so, and the focus is centred against the view it landed in', () => {
+  // D3's "the view returns to Overview AND SAYS SO" on the quiet path.
+  // announce() assigns dom.live.textContent, so a sentence emitted inside
+  // setFocus would be overwritten by runSearch's own one line later and never
+  // reach the live-region user. setFocus returns it; the caller prefixes it.
+  // One spelling of the sentence, in setFocus.
+  const setFocus = /function setFocus\([\s\S]*?\n\}/.exec(app)?.[0]
+  assert.ok(setFocus)
+  assert.match(setFocus, /const scopeSentence = leftView \? 'Left the focused view\. ' : ''/)
+  assert.match(setFocus, /if \(quiet\) return scopeSentence/)
+  const runSearch = /function runSearch\([\s\S]*?\n\}/.exec(app)?.[0]
+  assert.ok(runSearch, 'runSearch is missing')
+  assert.match(runSearch, /scopeSentence = setFocus\(result\.firstMatchId, \{ moveStageFocus: false, quiet: true, center: true \}\)/)
+  assert.match(runSearch, /announce\(`\$\{scopeSentence\}\$\{searchAnnouncement\(result\)\}`\)/)
+  // And the centring reads the layout render() just produced, not the layout of
+  // the view that was left — paintStage lays out the PROJECTED model, so the
+  // previous layout does not contain a node that arrived from outside it.
+  assert.ok(
+    setFocus.indexOf('render()') < setFocus.indexOf('state.layout.placements.find'),
+    'the centring block still reads the layout of the view that was left'
+  )
+  assert.match(setFocus, /applyTransform\(centerOn\(state\.transform, placement\.x, placement\.y, state\.world\)\)/)
 })
 
 test('the saved view is versioned, probed storage, and refuses without touching the stage', () => {
@@ -5554,7 +5734,12 @@ test('the legend is derived at render time and is no longer three fixed rows of 
   const legend = /<section class="a39-legend"[\s\S]*?<\/section>/.exec(html)?.[0]
   assert.ok(legend, 'the legend section is missing')
   assert.equal(/aria-hidden/.test(legend), false, 'the legend is hidden from assistive technology')
-  assert.match(legend, /aria-labelledby="legend-title"/)
+  // The container's name covers BOTH groups, and each group carries a role that
+  // may be named at all: ARIA 1.2 prohibits naming role `generic`, so
+  // aria-labelledby on a bare <div> exposes no name while reading as if it did.
+  assert.match(legend, /<section class="a39-legend" aria-label="Graph legend">/)
+  assert.match(legend, /id="legend-edges" role="group" aria-labelledby="legend-title"/)
+  assert.match(legend, /id="legend-depth" role="group" aria-labelledby="legend-depth-title"/)
   assert.match(legend, />Edge legend</)
 })
 
@@ -5581,6 +5766,11 @@ test('the legend survives the responsive countercheck instead of disappearing', 
   assert.equal(/\.a39-legend \{[^}]*position:\s*static/.test(small), false, 'an in-flow legend paints under the canvas')
   assert.match(small, /\.a39-legend \{[\s\S]*?bottom: var\(--s4\)/)
   assert.match(small, /\.a39-legend \{[\s\S]*?flex-direction: row/)
+  // The note's row break only exists if the 46ch max-width clamp is lifted: per
+  // CSS Flexbox §9.2 the hypothetical main size is the flex base size clamped by
+  // the used max main size, so `flex-basis: 100%` alone left the note sharing a
+  // row. See the Step 2 correction of 2026-08-20 (third review of Task 6).
+  assert.match(small, /\.a39-legend \.a39-legend-note \{[\s\S]*?max-width: 100%/)
 })
 
 test('a failed stage offers no view, no saved view and no legend', () => {
@@ -5618,6 +5808,29 @@ marker. They are listed here so the diff and the reason stay attached:
 4. The two `announce(\`Focus cleared. …\`)` assertions above — second Task 6 correction
    of 2026-08-20.
 5. The two `viewNeighbourhood` availability assertions above — same round.
+
+**Corrected 2026-08-20 (third review of Task 6).** Four more, from that round:
+
+6. `assert.match(legend, /aria-labelledby="legend-title"/)` → the three markup assertions
+   above. Under the corrected markup the old regex would have gone on passing by matching
+   the inner `#legend-edges` group instead of the section it was written to name — green,
+   and proving something else.
+7. The four new `Home`/`End` assertions in *keyboard traversal walks the view that is
+   actually drawn*, including the two negatives that keep the full-graph spelling from
+   coming back.
+8. The whole new test *a search that leaves the view says so, and the focus is centred
+   against the view it landed in* — D3's announcement on the quiet path, and the
+   `render()`-before-lookup ordering. The ordering is asserted as an `indexOf` comparison
+   rather than as a regex, because the defect was the *sequence* of two lines that both
+   survived unchanged.
+9. `assert.match(small, /\.a39-legend \.a39-legend-note \{[\s\S]*?max-width: 100%/)` in
+   *the legend survives the responsive countercheck instead of disappearing* — the row
+   break needs the max-width clamp lifted (Step 2 correction of the same round), so the
+   assertion pins the part that makes the rule do anything at all.
+
+All nine were dry-run against the shipped `app.mjs`, `index.html` and `shell.css` before
+this round committed — 5 tests, 5 pass, 0 fail — so Task 7 starts from a contract that
+already holds, and any later failure is a real regression rather than a stale expectation.
 
 `test/atlas40-shell.test.mjs` needs `shellCss` (already read at the top) and `join`/`VIEWER` (already imported).
 

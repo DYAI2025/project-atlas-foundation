@@ -590,14 +590,24 @@ function paintLegend() {
   for (const entry of depthLegend.entries) {
     const row = document.createElement('div')
     row.className = 'a39-legend-row'
-    const swatch = document.createElement('span')
-    swatch.className = 'a39-swatch'
-    // The swatch is painted from the same token the renderer strokes the disc
-    // with. The allowlist keeps that assignment mechanically safe.
-    if (DEPTH_TOKEN.test(entry.token)) swatch.style.borderColor = `var(${entry.token})`
     const text = document.createElement('span')
     text.textContent = `${depthCaption(entry.depth)} (${entry.count})`
-    row.append(swatch, text)
+    // The swatch is painted from the same token the renderer strokes the disc
+    // with. The allowlist keeps that assignment mechanically safe — and a token
+    // outside it gets NO swatch at all rather than the base `.a39-swatch`
+    // border, which is `var(--depth-n)` (shell.css, the `.a39-swatch` rule):
+    // drawing it would assert the depth-n colour for a row that is not depth-n.
+    // Unreachable today, because depthTokenName returns only the five admitted
+    // tokens and test/atlas40-scene.test.mjs pins that table — which is exactly
+    // why it must fail closed instead of degrading if the ladder ever changes.
+    if (DEPTH_TOKEN.test(entry.token)) {
+      const swatch = document.createElement('span')
+      swatch.className = 'a39-swatch'
+      swatch.style.borderColor = `var(${entry.token})`
+      row.append(swatch, text)
+    } else {
+      row.append(text)
+    }
     depthRows.append(row)
   }
   dom.legendDepth.replaceChildren(depthRows)
@@ -728,7 +738,15 @@ function onRestoreView() {
 }
 
 function onClearSavedView() {
-  if (state.store === null) return
+  if (state.store === null) {
+    // The same condition onSaveView and onRestoreView refuse loudly. The button
+    // is disabled while the store is null, so this is unreachable today — but a
+    // silent return here would be the one saved-view path that answers a user
+    // action with nothing, and a false hint that silence is acceptable in this
+    // family of handlers.
+    refuseSavedView(E_SAVED_VIEW_STORAGE, 'This browser did not allow the workspace to clear a saved view')
+    return
+  }
   try {
     state.store.removeItem(SAVED_VIEW_KEY)
   } catch (error) {
@@ -781,18 +799,37 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
   state.focusId = known ? nodeId : null
   state.restoreStageFocus = known && moveStageFocus
 
+  render()
+
   // Focusing a node that the current pan has pushed off screen is the same
   // defect as losing the graph, so a focus that came from the navigator or from
-  // a search brings the node back into view — but only when it actually needs it.
-  if (known && center && state.layout) {
+  // a search brings the node back into view — but only when it actually needs
+  // it.
+  //
+  // This runs AFTER render(), against the layout render() just produced. Slice 1
+  // could read state.layout first because the layout always held every node;
+  // paintStage now lays out the DISPLAYED model, so the previous view's layout
+  // does not contain a node that arrived from outside it — measured on the
+  // accepted snapshot at 1092x693 with anchor ATLAS:confluence:14778372:14778372:
+  // 4 of 5 nodes placed, and `placements.find(p => p.node_id === SPRINT)` is
+  // `undefined`, so the centring was skipped in exactly the case it exists for.
+  // At scale 2.5 that node projects to {x: 3.5, y: 35.25} in a 1092x693 stage —
+  // off stage by isOffStage's own 48px margin, focused and unreachable.
+  if (known && center && !state.failed && state.layout) {
     const placement = state.layout.placements.find((p) => p.node_id === nodeId)
     if (placement && isOffStage(placement)) {
-      state.transform = centerOn(state.transform, placement.x, placement.y, state.world)
+      applyTransform(centerOn(state.transform, placement.x, placement.y, state.world))
     }
   }
 
-  render()
-  if (quiet) return
+  // D3's "the view returns to the whole graph AND SAYS SO" is a fact the caller
+  // may have to announce itself: announce() overwrites the live region
+  // (app.mjs, `dom.live.textContent = message`), so a sentence emitted here on
+  // the quiet path would be replaced by the caller's own one line later and
+  // never reach the user. It is returned instead of being spelled a second time
+  // at the call site, so the two cannot drift apart.
+  const scopeSentence = leftView ? 'Left the focused view. ' : ''
+  if (quiet) return scopeSentence
   if (!known) {
     // Slice 1 could say "Showing the whole graph" here because one view existed.
     // Slice 2 made `state.view` independent of `state.focusId`, and clearing the
@@ -805,13 +842,14 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
     // one. The readout's own sentence is announced instead, so the two cannot
     // disagree.
     announce(`Focus cleared. ${viewCaption(state.displayed.scope, anchorLabel())}`)
-    return
+    return scopeSentence
   }
   const node = vm.nodes.find((n) => n.node_id === nodeId)
   announce(
-    `${leftView ? 'Left the focused view. ' : ''}${node.label} focused. ` +
+    `${scopeSentence}${node.label} focused. ` +
     `${depthCaption(node.depth)}. ${node.degree} direct ${node.degree === 1 ? 'relation' : 'relations'}.`
   )
+  return scopeSentence
 }
 
 /* ---------- zoom and pan ---------- */
@@ -882,13 +920,20 @@ function onStageKeydown(event) {
       }
       stepFocus(-1)
       return
+    // Home/End are keyboard traversal too, so they walk the same order the
+    // arrows do — the DISPLAYED one. Walking the full graph here stepped
+    // straight out of the view: measured on the accepted snapshot in the
+    // neighbourhood of ATLAS:confluence:14778372:14778372, `End` targeted
+    // "Sprint 2 – Visible Real Semantic Atlas – Sprint Plan", `isInView` false,
+    // so one key press widened the view back to Overview. Announced, so nothing
+    // was misleading — but it made the two halves of the same gesture disagree.
     case 'Home':
       event.preventDefault()
-      setFocus(state.viewModel.nodes[0].node_id, { center: true })
+      setFocus(state.displayed.model.nodes[0].node_id, { center: true })
       return
     case 'End':
       event.preventDefault()
-      setFocus(state.viewModel.nodes.at(-1).node_id, { center: true })
+      setFocus(state.displayed.model.nodes.at(-1).node_id, { center: true })
       return
     case '+':
     case '=':
@@ -918,10 +963,17 @@ function runSearch() {
   const result = matchNodes(state.viewModel, state.filter)
   dom.body.dataset.search = !result.active ? 'idle' : result.matches.length === 0 ? 'nomatch' : 'match'
   dom.filter.setAttribute('aria-invalid', result.active && result.matches.length === 0 ? 'true' : 'false')
+  // Search runs over the WHOLE graph (D3), so a match can land outside the
+  // current view and widen it back to Overview. That scope change has to be
+  // announced here: setFocus is quiet on this path because this function makes
+  // the announcement, and announce() overwrites the live region — a sentence
+  // from setFocus would be replaced by the search sentence one line later and
+  // the live-region user would lose the whole scope silently.
+  let scopeSentence = ''
   if (result.firstMatchId) {
-    setFocus(result.firstMatchId, { moveStageFocus: false, quiet: true, center: true })
+    scopeSentence = setFocus(result.firstMatchId, { moveStageFocus: false, quiet: true, center: true })
   }
-  announce(searchAnnouncement(result))
+  announce(`${scopeSentence}${searchAnnouncement(result)}`)
 }
 
 function syncSearchState() {

@@ -725,8 +725,17 @@ body[data-panning="true"] .a39-stage-host {
     gap: var(--s2) var(--s3);
   }
 
-  .a39-legend-note {
+  /* The notes take a row of their own in the wrapped strip. `flex-basis: 100%`
+   * alone does not do that: per CSS Flexbox section 9.2 an item's hypothetical
+   * main size is its flex base size clamped by the used max main size, and the
+   * later `.a39-legend-note` rule caps that at 46ch at EVERY width — so the
+   * note kept its 46ch hypothetical size and went on sharing a row. The clamp
+   * is lifted here, and the selector is `.a39-legend .a39-legend-note` (0,2,0)
+   * because a `max-width` declared at (0,1,0) earlier in the file loses to that
+   * later rule of equal specificity. */
+  .a39-legend .a39-legend-note {
     flex-basis: 100%;
+    max-width: 100%;
   }
 
   .a39-header .a39-chips {
