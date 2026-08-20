@@ -103,7 +103,25 @@ const REQUIRED_FILES = [
   'test/atlas40-scene-guard.test.mjs',
   'test/atlas40-transform.test.mjs',
   'test/atlas40-shell.test.mjs',
-  'docs/atlas-39-workspace-shell.md'
+  'docs/atlas-39-workspace-shell.md',
+
+  // ATLAS-40 slice 2: the deterministic view model, the saved-view contract, the
+  // derived legend and the pointer state machine. Existence only — the behaviour
+  // is owned by the atlas40-* suites and is not duplicated here.
+  'viewer/atlas39/core/view-state.mjs',
+  'viewer/atlas39/core/saved-view.mjs',
+  'viewer/atlas39/core/legend.mjs',
+  'viewer/atlas39/core/gesture.mjs',
+  'test/atlas40-view-state.test.mjs',
+  'test/atlas40-saved-view.test.mjs',
+  'test/atlas40-legend.test.mjs',
+  'test/atlas40-gesture.test.mjs',
+  // Not a suite, and required anyway. `npm test` globs test/**/*.test.mjs, so
+  // this file is only ever imported — but five suites import it
+  // (atlas40-view-state, atlas40-saved-view, atlas40-legend, atlas40-gesture,
+  // atlas40-shell), so one missing file takes five suites down at once, and the
+  // slice-2 file inventory names it as a created artifact like the eight above.
+  'test/helpers/purity.mjs'
 ]
 
 for (const f of REQUIRED_FILES) {
@@ -625,6 +643,67 @@ check(
 check(
   'README points at the ATLAS-39 run command and runbook',
   (await readFile('README.md', 'utf8').catch(() => '')).includes('npm run atlas39:serve')
+)
+
+// 18) ATLAS-40 SLICE 2: views, saved views and the derived legend. As in section
+//     17, the behaviour is owned by the atlas40-* suites and by the headed
+//     acceptance run; what is checked here is the structural claim the
+//     documentation makes, so the two cannot drift apart silently.
+check(
+  'the workspace shell draws a view projection rather than the raw graph',
+  atlas40App.includes("from './core/view-state.mjs'") && atlas40App.includes('function resolveDisplayed()'),
+  atlas40Error || 'app.mjs does not resolve a view before painting the stage'
+)
+check(
+  'the workspace shell has a versioned saved-view contract behind it',
+  atlas40App.includes("from './core/saved-view.mjs'") &&
+    atlas40App.includes('atlas40.saved-view.v${SAVED_VIEW_VERSION}'),
+  atlas40Error || 'app.mjs does not key its saved view by the contract version'
+)
+// The runbook states the contract version in prose. A second copy that can
+// disagree with the module is worse than no copy, so they are pinned together.
+const savedViewModuleVersion =
+  (await readFile('viewer/atlas39/core/saved-view.mjs', 'utf8').catch(() => ''))
+    .match(/export const SAVED_VIEW_VERSION = (\d+)/)?.[1] ?? null
+const savedViewDocVersion = atlas40Doc.match(/`saved_view_version`\s*:\s*`(\d+)`/)?.[1] ?? null
+check(
+  'the runbook documents the saved-view version the module actually implements',
+  savedViewModuleVersion !== null && savedViewModuleVersion === savedViewDocVersion,
+  `module: ${savedViewModuleVersion} / runbook: ${savedViewDocVersion}`
+)
+check(
+  'the ATLAS-40 legend is derived from the graph, not hardcoded in the markup',
+  atlas40App.includes("from './core/legend.mjs'") &&
+    !(await readFile('viewer/atlas39/index.html', 'utf8').catch(() => '')).includes('>Level 1<'),
+  atlas40Error || 'index.html still carries a hardcoded hierarchy legend row'
+)
+// Corrected 2026-08-20 (Task 8). The plan's condition was
+// `atlas40Doc.includes('Slice 2')`. Measured against the runbook text the plan
+// itself supplies in Task 8 Step 3: the capitalised string `Slice 2` occurs
+// there zero times, so that condition would have been red on the very document
+// it was written for. The two headings ARE the structural claim this check is
+// named for, so both are asserted directly instead of via an incidental
+// capitalisation. Section 17's slice-1 check is untouched.
+check(
+  'the ATLAS-40 runbook records slice 2 and its still-deferred scope',
+  /##\s*Delivered by slice 2/i.test(atlas40Doc) && /##\s*Not delivered by slice 2/i.test(atlas40Doc),
+  atlas40Error || 'docs/atlas-40-webgl-renderer.md does not state the slice-2 boundary'
+)
+// Corrected 2026-08-20 (Task 8), twice over. The plan matched
+// /no frame rate or search latency has been measured/ against the WHOLE runbook.
+// (1) It cannot match: the sentence is bold and line-wrapped in both boundary
+// sections, so `no` and `frame` are separated by a newline plus indent — measured
+// false against the slice-1 runbook at 93071345 and false against the plan's own
+// slice-2 text. The regex is therefore whitespace-tolerant here.
+// (2) Made tolerant and left whole-document, it would match the slice-1 sentence
+// alone — measured true against the slice-1-only runbook, i.e. green with the
+// slice-2 statement deleted, which is a check protecting nothing. It is scoped to
+// the slice-2 boundary section, which is strictly inside the whole document.
+const slice2Boundary = (atlas40Doc.split(/##\s+Not delivered by slice 2/i)[1] ?? '').split(/\n##\s/)[0]
+check(
+  'the ATLAS-40 slice-2 boundary still makes no performance claim',
+  /no\s+frame\s+rate\s+or\s+search\s+latency\s+has\s+been\s+measured/i.test(slice2Boundary),
+  'the slice-2 boundary lost its explicit statement that DEC-07 is unmeasured'
 )
 
 if (failures.length > 0) {

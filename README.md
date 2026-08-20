@@ -83,8 +83,10 @@ visible failure state, never a substituted one. Zero new dependencies.
 
 Shell runbook, design tokens and accessibility model:
 `docs/atlas-39-workspace-shell.md`. WebGL renderer, the scene boundary that
-replaced the SVG markup boundary, zoom/pan/search behaviour and the ATLAS-40
-scope still open: `docs/atlas-40-webgl-renderer.md`. The ATLAS-65 pilot viewer
+replaced the SVG markup boundary, zoom/pan/search behaviour, the deterministic
+views, the versioned saved-view contract, the derived edge legend and the
+ATLAS-40 scope still open: `docs/atlas-40-webgl-renderer.md`. The ATLAS-65
+pilot viewer
 (`viewer/atlas65/index.html`, `npm run atlas65:serve`) is unchanged.
 
 Related repositories:

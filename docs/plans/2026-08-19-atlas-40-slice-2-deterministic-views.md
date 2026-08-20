@@ -6639,7 +6639,10 @@ After the slice-1 block (`:95-105`), add:
   'test/atlas40-saved-view.test.mjs',
   'test/atlas40-legend.test.mjs',
   'test/atlas40-gesture.test.mjs',
+  'test/helpers/purity.mjs'
 ```
+
+**Corrected 2026-08-20 (review of Task 8).** This list carried eight entries and omitted `test/helpers/purity.mjs`, which §2 added to the **Create** inventory on 2026-08-19 (third review of Task 3) without propagating the amendment here. The inventory is the scope contract, so an entry that is in it and not in `REQUIRED_FILES` is drift between two parts of the same document. Measured on the branch: `grep -rl "from './helpers/purity.mjs'" test/` lists **five** suites (`atlas40-view-state`, `atlas40-saved-view`, `atlas40-legend`, `atlas40-gesture`, `atlas40-shell`), so the file's absence is one missing path that takes five suites down at once. It is a helper and not a suite — `npm test` globs `test/**/*.test.mjs` and never runs it on its own — which is exactly why only an existence check can guard it. Consequence for Step 4: **nine** file checks, not eight.
 
 **Step 2: Add the slice-2 structural checks**
 
@@ -6680,15 +6683,22 @@ check(
 )
 check(
   'the ATLAS-40 runbook records slice 2 and its still-deferred scope',
-  atlas40Doc.includes('Slice 2') && /##\s*Not delivered by slice 2/i.test(atlas40Doc),
+  /##\s*Delivered by slice 2/i.test(atlas40Doc) && /##\s*Not delivered by slice 2/i.test(atlas40Doc),
   atlas40Error || 'docs/atlas-40-webgl-renderer.md does not state the slice-2 boundary'
 )
+const slice2Boundary = (atlas40Doc.split(/##\s+Not delivered by slice 2/i)[1] ?? '').split(/\n##\s/)[0]
 check(
-  'the ATLAS-40 runbook still makes no performance claim',
-  /no frame rate or search latency has been measured/i.test(atlas40Doc),
-  'the runbook lost its explicit statement that DEC-07 is unmeasured'
+  'the ATLAS-40 slice-2 boundary still makes no performance claim',
+  /no\s+frame\s+rate\s+or\s+search\s+latency\s+has\s+been\s+measured/i.test(slice2Boundary),
+  'the slice-2 boundary lost its explicit statement that DEC-07 is unmeasured'
 )
 ```
+
+**Corrected 2026-08-20 (review of Task 8), two checks.**
+
+*Check 5* was `atlas40Doc.includes('Slice 2')`. The capitalised string `Slice 2` occurs **zero** times in the runbook text Step 3 supplies — measured over Task 8's own lines, the only hit for `Slice 2` in the whole task is inside the check itself — so the condition would have been red against the very document it was written for. The two headings *are* the structural claim the check is named for, so both are asserted directly instead of through an incidental capitalisation.
+
+*Check 6* was `/no frame rate or search latency has been measured/i` over the whole runbook, and was wrong twice. (1) It cannot match: the sentence is bold and line-wrapped in both boundary sections, so `no` and `frame` are separated by a newline plus indent — measured `false` against the slice-1 runbook at `93071345`, and Step 3's own text wraps it identically. (2) Made whitespace-tolerant but left whole-document, it matches the *slice-1* sentence on its own — measured `true` against the slice-1-only runbook, i.e. green with the entire slice-2 statement deleted, which is a check protecting nothing. It is therefore whitespace-tolerant **and** scoped to the slice-2 boundary section. Section 17's slice-1 checks are untouched either way.
 
 The existing slice-1 checks — including `/##\s*Not delivered by slice 1/i` — stay exactly as they are. Nothing in section 17 is regenerated, renamed or removed: slice-1 evidence is history and is only added to.
 
@@ -6828,10 +6838,12 @@ npm run secret-scan 2>&1 | tail -6
 Expected: `tests <N> / fail 0`, `VALIDATION PASSED`, `SECRET-SCAN PASSED`.
 Baseline was 408 tests / 131 checks; expect **131 + 8 file checks + 6 new checks = 145** validator checks. **Report the measured numbers, do not assume these.** If the count differs, find out why before continuing — a check that silently did not register is a check that is not protecting anything.
 
+**Corrected 2026-08-20 (review of Task 8).** The **145** above is superseded by the Step-1 correction. The 131-check half of the baseline is confirmed, not moved: measured on this branch, the validator at `HEAD` `93071345` still prints **131** checks. The 408-test half is stale for an ordinary reason — Tasks 1-7 added suites — and Step 4 already says to report the measured number rather than this one. After Task 8 the validator prints **146** = 131 + **9** file checks + 6 new checks. The extra one is `test/helpers/purity.mjs`. `/usr/bin/diff` of the two `✓` listings is purely additive — fifteen inserted lines, nothing removed and nothing renamed — so no slice-1 check was regenerated to reach that number.
+
 **Step 5: Commit**
 
 ```bash
-git add scripts/validate-current-repository.mjs docs/atlas-40-webgl-renderer.md README.md
+git add scripts/validate-current-repository.mjs docs/atlas-40-webgl-renderer.md README.md docs/plans/2026-08-19-atlas-40-slice-2-deterministic-views.md
 git commit -m "ATLAS-40: bind the slice-2 view, saved-view and legend claims to the repository validator and runbook"
 ```
 

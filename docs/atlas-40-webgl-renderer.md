@@ -1,4 +1,4 @@
-# ATLAS-40 — WebGL Renderer and Core Navigation (Slice 1)
+# ATLAS-40 — WebGL Renderer, Core Navigation and Deterministic Views (Slices 1–2)
 
 ## What this is
 
@@ -214,6 +214,144 @@ These remain open ATLAS-40 acceptance criteria. The ticket stays **In Arbeit**.
   performance slice will replace with instancing and culling.
 - Edge bundling, labels rendered on the GPU, and any layout other than the
   ATLAS-39 deterministic radial tree
+
+## Delivered by slice 2
+
+**Views (AC5).** Two modes, both pure projections over the snapshot that is
+already loaded:
+
+| Mode | Contents |
+| --- | --- |
+| Overview | every node and every edge |
+| Direct neighbourhood | one real node, the nodes its explicit edges reach, and every explicit edge whose both endpoints are in that set |
+
+"Cluster" in AC5 is read strictly as *a UI projection over explicit graph state*.
+No cluster label, no community detection, no similarity, no inferred edge and no
+relation-type catalogue is created — the canonical relation-type catalogue is
+still an open ATLAS question, and a viewer that invented one would put a
+decision on screen that nobody has made.
+
+A view restricts which nodes and edges reach the layout. It does **not** rewrite
+node facts: `depth`, `degree`, `provenance` and the adjacency the inspector reads
+stay the full-graph values, because those are facts about the page rather than
+about the view. Search stays full-graph for the same reason: a scoped view can
+never hide a page from the navigator.
+
+Focusing a node the current view does not draw returns the view to Overview and
+announces it. A selection the user cannot see is the same defect as losing the
+graph.
+
+**Saved views (AC5).** One deterministic slot in `localStorage`, keyed
+`atlas40.saved-view.v1`, carrying UI state only — never graph data:
+
+```json
+{
+  "saved_view_version": 1,
+  "snapshot": { "project_id": "…", "source_id": "…", "contract_version": "…",
+                "id_scheme": "…", "node_count": 5, "edge_count": 4 },
+  "view":      { "mode": "neighbourhood", "anchor_id": "…" },
+  "focus_id":  "…",
+  "transform": { "scale": 1.75, "tx": -412, "ty": -88 },
+  "viewport":  { "width": 1092, "height": 693 }
+}
+```
+
+The contract version is `saved_view_version`: `1`.
+
+Restoring is fail-closed, and the refusal is always a coded refusal that changes
+nothing on the stage:
+
+| Code | Cause |
+| --- | --- |
+| `E_SAVED_VIEW_INVALID` | absent, not JSON, not an object, or an unusable field |
+| `E_SAVED_VIEW_VERSION` | not version 1 — checked before any field is interpreted |
+| `E_SAVED_VIEW_MODE` | a view mode this build does not support |
+| `E_SAVED_VIEW_SNAPSHOT` | any of the six identity fields differs from the loaded graph |
+| `E_SAVED_VIEW_STALE_NODE` | the saved anchor or focus is not a node of this graph |
+| `E_SAVED_VIEW_STORAGE` | the browser refused to store or read |
+
+The six identity fields are `project_id`, `source_id`, `contract_version`,
+`id_scheme`, `node_count` and `edge_count`.
+
+A stale node is **refused, never resolved to a substitute**. `node_count` and
+`edge_count` are part of the identity on purpose: a re-scanned Confluence tree
+invalidates a saved view rather than restoring it into a graph that has quietly
+changed shape.
+
+A refused saved view is deliberately *not* a stage failure. A refused snapshot
+tears the renderer down because the data cannot be trusted; a saved view that
+does not apply leaves a graph that is still real and still drawn, so it is
+refused loudly and locally instead — `body[data-saved-view="refused"]`, the
+reason and its code next to the control, and an announcement that ends by saying
+nothing on the stage was changed.
+
+Mode, anchor and focus restore exactly. Zoom and position restore exactly when
+the stage is the same size and are re-fitted otherwise — which the restore
+announcement says, because claiming pixel-identical restoration across viewport
+sizes would be an overclaim.
+
+**Edge legend (AC7).** The legend is computed from the model the stage is
+drawing: one row per distinct `(relation_type, origin)` pair that really occurs,
+in code-unit order of type then origin, with the count. A type that is not in the
+view has no row. For the accepted snapshot that means exactly one row —
+`parent_of · explicit (4)`.
+
+Every explicit relation is drawn with the same stroke (`--line-strong`); the only
+per-edge variation is the focus highlight. The legend says so rather than
+implying that its colours tell the types apart, because inventing a per-type
+colour would be inventing an encoding.
+
+Hierarchy remains, under its own **Hierarchy** heading, derived from the depths
+actually present, with each swatch bound to the same design token
+`core/scene.mjs` strokes the disc with. It is not the edge legend and is not
+presented as one.
+
+That binding is pinned by test, not asserted by construction, and the difference
+matters enough to be written down. `core/render-webgl.mjs` — the code that
+actually strokes the disc on the GPU — inlines the same depth ladder as its own
+chain of ternaries, and `stage.css` spells it a third time for the golden-SVG
+path; this slice changes neither. What holds them together is measurement:
+`test/atlas40-render-webgl.test.mjs` reads the stroke colour back out of the
+uploaded vertex buffer and compares it to `depthColor` for every depth class,
+`test/atlas40-scene.test.mjs` pins depth to token name against a hand-written
+table and re-reads `tokens.css` by that token name, and the `stage.css` copy is
+inlined verbatim into the committed goldens, so an edit to it moves the golden
+bytes. That last one **detects** an edit; it never compares it to the ladder.
+"Cannot change unnoticed" is the honest claim for the CSS copy — not "the same
+token by construction".
+
+That group has one limit of its own, and it says so rather than leaving it to be
+inferred from the swatches: `core/scene.mjs` collapses every depth from 3 onward
+onto a single token, so on a graph deeper than three levels differently-labelled
+rows carry an identical colour. When that happens the group carries a note naming
+the level the collapse starts at, derived from the rows themselves — with the
+ladder this build ships, "Level 3 and deeper share one colour." The accepted
+snapshot is three levels deep, every row there has its own token, and the note is
+empty.
+
+**Repaired: the pointer gesture (slice-1 Minor).** After a drag crossed the
+movement threshold, `pointercancel` left the click suppression armed. A cancelled
+pointer delivers no click, so the flag stayed armed with nothing to spend it on.
+The gesture is now a pure state machine in `core/gesture.mjs`, `pointercancel`
+disarms it, and `test/atlas40-gesture.test.mjs` holds the repair. Slice 1 could
+only assert that `app.mjs` still contained the string `suppressClick = true`,
+which is precisely how the defect shipped.
+
+## Not delivered by slice 2
+
+These remain open ATLAS-40 acceptance criteria. The ticket stays **In Arbeit**.
+
+- **AC6 Minimap** — explicitly deferred to the next slice
+- **AC8** the 4,000-node / 15,000-edge performance programme. DEC-07 names
+  pan/zoom p95 ≥ 30 FPS and search p95 ≤ 800 ms as targets; **no frame rate or
+  search latency has been measured**, and nothing in this slice should be read as
+  evidence about either
+- Instancing, culling, semantic zoom, level-of-detail and edge bundling
+- Multiple named saved-view slots, sharing a saved view, or persisting one
+  anywhere but this browser. One slot is deliberate: a named list is the general
+  workspace/configuration platform this slice must not build
+- Any relation-type catalogue, inferred edge, similarity or mutual-kNN semantics
+- AC13 and the final story DoD
 
 ## Pilot boundary (unchanged)
 
