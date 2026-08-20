@@ -121,7 +121,7 @@ Depth/hierarchy stays, in a **separately headed** "Hierarchy" group, derived fro
 
 **Corrected 2026-08-19 (second review of Task 5).** The hierarchy group has a limit of its own and this decision did not state it, which left it to be discovered while wiring Task 6. `depthTokenName` collapses **every depth >= 3** onto `--depth-n`, so on a graph deeper than three levels several differently-labelled rows carry an **identical** swatch. Measured on a six-level graph against the shipped module: `Root -> --depth-0`, `Level 1 -> --depth-1`, `Level 2 -> --depth-2`, `Level 3 -> --depth-n`, `Level 4 -> --depth-n`, `Level 5 -> --depth-n` — **4 distinct tokens over 6 rows** — and `Object.keys(buildDepthLegend(model))` is exactly `['entries','empty']`, so nothing in the returned value says so. Rendered by Task 6 as label + swatch, that implies a per-level colour the stage does not draw: the same overclaim the edge legend refuses for itself one group over through `distinguishesTypes: false` and `edgeLegendNote`. Nothing is red today — the accepted snapshot is three levels deep and every row has its own token, measured as `new Set(entries.map((e) => e.token)).size === entries.length`.
 
-**The decision, recorded here rather than settled in code:** `buildDepthLegend` returns **no extra flag** for it, because the fact is already in the rows, and **Task 6 must say it** — a shell whose hierarchy rows share a token derives that from `new Set(entries.map((e) => e.token)).size < entries.length` and states "Level 3 and deeper share one colour" next to the group. The collapse itself belongs to `depthTokenName` in `core/scene.mjs` and is **not** changed by this slice. The limitation is pinned by test in `test/atlas40-legend.test.mjs` (`an absent depth is never displayed, and unrooted nodes sort last`), so a ladder that stopped collapsing, or started collapsing sooner, cannot pass unnoticed: mutating the row's token to a constant scores exit 1, 11/13.
+**The decision, recorded here rather than settled in code:** `buildDepthLegend` returns **no extra flag** for it, because the fact is already in the rows, and **Task 6 must say it** — a shell whose hierarchy rows share a token derives that from the rows and states it next to the group. **Corrected 2026-08-20 (fifth review of Task 6).** This paragraph first said the shell derives the *condition* from `new Set(entries.map((e) => e.token)).size < entries.length` and states the constant sentence "Level 3 and deeper share one colour" — a condition that fires on any shared token paired with a claim that names one fixed level. Both are derived now: the note names the caption of the **first row whose token another row also carries**, so a ladder that collapsed at 2 would say "Level 2 and deeper share one colour" instead of naming a level that is not where the collapse starts. For this build's ladder the derived sentence is exactly the old constant, measured on a six-level graph; the difference only shows on a ladder this slice does not change. The collapse itself belongs to `depthTokenName` in `core/scene.mjs` and is **not** changed by this slice. The limitation is pinned by test in `test/atlas40-legend.test.mjs` (`an absent depth is never displayed, and unrooted nodes sort last`), so a ladder that stopped collapsing, or started collapsing sooner, cannot pass unnoticed: mutating the row's token to a constant scores exit 1, 11/13.
 
 ### D8 — One depth→token function, so the swatch cannot drift from the stroke unnoticed
 
@@ -4765,6 +4765,13 @@ Notes that matter:
 - `#legend-depth-note` is the Hierarchy group's own limitation, which **D7 assigns to this task**: `depthTokenName` collapses every depth from 3 onward onto `--depth-n`, so on a graph deeper than three levels differently-labelled rows carry an identical swatch. It reuses `.a39-legend-note`, so it needs no new CSS, and `paintLegend` fills it only when the rows really do share a token — on the accepted three-level snapshot it stays empty. **Added 2026-08-19 (third review of Task 5):** D7 stated the requirement and this task had nowhere to put it.
 - `#saved-view-state` gets **no** `role="status"`. `#live` is the one live region; a second would announce everything twice.
 - The new group carries `class="a39-stage-controls"` deliberately: `onStageKeydown` already skips `.a39-stage-controls`, so arrow keys on the new buttons cannot be hijacked into graph traversal. Reusing the class is what makes that true without a second guard.
+- **Added 2026-08-20 (fifth review of Task 6):** the zoom group keeps slice 1's
+  `aria-label="Graph view controls"` **in this task only**. It and `"Graph views"` differ by
+  one word, and after this slice the older name describes the newer group better than its
+  own — two near-identical group names for two unrelated control sets, inside one `<main>`.
+  It is renamed to `"Zoom and focus controls"` in **Task 7, Step 3b**, together with the
+  `test/atlas40-shell.test.mjs:138` assertion that pins it, because this task must not touch
+  that file.
 
 **Step 2: `shell.css`**
 
@@ -5074,9 +5081,15 @@ function paintLegend() {
   // carry an identical swatch. Derived from the rows themselves rather than from
   // a flag, so it can only appear when it is true — on the accepted three-level
   // snapshot every row has its own token and this stays empty.
-  const sharedSwatch =
-    new Set(depthLegend.entries.map((e) => e.token)).size < depthLegend.entries.length
-  dom.legendDepthNote.textContent = sharedSwatch ? 'Level 3 and deeper share one colour.' : ''
+  //
+  // The LEVEL is derived too, not written into the sentence.
+  const depthTokenCounts = new Map()
+  for (const entry of depthLegend.entries) {
+    depthTokenCounts.set(entry.token, (depthTokenCounts.get(entry.token) ?? 0) + 1)
+  }
+  const sharedFrom = depthLegend.entries.find((e) => depthTokenCounts.get(e.token) > 1) ?? null
+  dom.legendDepthNote.textContent =
+    sharedFrom === null ? '' : `${depthCaption(sharedFrom.depth)} and deeper share one colour.`
 }
 
 function paintViewControls() {
@@ -5096,9 +5109,15 @@ function setView(next) {
     announce(`That view could not be shown: ${applied.reason}.`)
     return
   }
+  // The third writer of state.view, and the one that did not consult leavesView.
+  const droppedFocus = leavesView(applied.view, state.focusId)
+  if (droppedFocus) state.focusId = null
   state.view = applied.view
   render()
-  announce(viewCaption(state.displayed.scope, anchorLabel()))
+  announce(
+    (droppedFocus ? 'The focused page is not drawn by this view, so the focus was cleared. ' : '') +
+      viewCaption(state.displayed.scope, anchorLabel())
+  )
 }
 
 /**
@@ -5230,6 +5249,65 @@ rather than a defect — but the duplicate row is the copy that goes: `core/lege
 that sentence and `test/atlas40-legend.test.mjs` pins it, while the row was a second,
 unpinned spelling in the shell. The `if (edgeLegend.empty)` block is removed from this block
 above; `#legend-note` is the element that already exists to say what the rows cannot.
+
+**Corrected 2026-08-20 (fifth review of Task 6).** Two more, both of them a claim that was
+right only by the accident of who calls the code or how deep the graph happens to be.
+
+1. **The hierarchy note derived its condition and hardcoded its claim.** `sharedSwatch` fires
+   on *any* shared token, but the sentence emitted was the constant
+   `'Level 3 and deeper share one colour.'` — the same shape Task 5 removed from
+   `edgeLegendNote` one module over, "slice 1's fixed rows, moved out of the rows and into
+   the sentence". Nothing was wrong on screen, because `depthTokenName` collapses at 3 today;
+   a ladder that collapsed at 2 would have fired the note and named the wrong level. The
+   level is now derived from the first row whose token another row also carries, and
+   `depthCaption` — the one place that wording is decided — spells it. Measured by a mirror
+   that extracts the shipped block verbatim from `app.mjs` and re-checks it into the file
+   before running it (`shipped` = this block, `old` = the constant it replaced):
+
+   ```
+   A accepted snapshot   depths=[0,1,2] tokens=["--depth-0","--depth-1","--depth-2"]
+      shipped: "" | old: ""
+   B six levels          depths=[0,1,2,3,4,5] tokens=["--depth-0","--depth-1","--depth-2","--depth-n","--depth-n","--depth-n"]
+      shipped: "Level 3 and deeper share one colour." | old: "Level 3 and deeper share one colour."
+   C ladder collapses at 2 (hypothetical, depthTokenName unchanged: depth 2 -> --depth-2)
+      shipped: "Level 2 and deeper share one colour." | old: "Level 3 and deeper share one colour."
+   ```
+
+   The same sentence is quoted twice more in this document and both are corrected with it:
+   D7's "**The decision, recorded here rather than settled in code**" paragraph, and Task 8's
+   runbook prose, which now says the note *names the level the collapse starts at* and cites
+   the constant only as this build's value.
+2. **`setView` was the one writer of `state.view` that did not consult `leavesView`**, while
+   that function's own doc comment presents it as "the one predicate that keeps a focus and
+   the view it is shown in consistent" and names `setFocus` and `onRestoreView` as its
+   callers — so the invariant held on the focus side only, by the accident of who calls it.
+   Neither shipped caller can reach it (`#view-overview` widens to a view that draws
+   everything; `#view-neighbourhood` anchors on `state.focusId ?? state.view.anchorId`, so
+   the focus is either the anchor itself or null), but a third caller would leave
+   `state.focusId` outside `state.displayed.model` — the `0 nodes are in the tab order,
+   expected exactly 1` path in `core/scene-guard.mjs` that produces the
+   `E_STAGE_SCENE_REFUSED` tear-down D5 forbids. Widening back to Overview is *not* the
+   symmetric answer here, because the view is what the user just asked for; the unseeable
+   selection is what goes, and it is announced rather than dropped in silence. Measured by a
+   mirror that extracts `setView` and `leavesView` verbatim and drives them with that third
+   caller — focus on `…:22478849`, then `setView({ mode: 'neighbourhood', anchorId:
+   …:14778372 })`, a neighbourhood that does not draw it:
+
+   ```
+   === HEAD (before fix) ===
+   focus after       : "ATLAS:confluence:14778372:22478849"
+   announced         : ["Direct neighbourhood of “ATLAS Single Source of Truth” — 4 of 5 nodes, 3 of 4 relations."]
+   tabbable nodes    : 0
+   === WORKING TREE (after fix) ===
+   focus after       : null
+   announced         : ["The focused page is not drawn by this view, so the focus was cleared. Direct neighbourhood of “ATLAS Single Source of Truth” — 4 of 5 nodes, 3 of 4 relations."]
+   tabbable nodes    : 1
+   ```
+
+   `tabbable nodes` is the measurement that matters: `sceneViolation` reports the first
+   violation it finds and in that harness an earlier edge-geometry check fires first — it
+   returns the identical string for the **overview** scene too, so it is an artifact of
+   feeding it an unprojected scene, not a fact about this change.
 
 `paintStage()` — draw the displayed model:
 
@@ -5510,6 +5588,8 @@ that node's neighbourhood in one click), and the Overview button is the exit.
   if (dom.legendNote) dom.legendNote.textContent = 'No graph is drawn, so there is nothing to explain.'
   if (dom.legendDepthNote) dom.legendDepthNote.textContent = ''
   if (dom.viewReadout) dom.viewReadout.textContent = '—'
+  if (dom.savedViewState) dom.savedViewState.textContent = ''
+  delete dom.body.dataset.savedView
 ```
 
 **Corrected 2026-08-20 (second review of Task 6).** The `dom.legendDepthNote` line was
@@ -5521,6 +5601,21 @@ rows that are no longer on screen — the very thing "a failed stage offers no l
 forbids. `#legend-depth-note` was added to Step 1's markup by the third review of Task 5
 and this block was not extended with it at the same time. It is declared here instead of
 being removed.
+
+**Corrected 2026-08-20 (fifth review of Task 6).** The same argument, one span over, and
+this time the sibling that was missing is not a note but a **claim about stored state**.
+The block cleared `#view-readout` and both legend notes and left `#saved-view-state` and
+`body[data-saved-view]` standing. `showFailure` is not only a boot path: `onContextLost`
+calls it long after a successful save or restore, so the failure panel read "No graph is
+drawn. Nothing is substituted for the missing data." while `#saved-view-state` still read
+`Restored.` or `Saved: Direct neighbourhood of “…” — 4 of 5 nodes, 3 of 4 relations.`
+beside a disabled Save button, with `body[data-saved-view="restored"]` still set. It is
+`#view-readout`'s sibling in the same group and the fourth line of a block that already
+declares three of its four siblings. Every saved-view control above is disabled by then, so
+there is nothing left for the line to qualify: it says nothing rather than something stale,
+exactly as `#legend-depth-note` does one line up, and the attribute is removed rather than
+set to a value, because `none`/`saved`/`restored`/`refused` are all claims about a stage
+that is no longer drawn.
 
 `boot()` — open the store and seed the saved-view state, after `paintStatus()` and before `wireEvents()`:
 
@@ -5534,7 +5629,8 @@ being removed.
       storeRefusedRead = true
     }
   }
-  dom.body.dataset.savedView = storeRefusedRead ? 'refused' : state.savedViewPresent ? 'saved' : 'none'
+  dom.body.dataset.savedView =
+    state.store === null || storeRefusedRead ? 'refused' : state.savedViewPresent ? 'saved' : 'none'
   dom.savedViewState.textContent = state.store === null
     ? 'This browser did not allow the workspace to store a saved view.'
     : storeRefusedRead
@@ -5583,6 +5679,31 @@ is the value the existing `body[data-saved-view="refused"] .a39-saved-view-state
 already colours. `refuseSavedView()` is deliberately not called: it announces, and the boot
 announcement one call later would overwrite it in the single live region.
 
+**Corrected 2026-08-20 (fifth review of Task 6).** That repair covered only **half** the
+refusal, and the half it left out is the more reachable one. `storeRefusedRead ? 'refused'
+: …` has no branch for `state.store === null`, so a browser that refuses `localStorage`
+**outright** — private mode, storage disabled, the getter itself throwing — fell through to
+`'none'`. Measured with the same verbatim mirror that proved the read-refusal fix, extended
+to four stores; the only line that moves is A:
+
+```
+                      BEFORE (HEAD)                                              AFTER
+A store-refused   {"savedView":"none",   …,"storeIsNull":true}    {"savedView":"refused","storeIsNull":true}
+B read-refused    {"savedView":"refused",…,"storeIsNull":false}   {"savedView":"refused","storeIsNull":false}
+C working, empty  {"savedView":"none",   …,"storeIsNull":false}   {"savedView":"none",   "storeIsNull":false}
+D working, saved  {"savedView":"saved",  …,"storeIsNull":false}   {"savedView":"saved",  "storeIsNull":false}
+```
+
+Three consequences, all of them the argument above applied to the branch it was not applied
+to: `body[data-saved-view="refused"] .a39-saved-view-state { color: var(--accent) }`
+(`shell.css`) is the one rule that marks a refusal visually, so the *harder* refusal was
+rendered in the same muted colour as the benign "No saved view."; `onSaveView` refuses the
+identical `state.store === null` condition through `refuseSavedView`, which writes
+`'refused'`, so one file reported one fact two ways; and `'none'` is what
+`onClearSavedView` writes to mean "confirmed absent", which is precisely the claim this
+note rejected for the read case one paragraph up. No gate catches it — no Task 9 check reads
+`data-saved-view` in the store-unavailable case — so Task 7 pins it instead.
+
 **Step 4: Verify the wiring parses and nothing regressed yet**
 
 ```bash
@@ -5604,7 +5725,8 @@ git commit -m "ATLAS-40: wire deterministic views, one saved view and the derive
 
 **Files:**
 - Modify: `test/atlas39-shell.test.mjs:28-32`
-- Modify: `test/atlas40-shell.test.mjs:154-168` and append
+- Modify: `test/atlas40-shell.test.mjs:138` (Step 3b), `:154-168` and append
+- Modify: `viewer/atlas39/index.html:60` (Step 3b — added 2026-08-20, fifth review of Task 6)
 
 **Step 1: `AUTHORED` must cover the new modules**
 
@@ -5712,6 +5834,19 @@ test('a focus that the current view does not draw returns to the whole graph, an
   // lives: a second, re-spelled copy is how the two could drift apart.
   assert.match(app, /function leavesView\(view, nodeId\)/)
   assert.match(app, /return !isInView\(applyView\(state\.viewModel, view\), nodeId\)/)
+  // And EVERY writer of the pair goes through it, setView included. It was the
+  // one writer of state.view that did not, so the invariant held on the focus
+  // side only, by the accident of who calls it: neither shipped caller can leave
+  // a focus outside the new view, but a third would, and that is the "0 nodes
+  // are in the tab order" scene core/scene-guard.mjs refuses. Measured on the
+  // third caller: tabbable nodes 0 before, 1 after. Widening back to Overview is
+  // NOT the answer here — the view is what the user just asked for — so the
+  // unseeable selection goes, and is announced. See the fifth Task 6 correction.
+  const setView = /function setView\(next\) \{[\s\S]*?\n\}/.exec(app)?.[0]
+  assert.ok(setView, 'setView is missing')
+  assert.match(setView, /const droppedFocus = leavesView\(applied\.view, state\.focusId\)/)
+  assert.match(setView, /if \(droppedFocus\) state\.focusId = null/)
+  assert.match(setView, /The focused page is not drawn by this view, so the focus was cleared\./)
 })
 
 test('a restored saved view can never focus a node its own view does not draw', () => {
@@ -5787,6 +5922,13 @@ test('the saved view is versioned, probed storage, and refuses without touching 
   // data-stage neither `ready` nor `failed`. Measured on the bare-getItem
   // mutant: shipped=true, mutant=false. See the fourth Task 6 correction.
   assert.match(app, /try \{\n\s*state\.savedViewPresent = typeof state\.store\.getItem\(SAVED_VIEW_KEY\) === 'string'\n\s*\} catch \{/)
+  // BOTH refusals are `refused`. A store the browser withheld outright fell
+  // through to `none` — the value onClearSavedView writes to mean "confirmed
+  // absent" — so the harder refusal was rendered in the same muted colour as
+  // "No saved view.", while onSaveView reported the identical condition as
+  // `refused`. Measured on the store-refused mutant: shipped=true, mutant=false.
+  // See the fifth Task 6 correction of 2026-08-20.
+  assert.match(app, /state\.store === null \|\| storeRefusedRead \? 'refused' : state\.savedViewPresent \? 'saved' : 'none'/)
   // Every saved-view handler answers a null store LOUDLY, onClearSavedView
   // included — it is the one that used to return in silence, and its button is
   // disabled while the store is null, so nothing else would catch a relapse.
@@ -5832,8 +5974,16 @@ test('the legend is derived at render time and is no longer three fixed rows of 
   // both the element and the derivation are asserted rather than the wording
   // alone — a note that is never written is indistinguishable from no note.
   assert.match(html, /id="legend-depth-note"/)
-  assert.match(app, /new Set\(depthLegend\.entries\.map\(\(e\) => e\.token\)\)\.size < depthLegend\.entries\.length/)
-  assert.match(app, /dom\.legendDepthNote\.textContent = sharedSwatch \? 'Level 3 and deeper share one colour\.' : ''/)
+  // The LEVEL is derived as well as the condition. A constant sentence is right
+  // only while depthTokenName happens to collapse at 3; a ladder that collapsed
+  // at 2 would fire the note and name the wrong level, which is slice 1's fixed
+  // rows moved out of the rows and into the sentence. Measured on a hypothetical
+  // ladder that collapses at 2: derived="Level 2 and deeper share one colour.",
+  // constant="Level 3 and deeper share one colour." See the fifth Task 6
+  // correction of 2026-08-20.
+  assert.match(app, /const sharedFrom = depthLegend\.entries\.find\(\(e\) => depthTokenCounts\.get\(e\.token\) > 1\) \?\? null/)
+  assert.match(app, /sharedFrom === null \? '' : `\$\{depthCaption\(sharedFrom\.depth\)\} and deeper share one colour\.`/)
+  assert.equal(/'Level 3 and deeper share one colour\.'/.test(app), false, 'the level is hardcoded again')
   // AC7 asks for a VISIBLE legend, so it is no longer hidden from assistive tech.
   const legend = /<section class="a39-legend"[\s\S]*?<\/section>/.exec(html)?.[0]
   assert.ok(legend, 'the legend section is missing')
@@ -5894,6 +6044,12 @@ test('a failed stage offers no view, no saved view and no legend', () => {
   assert.ok(showFailure)
   assert.match(showFailure, /dom\.viewOverview, dom\.viewNeighbourhood, dom\.saveViewBtn, dom\.restoreViewBtn, dom\.clearSavedViewBtn/)
   assert.match(showFailure, /dom\.legendEdges\?\.replaceChildren\(\)/)
+  // …and no saved-view claim survives the failure either. showFailure is not
+  // only a boot path — onContextLost calls it long after a save or a restore,
+  // and #saved-view-state then still read `Restored.` beside a disabled Save
+  // button. See the fifth Task 6 correction of 2026-08-20.
+  assert.match(showFailure, /if \(dom\.savedViewState\) dom\.savedViewState\.textContent = ''/)
+  assert.match(showFailure, /delete dom\.body\.dataset\.savedView/)
 })
 
 test('the new controls cannot swallow the graph arrow keys', () => {
@@ -6019,6 +6175,59 @@ which is exactly what let this defect ship" — applied to the whole slice-2 she
 Task 9 checks 1-10 catch the first two. **Nothing anywhere catches the third**, so a browser
 whose `localStorage` throws on write is a hole this branch closes by code review alone; it is
 recorded here rather than claimed covered.
+
+**Corrected 2026-08-20 (fifth review of Task 6).** Five more, from that round, each pinning
+a repair that no other gate in this branch reaches:
+
+15. `assert.match(app, /state\.store === null \|\| storeRefusedRead \? 'refused' : …/)` in
+    *the saved view is versioned…* — the boot refusal covered only the read half, so a
+    browser that withholds `localStorage` outright fell through to `'none'`, the value
+    `onClearSavedView` writes to mean "confirmed absent". No Task 9 check reads
+    `data-saved-view` in the store-unavailable case, so this assertion is the only gate.
+16. The two `sharedFrom` assertions plus the negative
+    `assert.equal(/'Level 3 and deeper share one colour\.'/.test(app), false)` in *the
+    legend is derived at render time…* — the note's level is derived now, and the negative
+    is what keeps the constant from coming back under a derived condition.
+17. The four `setView` assertions in *a focus that the current view does not draw…* —
+    `setView` was the one writer of `state.view` that did not consult `leavesView`.
+18. The two `showFailure` assertions in *a failed stage offers no view, no saved view and no
+    legend* — `#saved-view-state` and `body[data-saved-view]` outlived the failure.
+19. The `aria-label` change in Step 3b below, which moves an assertion this block does not
+    otherwise touch.
+
+Fifteen through eighteen were dry-run as one suite before this round committed — against the
+repaired `app.mjs`, `ℹ tests 4 / ℹ pass 4 / ℹ fail 0`; against the pre-repair `app.mjs` of
+the previous commit, read out with `git show HEAD:viewer/atlas39/app.mjs`,
+`ℹ tests 4 / ℹ pass 0 / ℹ fail 4`. Each one turns red on exactly the defect it was written
+for, so none of them is a green assertion proving something else.
+
+**Step 3b: rename the zoom control group (added 2026-08-20, fifth review of Task 6)**
+
+Also modify: `viewer/atlas39/index.html:60`.
+
+`<main aria-label="Graph stage">` now holds two sibling `role="group"` elements named
+`"Graph view controls"` (zoom, reset, clear focus — slice 1's name) and `"Graph views"`
+(Overview/Neighbourhood, Save/Restore/Clear saved view — this slice's). They differ by one
+word, and after this slice the older name reads more naturally as a description of the
+**new** group: a screen-reader user tabbing between them hears two near-identical group
+names for two unrelated control sets. Rename the zoom group's `aria-label` to
+`"Zoom and focus controls"`, which is what it actually contains, and leave `"Graph views"`
+alone.
+
+It lands in **this** task rather than in Task 6 because the old name is pinned by
+`test/atlas40-shell.test.mjs:138`, which Task 6 must not touch — measured at the Task-6
+repair commit, `grep -rn 'Graph view controls' --include='*.mjs' --include='*.html'
+--include='*.md' --include='*.css' .` (node_modules excluded) returns exactly three lines:
+that assertion, Task 6 Step 1's markup block in this document, and the markup itself. So the
+rename is one markup edit plus one assertion edit, and doing half of it in Task 6 would have
+turned a green slice-1 assertion red for a reason unrelated to Task 6's own Step 4 failure:
+
+```js
+  assert.match(html, /aria-label="Zoom and focus controls"/)
+```
+
+Task 6 Step 1's block carries a pointer to this step so the two names cannot drift apart
+unnoticed.
 
 `test/atlas40-shell.test.mjs` needs `shellCss` (already read at the top), `join`/`VIEWER` (already imported), and one new import — `import { stripComments } from './helpers/purity.mjs'`, for the ordering assertion above.
 
@@ -6207,9 +6416,11 @@ presented as one.
 That group has one limit of its own, and it says so rather than leaving it to be
 inferred from the swatches: `core/scene.mjs` collapses every depth from 3 onward
 onto a single token, so on a graph deeper than three levels differently-labelled
-rows carry an identical colour. When that happens the group carries the note
-“Level 3 and deeper share one colour.”; the accepted snapshot is three levels
-deep, every row there has its own token, and the note is empty.
+rows carry an identical colour. When that happens the group carries a note naming
+the level the collapse starts at, derived from the rows themselves — with the
+ladder this build ships, “Level 3 and deeper share one colour.” The accepted
+snapshot is three levels deep, every row there has its own token, and the note is
+empty.
 
 **Repaired: the pointer gesture (slice-1 Minor).** After a drag crossed the
 movement threshold, `pointercancel` left the click suppression armed. A cancelled

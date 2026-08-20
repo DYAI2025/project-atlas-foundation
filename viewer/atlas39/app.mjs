@@ -172,6 +172,17 @@ function showFailure(headline, detail, code) {
   if (dom.legendNote) dom.legendNote.textContent = 'No graph is drawn, so there is nothing to explain.'
   if (dom.legendDepthNote) dom.legendDepthNote.textContent = ''
   if (dom.viewReadout) dom.viewReadout.textContent = '—'
+  // #saved-view-state is #view-readout's sibling in the same group and the
+  // fourth line of this block. showFailure is not only a boot path: onContextLost
+  // calls it long after a successful save or restore, and the line then still
+  // read `Restored.` or `Saved: Direct neighbourhood of “…” — 4 of 5 nodes, 3 of
+  // 4 relations.` beside a disabled Save button, with body[data-saved-view]
+  // still standing — a claim about a stage that is no longer drawn. Every
+  // saved-view control above is disabled, so there is nothing left for the line
+  // to qualify; it says nothing rather than something stale, exactly as
+  // #legend-depth-note does one line up.
+  if (dom.savedViewState) dom.savedViewState.textContent = ''
+  delete dom.body.dataset.savedView
   dom.body.dataset.stage = 'failed'
   announce(`${headline} ${detail}`)
 }
@@ -617,9 +628,22 @@ function paintLegend() {
   // carry an identical swatch. Derived from the rows themselves rather than from
   // a flag, so it can only appear when it is true — on the accepted three-level
   // snapshot every row has its own token and this stays empty.
-  const sharedSwatch =
-    new Set(depthLegend.entries.map((e) => e.token)).size < depthLegend.entries.length
-  dom.legendDepthNote.textContent = sharedSwatch ? 'Level 3 and deeper share one colour.' : ''
+  //
+  // The LEVEL is derived too, not written into the sentence. A constant reading
+  // 'Level 3 and deeper' was right only because depthTokenName happens to
+  // collapse at 3 today; a ladder that collapsed at 2 would have fired this note
+  // and named the wrong level — slice 1's fixed rows, moved out of the rows and
+  // into the sentence, which is the exact shape Task 5 removed from
+  // edgeLegendNote one module over. The first row whose token another row also
+  // carries is where the collapse starts, and entries arrive depth-ascending
+  // (core/legend.mjs, buildDepthLegend's sort).
+  const depthTokenCounts = new Map()
+  for (const entry of depthLegend.entries) {
+    depthTokenCounts.set(entry.token, (depthTokenCounts.get(entry.token) ?? 0) + 1)
+  }
+  const sharedFrom = depthLegend.entries.find((e) => depthTokenCounts.get(e.token) > 1) ?? null
+  dom.legendDepthNote.textContent =
+    sharedFrom === null ? '' : `${depthCaption(sharedFrom.depth)} and deeper share one colour.`
 }
 
 function paintViewControls() {
@@ -647,9 +671,27 @@ function setView(next) {
     announce(`That view could not be shown: ${applied.reason}.`)
     return
   }
+  // The third writer of state.view, and until now the one that did not consult
+  // leavesView — so the invariant that predicate documents ("a focus and the
+  // view it is shown in stay consistent") held on the focus side only, by the
+  // accident of who calls this. Neither shipped caller can reach it:
+  // #view-overview widens to a view that draws everything, and
+  // #view-neighbourhood anchors on `state.focusId ?? state.view.anchorId`, so
+  // the focus is either the anchor itself or null. A third caller would leave
+  // state.focusId outside state.displayed.model, which is the "0 nodes are in
+  // the tab order, expected exactly 1" path in core/scene-guard.mjs that tears
+  // the stage down with E_STAGE_SCENE_REFUSED — what D5 forbids. Widening back
+  // to Overview is not the symmetric answer here, because the view is the thing
+  // the user just asked for; the unseeable selection is what goes, and it is
+  // announced rather than dropped in silence.
+  const droppedFocus = leavesView(applied.view, state.focusId)
+  if (droppedFocus) state.focusId = null
   state.view = applied.view
   render()
-  announce(viewCaption(state.displayed.scope, anchorLabel()))
+  announce(
+    (droppedFocus ? 'The focused page is not drawn by this view, so the focus was cleared. ' : '') +
+      viewCaption(state.displayed.scope, anchorLabel())
+  )
 }
 
 /**
@@ -1202,7 +1244,18 @@ async function boot() {
       storeRefusedRead = true
     }
   }
-  dom.body.dataset.savedView = storeRefusedRead ? 'refused' : state.savedViewPresent ? 'saved' : 'none'
+  // A store the browser refused OUTRIGHT is `refused` for the same reason a
+  // refused read is: `none` means "confirmed absent", which is what
+  // onClearSavedView writes after really clearing the slot, and neither refusal
+  // can back that claim. It is also the harder of the two — no view can be
+  // saved at all — and `body[data-saved-view="refused"] .a39-saved-view-state`
+  // (shell.css) is the one rule that marks a refusal visually, so leaving this
+  // branch out rendered the worse case in the same muted colour as the benign
+  // "No saved view." onSaveView refuses the identical `state.store === null`
+  // through refuseSavedView, which writes `refused`; one file must not report
+  // one fact two ways.
+  dom.body.dataset.savedView =
+    state.store === null || storeRefusedRead ? 'refused' : state.savedViewPresent ? 'saved' : 'none'
   dom.savedViewState.textContent = state.store === null
     ? 'This browser did not allow the workspace to store a saved view.'
     : storeRefusedRead
