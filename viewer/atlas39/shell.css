@@ -501,6 +501,35 @@ body[data-panning="true"] .a39-stage-host {
   margin-inline-start: auto;
 }
 
+/* The legend is `pointer-events: none` for the same reason the control bar
+ * above is, and it was missed when that reasoning was written: it is a
+ * `position: absolute; z-index: 5` SIBLING of #stage-host, so it paints and
+ * hit-tests OVER the node overlay, and it holds no interactive content at all
+ * (h2, div, span, p — see index.html and paintLegend) that could need a
+ * pointer.
+ *
+ * Slice 1 could leave it at the default `auto`: it was three fixed rows in one
+ * corner, and below 960px it was `display: none`. Slice 2 changed both halves —
+ * the panel became a derived two-heading block, and the 960px rule turned it
+ * into a strip spanning `left: var(--s4)` to `right: var(--s4)`. Measured
+ * headed on the accepted snapshot, default Overview, default zoom, no user
+ * interaction at all, `document.elementFromPoint` at each node button's own
+ * centre:
+ *
+ *   1440x900  legend 315x214 px, 0 of 5 node buttons unreachable
+ *    960x700  legend 928x149 px, 2 of 5 report section.a39-legend
+ *    900x700  legend 868x149 px, 2 of 5 report section.a39-legend
+ *    800x700  legend 768x149 px, 2 of 5 report section.a39-legend
+ *    360x640  legend 328x165 px, 5 of 5 report the legend or its own children
+ *
+ * A click on such a node did not focus it and a pan could not be started there
+ * — the identical failure mode as the control-bar defect one element over, on
+ * first load rather than after an interaction. `display: none` is not the
+ * answer (AC7 needs the legend visible at the countercheck viewport, and
+ * test/atlas40-shell.test.mjs forbids it); giving up a pointer the panel never
+ * had a use for is. The cost is that legend text cannot be selected with the
+ * mouse; it stays fully available to the keyboard and to assistive technology,
+ * which is the trade the stage's own hit targets are worth. */
 .a39-legend {
   position: absolute;
   left: var(--s4);
@@ -514,6 +543,7 @@ body[data-panning="true"] .a39-stage-host {
   border-radius: var(--r2);
   backdrop-filter: blur(6px);
   z-index: 5;
+  pointer-events: none;
 }
 
 .a39-legend-row {

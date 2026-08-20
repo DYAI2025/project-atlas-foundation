@@ -819,13 +819,44 @@ check(
 //     prove, and the gap was measurable: `search returns in 40 milliseconds and
 //     pan / holds sixty frames a second`, appended inside the boundary section,
 //     passed. The name now states the three shapes the condition looks for.
+//
+// Corrected 2026-08-20 (headed acceptance). Correction (2) directly above did
+// not do what it says, and the sentence claiming it was itself the defect: the
+// name it produced — `carry no p95, FPS or millisecond figure` — still promised
+// a CONCEPT ("a millisecond figure") over a condition that matched three
+// notations, and it silently dropped a fourth (`frames per second`) that the
+// pattern did look for. The cited evasion still passed at that HEAD. Measured
+// on the regex in isolation:
+//
+//   "40 ms" true    "40ms" true    "p95" true    "60 FPS" true
+//   "frames per second" true
+//   "40 milliseconds" FALSE    "sixty frames a second" FALSE
+//   "holds a steady 60 frames a second" FALSE
+//
+// End to end, one line inserted into `## Delivered by slice 2` with the
+// disclaimer untouched — `Measured on the accepted snapshot, search returns in
+// 40 milliseconds and pan holds sixty frames a second, so DEC-07 is comfortably
+// met today.` — scored exit 0, `VALIDATION PASSED`, 147 checks, with this
+// check's own ✓ printed over a fabricated measurement.
+//
+// Two things change, because renaming alone was what failed last time. The
+// PATTERN now also spells the word forms that were measured to walk past it
+// (`millisecond`, a bare `ms`, and `frames per second` / `frames a second`), so
+// both cited fabrications are red. And the NAME is an enumeration of notations
+// rather than a claim about meaning: this check is a SPELLING guard, and D10's
+// universal — "No performance claim is made anywhere in this slice" — is not
+// something it proves or is named as proving. A figure phrased in words this
+// list does not carry ("returns before the eye can follow") still needs a
+// reader; what this closes is the shape a fabricated measurement actually takes.
 const DEC07_TARGETS =
   /DEC-07\s+names\s+pan\/zoom\s+p95\s*≥\s*30\s+FPS\s+and\s+search\s+p95\s*≤\s*800\s*ms\s+as\s+targets/i
 const slice2Prose = `${slice2Delivered}\n${slice2Boundary}`
 const slice2ProseOutsideTargets = slice2Prose.replace(DEC07_TARGETS, ' ')
-const MEASURED_SOUNDING = /\bp\d{2}\b|\bfps\b|\d\s*ms\b|\bframes\s+per\s+second\b/i
+const MEASURED_SOUNDING =
+  /\bp\d{2}\b|\bfps\b|\d\s*ms\b|\bms\b|\bmilliseconds?\b|\bframes\s+(?:per|an?)\s+seconds?\b|\bframes\s*\/\s*seconds?\b/i
 check(
-  "the ATLAS-40 slice-2 sections carry no p95, FPS or millisecond figure outside DEC-07's target sentence",
+  'the ATLAS-40 slice-2 sections spell none of p95, FPS, ms, millisecond, ' +
+    "frames-per-second or frames-a-second outside DEC-07's target sentence",
   DEC07_TARGETS.test(slice2Boundary) && !MEASURED_SOUNDING.test(slice2ProseOutsideTargets),
   DEC07_TARGETS.test(slice2Boundary)
     ? `a slice-2 section carries a measured-sounding figure outside the DEC-07 target sentence: ${

@@ -97,9 +97,19 @@ test('the legend does not claim an encoding the stage does not draw', () => {
   const one = buildEdgeLegend(vm)
   assert.equal(one.distinguishesTypes, false)
   assert.equal(one.encodingToken, '--line-strong')
+  // The note is a claim about relation TYPES, never about every edge on the
+  // stage. It used to end `; all are drawn with the same stroke.` — false the
+  // moment a node is focused, which is the ordinary state after any click:
+  // core/scene.mjs marks incident edges 'active' and the rest 'dim', and
+  // core/render-webgl.mjs strokes those in two different colours AND two
+  // different widths. Measured through the shipped shell on this snapshot:
+  // nothing focused -> 1 distinct stroke, one node focused -> 2. The legend
+  // swatch is var(--line-strong) at full opacity, so in the focused state it
+  // matched no edge on the stage while the note asserted uniformity. See the
+  // correction of 2026-08-20 (headed acceptance) in core/legend.mjs.
   assert.equal(
     edgeLegendNote(one),
-    'Every relation drawn here is parent_of (explicit); all are drawn with the same stroke.'
+    'Every relation drawn here is parent_of (explicit); the stroke does not vary by relation type.'
   )
   const many = buildEdgeLegend(synthetic([
     { edge_id: '1', from: 'a', to: 'b', relation_type: 'x', origin: 'explicit' },
@@ -115,7 +125,7 @@ test('the legend does not claim an encoding the stage does not draw', () => {
   // file reads the real graph, where the honest answer IS "parent_of
   // (explicit)", so none of them can tell the two apart. Measured on the shipped
   // module: replacing the template with the literal 'Every relation drawn here
-  // is parent_of (explicit); all are drawn with the same stroke.' survived the
+  // is parent_of (explicit); the stroke does not vary by relation type.' survived the
   // whole suite at exit 0, 13/13, and then answered a links_to/derived model
   // with that same sentence verbatim — slice 1's fixed rows, moved out of the
   // rows and into the sentence, which is the AC7 defect this suite exists to
@@ -128,7 +138,7 @@ test('the legend does not claim an encoding the stage does not draw', () => {
   ]))
   assert.equal(
     edgeLegendNote(other),
-    'Every relation drawn here is links_to (derived); all are drawn with the same stroke.'
+    'Every relation drawn here is links_to (derived); the stroke does not vary by relation type.'
   )
 })
 

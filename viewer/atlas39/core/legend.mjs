@@ -95,12 +95,39 @@ export function buildEdgeLegend(model) {
   }
 }
 
-/** The sentence under the edge rows. It says only what is true of this view. */
+/**
+ * The sentence under the edge rows. It says only what is true of this view.
+ *
+ * Both branches make the SAME claim, and it is a claim about relation TYPES:
+ * the stroke does not encode which type an edge is. Neither branch may claim
+ * that every edge on the stage carries an identical stroke, because that is
+ * false in the ordinary interaction state.
+ *
+ * The single-entry branch used to end `; all are drawn with the same stroke.`,
+ * which is exactly that forbidden absolute — and the accepted snapshot carries
+ * exactly one relation type, so the overreaching branch was the one that ships.
+ * Measured through the shipped shell on the real snapshot, comparing the note
+ * to the strokes core/render-webgl.mjs:219-222 actually produces:
+ *
+ *   nothing focused      edge states ["idle","idle","idle","idle"]
+ *                        1 distinct stroke   (--line-strong @ 0.85, width 1.25)
+ *   one node focused     edge states ["dim","dim","active","active"]
+ *                        2 distinct strokes  (--line-strong @ 0.16, width 1.25
+ *                                             and --accent @ 1, width 2)
+ *
+ * The legend swatch is `background: var(--line-strong)` at full opacity
+ * (shell.css), so in the focused state it matched no edge on the stage at all
+ * while the note asserted uniformity. AC7 admits only encodings actually
+ * present; the focus highlight is not an encoding of the relation, it is an
+ * encoding of the selection, and D7 already records that it is the only
+ * per-edge variation. The sentence now says what the >= 2 branch below has
+ * always said, so the two cannot disagree.
+ */
 export function edgeLegendNote(legend) {
   if (legend.empty) return 'This view draws no relations.'
   if (legend.entries.length === 1) {
     const only = legend.entries[0]
-    return `Every relation drawn here is ${only.relationType} (${only.origin}); all are drawn with the same stroke.`
+    return `Every relation drawn here is ${only.relationType} (${only.origin}); the stroke does not vary by relation type.`
   }
   return 'All relation types are drawn with the same stroke; the stage does not tell them apart visually.'
 }

@@ -376,6 +376,23 @@ test('a restored saved view can never focus a node its own view does not draw', 
   assert.match(restore, /const leftView = leavesView\(bound\.view, bound\.focusId\)/)
   assert.match(restore, /state\.view = leftView \? \{ \.\.\.DEFAULT_VIEW \} : bound\.view/)
   assert.match(restore, /The saved focus is not drawn by the saved view/)
+  // …and the VISIBLE line says WHICH of the two happened. It was a flat
+  // 'Restored.' on both sides of that branch, so a discarded saved view was
+  // reported to the sighted user as a restoration while only the live region
+  // told the truth — the mirror image of the setFocus defect this slice already
+  // corrected, where only the assistive-technology user got the wrong sentence.
+  // Measured headed on the accepted snapshot with the stored record
+  // {mode:'neighbourhood', anchor_id:…:22478849, focus_id:…:14778372}:
+  // #saved-view-state read "Restored." beside #view-readout "Overview — 5 of 5
+  // nodes, 4 of 4 relations." See the correction of 2026-08-20 (headed
+  // acceptance).
+  assert.match(restore, /dom\.savedViewState\.textContent = leftView/)
+  assert.match(restore, /Restored without the saved view: its focus is not drawn by it\./)
+  assert.equal(
+    /dom\.savedViewState\.textContent = 'Restored\.'/.test(stripComments(restore)),
+    false,
+    'the visible line claims a plain restoration on both sides of the leftView branch again'
+  )
 })
 
 test('keyboard traversal walks the view that is actually drawn', () => {
@@ -704,6 +721,164 @@ test('the legend survives the responsive countercheck instead of disappearing', 
   assert.ok(
     legendNoteRules.some((rule) => /max-width: 100%/.test(rule)),
     'the 46ch clamp is not lifted, so the note shares a row instead of taking one'
+  )
+})
+
+test('the two stage-control groups share one flex line and neither anchors itself', () => {
+  // DEFECT A, and until now the repair for it was pinned by nothing at all.
+  // Slice 1 anchored the zoom group with `position: absolute; top/right`; slice
+  // 2 anchored the view group the same way against the opposite edge, and the
+  // two boxes then shared one band with nothing deciding who got which pixels.
+  // Measured headed on 2026-08-20 at all three acceptance viewports, with the
+  // longest readout this build can produce on screen: every one of zoom-out,
+  // zoom-level, zoom-in, reset-view and clear-focus reported an
+  // elementFromPoint(centre) belonging to the VIEW group — five accepted
+  // slice-1 controls, none of them clickable by mouse.
+  //
+  // The repair is structural, so this pins the structure. A revert of
+  // index.html and shell.css to 74ab1e7e restores the exact defect, and before
+  // this test existed `npm run check` scored exit 0 / 498 passing / VALIDATION
+  // PASSED over it — identical to the control run. Nothing in test/, scripts/
+  // or docs/ referenced `a39-stage-controlbar` at all.
+  const bar = /<div class="a39-stage-controlbar">[\s\S]*?\n  <\/div>/.exec(html)?.[0]
+  assert.ok(bar, 'index.html no longer wraps the two stage-control groups in one bar')
+  // Both groups INSIDE it, and none outside: a group that escapes the bar is
+  // not on its flex line and can overlap the other one again.
+  assert.equal((html.match(/class="a39-stage-controls /g) || []).length, 2)
+  assert.equal(
+    (bar.match(/class="a39-stage-controls /g) || []).length,
+    2,
+    'a stage-control group is outside the bar, so the two can overlap again'
+  )
+  assert.match(bar, /class="a39-stage-controls a39-view-controls"/)
+  assert.match(bar, /class="a39-stage-controls a39-zoom-controls"/)
+
+  // The non-overlap is COMPUTED, not asserted: boxes on a single flex line
+  // never overlap, at any width, for any content. Both halves of that sentence
+  // are load-bearing — `flex-wrap: wrap` on the bar would put the groups on
+  // two lines and hand the band back to whichever one grew.
+  const barRules = rulesWithSubject(shellCss, 'a39-stage-controlbar')
+  assert.ok(barRules.length > 0, 'nothing in shell.css styles the stage control bar')
+  assert.ok(barRules.some((rule) => /display:\s*flex/.test(rule)), 'the bar is not a flex container')
+  assert.ok(barRules.some((rule) => /flex-wrap:\s*nowrap/.test(rule)), 'the bar may wrap, so its groups can share a band again')
+  // The bar covers the top of the stage and is a SIBLING of #stage-host, so
+  // without this it swallows every pan and every node click that starts there —
+  // the defect its own neighbour, the legend, shipped with.
+  assert.ok(barRules.some((rule) => /pointer-events:\s*none/.test(rule)), 'the bar swallows pointer events meant for the graph')
+
+  // …and the groups themselves are flex ITEMS, never anchored boxes. This is
+  // the negative that makes the defect unreachable rather than unlikely: the
+  // moment either group declares `position`, it leaves the line the guarantee
+  // above is a property of. Read over the WHOLE stylesheet, because a rule in
+  // any media query would do it.
+  for (const className of ['a39-stage-controls', 'a39-view-controls', 'a39-zoom-controls']) {
+    const rules = rulesWithSubject(shellCss, className)
+    assert.ok(rules.length > 0, `nothing in shell.css styles .${className}`)
+    for (const rule of rules) {
+      assert.equal(/(^|[;{\s])position:/.test(rule), false, `a control group anchors itself: ${rule}`)
+      assert.equal(/(^|[;{\s])(left|right|inset):/.test(rule), false, `a control group anchors itself: ${rule}`)
+    }
+  }
+  // The groups restore the pointer the bar gave up, or the controls inside them
+  // are the ones that stop answering.
+  assert.ok(
+    rulesWithSubject(shellCss, 'a39-stage-controls').some((rule) => /pointer-events:\s*auto/.test(rule)),
+    'the control groups never restore pointer-events, so the controls are dead'
+  )
+})
+
+test('the legend is a decoration, not a lid over the stage hit targets', () => {
+  // The same failure mode as DEFECT A above, one element over, and it reached
+  // the user WITHOUT any interaction at all. `.a39-legend` is a
+  // `position: absolute; z-index: 5` sibling of #stage-host, so it hit-tests
+  // over the node overlay. Slice 1 could leave it at the default `auto`: three
+  // fixed rows in one corner, `display: none` below 960px. Slice 2 made it a
+  // derived panel AND spanned it `left`-to-`right` at the countercheck widths.
+  //
+  // Measured headed on the accepted snapshot, default Overview, default zoom,
+  // zero interaction, elementFromPoint at each node button's own centre:
+  //
+  //   1440x900  legend 315x214 px   0 of 5 node buttons unreachable
+  //    960x700  legend 928x149 px   2 of 5 report section.a39-legend
+  //    900x700  legend 868x149 px   2 of 5 report section.a39-legend
+  //    800x700  legend 768x149 px   2 of 5 report section.a39-legend
+  //    360x640  legend 328x165 px   5 of 5 report the legend or its children
+  //
+  // A real mouse click on the root node at 900x700 then left aria-pressed
+  // empty and #clear-focus disabled, and a drag across that band moved the
+  // stage 0 px — against the slice-1 baseline 7b88d4f0 at the identical
+  // coordinates, which focused the node and panned 110 px.
+  const legendRules = rulesWithSubject(shellCss, 'a39-legend')
+  assert.ok(legendRules.length > 0, 'nothing in shell.css styles the legend')
+  assert.ok(
+    legendRules.some((rule) => /pointer-events:\s*none/.test(rule)),
+    'the legend still captures pointer events meant for the graph underneath it'
+  )
+  // `pointer-events` inherits, so the panel's own `none` also covers its rows,
+  // notes, headings and swatches — unless one of them declares `auto` and
+  // re-opens the hole a part at a time. Whole stylesheet, every part.
+  for (const className of [
+    'a39-legend', 'a39-legend-row', 'a39-legend-note', 'a39-legend-title',
+    'a39-legend-group', 'a39-edge-swatch', 'a39-swatch'
+  ]) {
+    for (const rule of rulesWithSubject(shellCss, className)) {
+      assert.equal(/pointer-events:\s*auto/.test(rule), false, `part of the legend takes the pointer back: ${rule}`)
+    }
+  }
+
+  // Giving up the pointer is only safe while the panel holds nothing that
+  // needs one. Both halves are pinned, because either could grow a control:
+  // the markup, and the rows the shell builds at render time.
+  const legendMarkup = /<section class="a39-legend"[\s\S]*?<\/section>/.exec(html)?.[0]
+  assert.ok(legendMarkup, 'the legend section is missing from index.html')
+  assert.equal(/<(button|a|input|select|textarea)[\s>]/.test(legendMarkup), false, 'the legend markup holds an interactive element that can no longer be clicked')
+  assert.equal(/tabindex/.test(legendMarkup), false, 'the legend markup holds a focusable element that can no longer be clicked')
+  const paintLegend = /function paintLegend\(\)[\s\S]*?\n\}/.exec(stripComments(app))?.[0]
+  assert.ok(paintLegend, 'paintLegend is missing')
+  assert.equal(
+    /createElement\('(button|a|input|select|textarea)'\)/.test(paintLegend),
+    false,
+    'paintLegend builds an interactive element the legend can no longer deliver a click to'
+  )
+})
+
+test('the live region never announces success over a stage that was torn down', () => {
+  // The live region is the ONLY channel an assistive-technology user has, and
+  // it was the one surface this slice's "no claim outlives its stage" repair
+  // did not reach. Every state-changing handler announces AFTER render(), and
+  // render() can tear the stage down mid-handler — paintStage()'s try/catch
+  // calls showFailure('Renderer failed', …). announce() was an unconditional
+  // write, so the handler's success sentence replaced the failure sentence.
+  //
+  // Measured headed on the accepted snapshot with a GL context that starts
+  // fine and throws from drawArrays later: body[data-stage]=failed,
+  // #view-readout='—', #saved-view-state='', legend emptied — and the live
+  // region reading "Saved view restored. Direct neighbourhood of “…” — 2 of 5
+  // nodes, 1 of 4 relations." The same over setView and setFocus. That is a
+  // restore shown as successful when the system refused it, which is exactly
+  // what rule 2 of app.mjs's header forbids.
+  const announce = /function announce\(message\) \{[\s\S]*?\n\}/.exec(app)?.[0]
+  assert.ok(announce, 'announce() is missing')
+  assert.match(announce, /if \(state\.failed\) return/)
+  assert.match(announce, /dom\.live\.textContent = message/)
+
+  // The guard has to live in ONE place, or the next handler to be written has
+  // to remember it. That is only true while announce() and the failure channel
+  // are the only writers of the region — asserted over comment-free code,
+  // because setFocus quotes this very assignment in prose one screen down.
+  const writers = stripComments(app).match(/dom\.live\.textContent\s*=/g) || []
+  assert.equal(writers.length, 2, `the live region has ${writers.length} writers, so the guard can be walked past`)
+
+  // …and showFailure speaks on the unconditional one, or the guard above would
+  // silence the one sentence that is still true. It also keeps a SECOND
+  // failure audible after the first.
+  const showFailure = /function showFailure\([\s\S]*?\n\}/.exec(app)?.[0]
+  assert.ok(showFailure)
+  assert.match(showFailure, /announceFailure\(`\$\{headline\} \$\{detail\}`\)/)
+  assert.equal(
+    (stripComments(app).match(/announceFailure\(/g) || []).length,
+    2,
+    'announceFailure is not exactly one definition and one call, so the failure channel has grown a second user'
   )
 })
 

@@ -120,7 +120,46 @@ const ZOOM_STEP = 1.25
 const WHEEL_SENSITIVITY = 0.0015
 const PAN_STEP = 60
 
+/**
+ * The live region. It obeys the SAME rule every visible surface obeys: it never
+ * describes a stage that is no longer drawn.
+ *
+ * That rule reached the visible surfaces first and stopped at this one. Every
+ * state-changing handler announces AFTER render(), and render() can tear the
+ * stage down in the middle of the handler — paintStage()'s try/catch around
+ * `state.stage.draw` calls showFailure('Renderer failed', …) and returns false.
+ * An unconditional write here then replaced showFailure's own announcement with
+ * the handler's success sentence, so the ONE channel an assistive-technology
+ * user has ended up claiming the opposite of what every sighted surface said.
+ * Measured headed on the accepted snapshot, with a GL context that starts fine
+ * and throws from drawArrays later:
+ *
+ *   restore  data-stage=failed, #saved-view-state="", #view-readout="—",
+ *            legend emptied — live region: "Saved view restored. Direct
+ *            neighbourhood of “…” — 2 of 5 nodes, 1 of 4 relations."
+ *   setView  data-stage=failed, #view-readout="—" — live region: "Direct
+ *            neighbourhood of “…” — 2 of 5 nodes, 1 of 4 relations."
+ *   setFocus data-stage=failed, #view-readout="—" — live region: "… focused.
+ *            Level 2. 1 direct relation."
+ *
+ * A restore shown as successful when the system refused it is precisely what
+ * rule 2 in this file's header forbids. The guard lives here rather than at the
+ * five call sites because a sixth call site would have to remember it, and this
+ * is the only line that writes the region.
+ */
 function announce(message) {
+  // A refused stage has already had its say through announceFailure below, and
+  // nothing a handler was about to claim about the graph is true any more.
+  if (state.failed) return
+  dom.live.textContent = message
+}
+
+/**
+ * The failure channel. Unconditional by design: showFailure sets state.failed
+ * before it speaks, so routing it through announce() would silence the very
+ * sentence that is true. It is also what makes a SECOND failure audible.
+ */
+function announceFailure(message) {
   dom.live.textContent = message
 }
 
@@ -184,7 +223,7 @@ function showFailure(headline, detail, code) {
   if (dom.savedViewState) dom.savedViewState.textContent = ''
   delete dom.body.dataset.savedView
   dom.body.dataset.stage = 'failed'
-  announce(`${headline} ${detail}`)
+  announceFailure(`${headline} ${detail}`)
 }
 
 /* ---------- status bar ---------- */
@@ -766,7 +805,24 @@ function onRestoreView() {
   state.restoreStageFocus = false
   state.transform = clampTransform(bound.transform, state.world)
   dom.body.dataset.savedView = 'restored'
-  dom.savedViewState.textContent = 'Restored.'
+  // The VISIBLE line said a flat 'Restored.' on both sides of the branch above,
+  // so when the saved view was discarded the sighted user read a restoration
+  // that did not happen — 'Restored.' beside an Overview readout, with the
+  // stored record naming a neighbourhood. Measured headed on the accepted
+  // snapshot, record {mode:'neighbourhood', anchor_id:…:22478849,
+  // focus_id:…:14778372}: #saved-view-state "Restored.",
+  // body[data-saved-view]=restored, #view-readout "Overview — 5 of 5 nodes,
+  // 4 of 4 relations.", while the live region alone carried "…The saved focus
+  // is not drawn by the saved view, so the whole graph is shown instead."
+  //
+  // That is the mirror image of the setFocus defect this slice already
+  // corrected, where only the assistive-technology user got the wrong sentence;
+  // here only the sighted user did. Both channels now name the same outcome.
+  // The re-fit case is deliberately NOT added here: D6 assigns that sentence to
+  // the announcement, and the visible line is not making a claim about it.
+  dom.savedViewState.textContent = leftView
+    ? 'Restored without the saved view: its focus is not drawn by it.'
+    : 'Restored.'
   render()
   announce(
     `Saved view restored. ${viewCaption(state.displayed.scope, anchorLabel())}` +
