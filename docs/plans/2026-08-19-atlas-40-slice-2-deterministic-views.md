@@ -1019,9 +1019,217 @@ test('the purity guard cannot be switched off by a string or a regular expressio
     'an unclassifiable slash was guessed at instead of refused'
   )
 })
+
+// The mutations that defeated the scanner one nesting level down, and one token
+// position sideways. The three above are the history of the STRING and REGEX
+// branches; these are the TEMPLATE branch and the division branch, and both
+// were measured on the committed scanner before the repair below.
+//
+// A template literal inside another template's `${ … }`: the end of a template
+// was found by scanning for the next unescaped backtick, which knows nothing
+// about substitutions, so the OUTER literal was closed on the INNER one's
+// opening backtick and the inner literal's text landed in perceived-code
+// position. Spelled `/*` it deleted everything to end of file, spelled `//` the
+// rest of the line. Measured, verbatim: stripComments() of the first mutant
+// returned "export function p08(text) {\n  const t = `a ${ `" and
+// purityViolations() returned []; of the second it returned
+// "export function p09(text) {\n  const t = `a ${ `\n  return t\n}", again with
+// no violations. End to end, appended to viewer/atlas39/core/view-state.mjs and
+// to viewer/atlas39/core/gesture.mjs, both suites stayed green at exit 0 (19/19
+// and 22/22) with document.title and Date.now() provably on disk.
+const NESTED_TEMPLATE_BLOCK_MUTANT = [
+  'export function p08(text) {',
+  '  const t = `a ${ `/*` } b`',
+  '  return t + text',
+  '}',
+  'export function p08leak() {',
+  '  return document.title + Date.now()',
+  '}'
+].join('\n')
+
+const NESTED_TEMPLATE_LINE_MUTANT = [
+  'export function p09(text) {',
+  '  const t = `a ${ `//` } b` + text + document.title + Date.now()',
+  '  return t',
+  '}'
+].join('\n')
+
+// A regular expression literal written where `regexCanStart()` answers `false`
+// — directly after `)` or after a `}` in statement position. Both are valid
+// JavaScript (a `]` there is not, which is why no `]` mutant is written here).
+// Lexed as a division, the two adjacent slashes of `/\//` — its escape and its
+// terminator — then met the `//` branch and deleted the rest of the line.
+// Measured, verbatim: stripComments() of the first returned
+// "export function p02(text) {\n  if (text) /\\\n  return 1\n}" with no
+// violations, and the `}` and `if (subject)` spellings did the same. End to
+// end, the third of them appended to viewer/atlas39/core/view-state.mjs left
+// that suite at exit 0, 19/19 with a DOM read and a clock on disk.
+const REGEX_AFTER_PAREN_MUTANT = [
+  'export function p02(text) {',
+  '  if (text) /\\//.test(document.title + Date.now())',
+  '  return 1',
+  '}'
+].join('\n')
+
+const REGEX_AFTER_BRACE_MUTANT = [
+  'export function p03(text) {',
+  '  const out = []',
+  '  if (text) { }',
+  '  /\\//.test(text) ? out.push(document.title) : out.push(Date.now())',
+  '  return out',
+  '}'
+].join('\n')
+
+const REGEX_AFTER_IF_PAREN_MUTANT = [
+  'export function hasSlash(text) {',
+  '  const subject = String(text)',
+  '  if (subject) /\\//.test(subject) && document.title && Date.now()',
+  '  return subject',
+  '}'
+].join('\n')
+
+// The two denylist spellings, built from the backslash's own byte rather than
+// written as '\\u0044ate', so that what reaches the scanner is exactly the six
+// characters JavaScript reads as one `D` and no reader has to decode an escape
+// of an escape to see what is being asserted.
+const BACKSLASH = String.fromCharCode(92)
+const ESCAPED_CLOCK_MUTANT = [
+  'export function p23() {',
+  '  return ' + BACKSLASH + 'u0044ate.now()',
+  '}'
+].join('\n')
+const ESCAPED_DOM_MUTANT = [
+  'export function p24() {',
+  '  return ' + BACKSLASH + 'u0064ocument.title',
+  '}'
+].join('\n')
+const FUNCTION_CONSTRUCTOR_MUTANT = [
+  'export function p25() {',
+  "  const read = Function('return Da' + 'te.now()')",
+  '  return read()',
+  '}'
+].join('\n')
+
+test('the purity guard cannot be switched off by a nested template literal or a regex in division position, and sees escaped identifiers', async () => {
+  // 1. A template inside a template's `${ … }`. The scan must delete NOTHING
+  //    from either mutant — asserted as whole-text equality, because "the probe
+  //    survived" is what the two predecessors also looked like on the line
+  //    before the one that got eaten.
+  assert.equal(
+    stripComments(NESTED_TEMPLATE_BLOCK_MUTANT),
+    NESTED_TEMPLATE_BLOCK_MUTANT,
+    'a `/*` inside a nested template literal switched the scan off'
+  )
+  assert.equal(
+    stripComments(NESTED_TEMPLATE_LINE_MUTANT),
+    NESTED_TEMPLATE_LINE_MUTANT,
+    'a `//` inside a nested template literal switched the scan off'
+  )
+  for (const mutant of [NESTED_TEMPLATE_BLOCK_MUTANT, NESTED_TEMPLATE_LINE_MUTANT]) {
+    const violations = purityViolations(mutant)
+    assert.ok(violations.includes('document.'), 'a DOM read behind a nested template literal passed the purity guard')
+    assert.ok(violations.includes('Date.'), 'a clock behind a nested template literal passed the purity guard')
+  }
+
+  // 2. The substitution is CODE, not template text, so a comment inside one is
+  //    still removed and prose inside one still cannot fire the guard. Without
+  //    this the repair could have been "never strip anything inside a template".
+  assert.equal(
+    stripComments('const t = `a ${ b /* window.name */ } c`'),
+    'const t = `a ${ b  } c`',
+    'a comment inside a template substitution was kept as template text'
+  )
+  assert.deepEqual(
+    purityViolations('const t = `a ${ b /* window.name */ } c`'),
+    [],
+    'prose inside a template substitution fired the purity guard'
+  )
+  // …and an ordinary template still survives the scan untouched.
+  assert.equal(
+    stripComments('const t = `a ${ b } c`\nconst u = 1'),
+    'const t = `a ${ b } c`\nconst u = 1',
+    'an ordinary template literal was damaged by the substitution scan'
+  )
+
+  // 3. A regex literal in division position. The scanner still LEXES these as
+  //    divisions — telling them apart needs the parenthesis's own keyword — so
+  //    what is pinned is the only consequence that ever mattered: it deletes
+  //    nothing, and the denylists see the whole line.
+  for (const mutant of [REGEX_AFTER_PAREN_MUTANT, REGEX_AFTER_BRACE_MUTANT, REGEX_AFTER_IF_PAREN_MUTANT]) {
+    assert.equal(stripComments(mutant), mutant, 'a regex literal in division position switched the scan off')
+    const violations = purityViolations(mutant)
+    assert.ok(violations.includes('document.'), 'a DOM read behind a regex in division position passed the purity guard')
+    assert.ok(violations.includes('Date.'), 'a clock behind a regex in division position passed the purity guard')
+  }
+
+  // 4. The repair must not turn an ordinary division into a regular expression,
+  //    and the line comment after one must still be removed: `regexLiteralEnd`
+  //    stops at the first unescaped slash, so the span here is `/ 2 /` and
+  //    carries neither delimiter.
+  assert.equal(
+    stripComments('const half = total / 2 // half of it\nconst t = 1'),
+    'const half = total / 2 \nconst t = 1',
+    'a division followed by a line comment was read as a regular expression'
+  )
+  assert.equal(
+    stripComments('const r = a / b /* note */ + c'),
+    'const r = a / b  + c',
+    'a division followed by a block comment was read as a regular expression'
+  )
+
+  // 5. A `\u` escape in an IdentifierName really is the global — not an
+  //    argument about the specification, but the value, evaluated. The module
+  //    is imported from a data: URL so the measurement itself needs neither
+  //    eval nor the Function constructor.
+  const clock = await import('data:text/javascript,export const now = ' + BACKSLASH + 'u0044ate.now()')
+  assert.equal(typeof clock.now, 'number', 'the escaped identifier did not resolve to the real clock')
+  // The word-boundary rules cannot see it, which is why the escape itself is
+  // the rule: assert the name is absent from the scanned code before asserting
+  // that the guard still fires.
+  assert.doesNotMatch(stripComments(ESCAPED_CLOCK_MUTANT), /\bDate\b/, 'the escaped clock spelled the denied name after all')
+  assert.doesNotMatch(stripComments(ESCAPED_DOM_MUTANT), /\bdocument\b/, 'the escaped DOM read spelled the denied name after all')
+  assert.deepEqual(
+    purityViolations(ESCAPED_CLOCK_MUTANT),
+    [BACKSLASH + 'u<escape>'],
+    'a clock spelled with a unicode escape passed the purity guard'
+  )
+  assert.deepEqual(
+    purityViolations(ESCAPED_DOM_MUTANT),
+    [BACKSLASH + 'u<escape>'],
+    'a DOM read spelled with a unicode escape passed the purity guard'
+  )
+
+  // 6. `Function` sits next to `eval` for the reason `eval` is listed at all.
+  //    Asserted as the whole result, so this pins that it is the added name
+  //    doing the work and not some other rule catching the mutant by accident.
+  assert.deepEqual(
+    purityViolations(FUNCTION_CONSTRUCTOR_MUTANT),
+    ['Function'],
+    'the Function constructor passed the purity guard'
+  )
+})
 ```
 
 This block is the file verbatim; the `readFileSync` import the purity test needs is inside it.
+
+**Corrected 2026-08-20 (fifth review of Task 3).** The block above is the repaired suite, `shasum -a 256 test/atlas40-gesture.test.mjs` = `81ccad6d9b56f9ed8ee03bb5492bfa5bb332db4efb6be6ef8f58d8a81baa983f`. This is the first round that changes the test COUNT: **23**, not 22, because the repair adds a second guard-on-the-guard test instead of more assertions inside the existing one. `node --test test/atlas40-gesture.test.mjs` exits **0** at `tests 23 / pass 23 / fail 0`, and `npm test` at `tests 483 / pass 483 / fail 0`.
+
+The new test is `the purity guard cannot be switched off by a nested template literal or a regex in division position, and sees escaped identifiers`. The three older mutants are the history of the STRING and REGEX branches; these eight are the TEMPLATE branch, the division branch, and two denylist spellings that reached a real capability with every suite green. Each was measured end to end and not only against the lexer: appended to a guarded module ON DISK, the module still importable, the suite run, the module restored, and the restoration proved by `shasum -a 256` equality rather than by an empty `diff`, which a shell hook here can fake. Against `84eadf3` all eight are GREEN on all four guarded modules; against the repaired guard all eight are RED on all four — 32 runs each way.
+
+| payload | at `84eadf3`, all four | view-state | gesture | saved-view | legend |
+| --- | --- | --- | --- | --- | --- |
+| nested template holding `/*` | GREEN, `purityViolations()` = `[]` | RED 19/18/1 | RED 23/22/1 | RED 18/17/1 | RED 13/12/1 |
+| nested template holding `//` | GREEN, `[]` | RED 19/18/1 | RED 23/22/1 | RED 18/17/1 | RED 13/12/1 |
+| `if (text) /\//.test(…)` — regex after `)` | GREEN, `[]` | RED 19/18/1 | RED 23/22/1 | RED 18/17/1 | RED 13/12/1 |
+| `/\//.test(…)` in statement position after `}` | GREEN, `[]` | RED 19/18/1 | RED 23/22/1 | RED 18/17/1 | RED 13/12/1 |
+| `if (subject) /\//.test(subject) && document.title && Date.now()` | GREEN, `[]` | RED 19/18/1 | RED 23/22/1 | RED 18/17/1 | RED 13/12/1 |
+| `\u0044ate.now()` | GREEN, `[]` | RED 19/18/1 | RED 23/22/1 | RED 18/17/1 | RED 13/12/1 |
+| `\u0064ocument.title` | GREEN, `[]` | RED 19/18/1 | RED 23/22/1 | RED 18/17/1 | RED 13/12/1 |
+| `Function('return Da' + 'te.now()')` | GREEN, `[]` | RED 19/18/1 | RED 23/22/1 | RED 18/17/1 | RED 13/12/1 |
+
+Cells are `tests/pass/fail`. The BEFORE column is one value for all four because every one of those 32 runs was exit **0** with the payload provably on disk and the module provably importable: 19/19/0 view-state, 22/22/0 gesture, 18/18/0 saved-view, 13/13/0 legend. The BEFORE runs were taken in a throwaway tree unpacked with `git archive HEAD`, so nothing was mutated in the worktree to get them. Every module was restored byte-identically after every run — `fe7356d8…` view-state, `f7f96be9…` gesture, `c9ba1e87…` saved-view, `e96d5a24…` legend, hashes printed before and after and compared.
+
+The lexer repair itself, the controls that prove it did not turn ordinary division into a regular expression, and the file-by-file byte-identity of `stripComments` are in Task 3, Step 0.
 
 **Corrected 2026-08-20 (fourth review of Task 3).** The block above is the repaired suite, `shasum -a 256 test/atlas40-gesture.test.mjs` = `4133ce3612f385788ba796eae8acebb018a602cc0d67e57f49a1daa5ddbba0a8`. Still **22** tests: the repair adds one constant and five assertions inside the existing guard-on-the-guard test. `node --test test/atlas40-gesture.test.mjs` exits **0** at `tests 22 / pass 22 / fail 0`.
 
@@ -1465,10 +1673,58 @@ Create `test/helpers/purity.mjs`:
 // at exit 0, 18/18 with a DOM read and a clock on disk. A word now starts fresh
 // after any non-identifier character, whitespace included.
 //
+// The fourth hole was the same class one nesting level down, and it made the
+// story the paragraphs above tell about STRING literals false for TEMPLATE
+// literals. `literalEnd()` scanned for the next unescaped backtick and knew
+// nothing about `${ … }`, so a template that contains another template was
+// closed on the INNER literal's opening backtick, and the inner literal's text
+// landed in perceived-CODE position. Measured on the committed predecessor:
+// stripComments("export function p08(text) {\n  const t = `a ${ `/*` } b`\n
+// return t + text\n}\nexport function p08leak() {\n  return document.title +
+// Date.now()\n}") returned "export function p08(text) {\n  const t = `a ${ `"
+// — everything from the inner `/*` to end of file deleted — and
+// purityViolations() of it returned []. The `//` spelling, `` `a ${ `//` } b` ``,
+// deleted the rest of that line the same way. End to end, appended to
+// viewer/atlas39/core/view-state.mjs and to viewer/atlas39/core/gesture.mjs,
+// both suites stayed green at exit 0 (19/19 and 22/22) with `document.title`
+// and `Date.now()` provably on disk. The scan therefore no longer treats a
+// template as one flat literal: it carries a STACK, a `${ … }` substitution is
+// scanned as code, and a template opened inside one nests.
+//
+// The fifth hole was a division that was really a regular expression.
+// `regexCanStart()` answers `false` after `)`, `]` and `}` because telling
+// `if (x) /re/.test(y)` from `(a + b) / c` needs the parenthesis's own keyword,
+// which this scanner does not track. Reading a regex as a division is harmless
+// by itself — the characters are emitted either way, so the denylists still see
+// them — with one exception: two adjacent slashes inside the literal, which
+// `/\//` has at its escape and its terminator, then meet the comment branches
+// and delete the rest of the line. Measured on the committed predecessor:
+// stripComments("export function p02(text) {\n  if (text) /\\//.test(
+// document.title + Date.now())\n  return 1\n}") returned "…\n  if (text) /\\\n
+// return 1\n}" and purityViolations() returned []; the statement-position
+// spelling after `}` did the same. So the two readings are now told apart by
+// the only thing that distinguishes them here: when a `/` in division position
+// also reads as a regular-expression literal whose RAW TEXT carries a `//` or a
+// `/*`, the literal is emitted verbatim instead. Nothing is deleted on a guess,
+// and nothing is hidden either — an ordinary division keeps dividing, because
+// `regexLiteralEnd()` stops at the first unescaped slash, so `total / 2 // half`
+// yields the span `/ 2 /`, which carries neither delimiter.
+//
+// Two denylist spellings were closed with it, both measured to reach a real
+// capability with the suites green: `\u0044ate.now()` and `\u0064ocument.title`
+// are valid JavaScript, resolve to `Date` and `document`, and defeat every
+// `\b<name>\b` rule below, so a `\u` escape anywhere in the comment-free code is
+// itself refused; and `Function` was absent while `eval` was named, so
+// `Function('return Da' + 'te.now()')` reached the clock the module is scanned
+// for. No denylist is complete — these two were concrete, measured and
+// closable, and closing them is not a claim that the third is not out there.
+//
 // This helper's own capability is pinned by test in
 // test/atlas40-gesture.test.mjs ("the purity guard cannot be switched off by a
-// string or a regular expression literal, and sees imports and randomness"),
-// over the exact three mutations that defeated its predecessors.
+// string or a regular expression literal, and sees imports and randomness" and
+// "the purity guard cannot be switched off by a nested template literal or a
+// regex in division position, and sees escaped identifiers"), over the exact
+// mutations that defeated its predecessors.
 
 /** Thrown instead of guessing. A scan that cannot classify a `/` deletes nothing. */
 export class PurityScanError extends Error {
@@ -1490,7 +1746,13 @@ const REGEX_AFTER_KEYWORDS = new Set([
   'case', 'do', 'else', 'yield', 'await', 'throw'
 ])
 
-/** End index (exclusive) of the string or template literal opened at `start`. */
+/**
+ * End index (exclusive) of the single- or double-quoted string opened at
+ * `start`. Only those two: a template literal is not a flat literal, because
+ * its `${ … }` substitutions hold code that can open literals of its own, and
+ * scanning one with this function closed the outer template on the inner one's
+ * opening backtick. Templates are handled by the stack in `stripComments`.
+ */
 function literalEnd(source, start) {
   const quote = source[start]
   let i = start + 1
@@ -1542,10 +1804,12 @@ const lineOf = (source, index) => source.slice(0, index).split('\n').length
 /**
  * Removes `//` and block comments, and only those. String, template and
  * regular-expression literals are code, so a comment delimiter inside any of
- * them is text and cannot switch the scan off.
+ * them is text and cannot switch the scan off — including a template literal
+ * inside another template literal's `${ … }`, which is the shape that made the
+ * previous wording of this sentence false.
  *
  * What it knows, stated exactly rather than as "the way a JavaScript reader
- * does" — the previous wording claimed a completeness this has never had:
+ * does" — an earlier wording claimed a completeness this has never had:
  *
  * - `//` and `/*` are checked before a regular expression is considered, which
  *   is what a JavaScript lexer does and not a shortcut: neither sequence can
@@ -1556,23 +1820,38 @@ const lineOf = (source, index) => source.slice(0, index).split('\n').length
  *   means regex, and an identifier is looked up in REGEX_AFTER_KEYWORDS as the
  *   WORD it ends, where a word starts fresh after any non-identifier character
  *   including whitespace and a newline.
+ * - A `/` the rule above calls a division is re-read as a regular-expression
+ *   literal when it also parses as one AND that literal's raw text carries a
+ *   `//` or a `/*`. Those are the only two spellings on which the two readings
+ *   differ in what survives, because a division reading emits every other
+ *   character untouched; on them the division reading deletes, so the reading
+ *   that deletes nothing wins.
+ * - A template literal is scanned with a stack, not as one flat span: `${ … }`
+ *   is code, a template opened inside it nests, and the `}` that closes the
+ *   substitution is told from an object literal's by counting braces.
  * - A regex literal that does not close on its own line is refused with a
  *   PurityScanError. Nothing is deleted on a guess.
  *
  * What is known to remain, stated as a list of measured shapes and not as a
- * count: a regex literal written directly after `)`, `}` or `]` — the
- * `if (x) /re/.test(y)` and statement-position shapes — is read as a division,
- * because telling those apart needs the parenthesis's own keyword. The body is
- * then emitted verbatim, so nothing is hidden by it unless that body contains a
- * literal `//` or `/*`. No guarded module contains either shape.
+ * count: a regex literal written directly after `)`, `}` or `]` is still LEXED
+ * as a division, because telling those apart needs the parenthesis's own
+ * keyword. Since the previous bullet, that mis-lexing no longer deletes: the
+ * literal's body is emitted verbatim, and so is everything after it, so the
+ * denylists see the line either way. What it can still do is make the scanner
+ * treat a quote inside such a literal as opening a string — which also only
+ * ever emits MORE text verbatim, never less.
  *
  * This paragraph used to open "The one residual", and that word `one` was
  * false while it stood: the token-boundary hole described in the header — a
  * keyword that follows an identifier across whitespace — was open at the same
  * time, and `)` was in fact the SAFE position, because `)` is what ended the
- * word and let `return` be recognised. The list above is therefore what has
- * been measured, not a claim that nothing else is left; the next hole in this
- * file is still likelier to be found by measuring than by reading.
+ * word and let `return` be recognised. It then said the mis-lexing was harmless
+ * "unless that body contains a literal `//` or `/*`. No guarded module contains
+ * either shape." — a residual whose safety rested on a property of today's
+ * modules that no test enforced, and that Tasks 6-10 kept adding code to. The
+ * list above is therefore what has been measured, not a claim that nothing else
+ * is left; the next hole in this file is still likelier to be found by
+ * measuring than by reading.
  */
 export function stripComments(source) {
   let out = ''
@@ -1586,6 +1865,15 @@ export function stripComments(source) {
   let prev = ''
   let prevWord = ''
   let lastRaw = ''
+
+  // Where the character at `i` lives. 'code' is JavaScript; 'template' is the
+  // TEXT of a template literal, where nothing but `` ` ``, `\` and `${` means
+  // anything. `stack` is what makes them nest: entering either pushes the mode
+  // to come back to, and `braceDepth` counts the `{` the current substitution's
+  // code has opened, so its closing `}` is told from an object literal's.
+  let mode = 'code'
+  let braceDepth = 0
+  const stack = []
 
   const keep = (text) => {
     out += text
@@ -1612,10 +1900,66 @@ export function stripComments(source) {
   while (i < source.length) {
     const ch = source[i]
     const next = source[i + 1]
-    if (ch === "'" || ch === '"' || ch === '`') {
+
+    if (mode === 'template') {
+      if (ch === '\\') {
+        keep(source.slice(i, i + 2))
+        i += 2
+        continue
+      }
+      if (ch === '`') {
+        keep(ch)
+        i += 1
+        const frame = stack.pop()
+        mode = frame.mode
+        braceDepth = frame.braceDepth
+        continue
+      }
+      if (ch === '$' && next === '{') {
+        keep(source.slice(i, i + 2))
+        i += 2
+        stack.push({ mode: 'template', braceDepth })
+        mode = 'code'
+        braceDepth = 0
+        continue
+      }
+      keep(ch)
+      i += 1
+      continue
+    }
+
+    if (ch === "'" || ch === '"') {
       const end = literalEnd(source, i)
       keep(source.slice(i, end))
       i = end
+      continue
+    }
+    if (ch === '`') {
+      keep(ch)
+      i += 1
+      stack.push({ mode, braceDepth })
+      mode = 'template'
+      continue
+    }
+    if (ch === '{') {
+      keep(ch)
+      i += 1
+      braceDepth += 1
+      continue
+    }
+    if (ch === '}') {
+      const frame = stack[stack.length - 1]
+      if (braceDepth === 0 && frame !== undefined && frame.mode === 'template') {
+        keep(ch)
+        i += 1
+        stack.pop()
+        mode = 'template'
+        braceDepth = frame.braceDepth
+        continue
+      }
+      keep(ch)
+      i += 1
+      if (braceDepth > 0) braceDepth -= 1
       continue
     }
     if (ch === '/' && next === '/') {
@@ -1643,6 +1987,24 @@ export function stripComments(source) {
       i = end
       continue
     }
+    if (ch === '/') {
+      // Division by the rule above, and `next` is neither `/` nor `*`, so the
+      // comment branches have already had their say. The reading only matters
+      // when the two disagree about what survives, and they disagree on exactly
+      // one thing: a regex literal whose raw text carries `//` or `/*` is
+      // emitted whole here, where a division reading would walk into it one
+      // character later and delete the rest of the line — or, for `/*` with no
+      // `*/` after it, the rest of the file.
+      const end = regexLiteralEnd(source, i)
+      if (end !== -1) {
+        const span = source.slice(i, end)
+        if (span.includes('//') || span.includes('/*')) {
+          keep(span)
+          i = end
+          continue
+        }
+      }
+    }
     keep(ch)
     i += 1
   }
@@ -1662,17 +2024,35 @@ export const FORBIDDEN_TOKENS = [
  * `setTimeout(...)`, a static `import` or `crypto.getRandomValues` — the last
  * two being the most direct ways to make a core module impure, and both
  * invisible to the first two versions of this guard.
+ *
+ * `Function` sits next to `eval` for the reason `eval` is here at all: it
+ * compiles a string, so `Function('return Da' + 'te.now()')` reaches the clock
+ * with no denied name anywhere in the module. Measured before it was added —
+ * that exact function appended to viewer/atlas39/core/view-state.mjs left the
+ * suite green at 19/19 with the constructor on disk.
  */
 export const FORBIDDEN_IDENTIFIERS = [
   'window', 'document', 'navigator', 'performance', 'globalThis',
   'localStorage', 'sessionStorage', 'indexedDB', 'process', 'fetch',
   'setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask',
   'requestAnimationFrame', 'Date', 'XMLHttpRequest', 'WebSocket', 'require',
-  'import', 'crypto', 'eval', 'Worker'
+  'import', 'crypto', 'eval', 'Function', 'Worker'
 ]
 
 /** `import … from '…'` and `export … from '…'` both spell this. */
 export const MODULE_SPECIFIER = /\bfrom\s*['"]/
+
+/**
+ * A `\u` escape in comment-free code. JavaScript allows one inside an
+ * IdentifierName, so `\u0044ate.now()` and `\u0064ocument.title` are a real
+ * clock and a real DOM read that no `\b<name>\b` rule below can match — both
+ * measured green against the denylists, both appended to a guarded module and
+ * both left the suite at 19/19. The rule is therefore the escape itself and not
+ * a longer list of names: a pure core module has no reason to spell any
+ * character that way, in an identifier or in a literal, and none of the four
+ * guarded modules does.
+ */
+export const IDENTIFIER_ESCAPE = /\\u\{?[0-9a-fA-F]/
 
 /** Every rule above, applied to one source text. Returns what it found. */
 export function purityViolations(source) {
@@ -1683,9 +2063,37 @@ export function purityViolations(source) {
     if (new RegExp(`\\b${identifier}\\b`).test(code)) found.push(identifier)
   }
   if (MODULE_SPECIFIER.test(code)) found.push("from '<specifier>'")
+  if (IDENTIFIER_ESCAPE.test(code)) found.push('\\u<escape>')
   return found
 }
 ```
+
+**Corrected 2026-08-20 (fifth review of Task 3).** The block above is the repaired guard, `shasum -a 256 test/helpers/purity.mjs` = `565083ee48246a63c6c59698c9eeb5019034f4b583b940124df66d66d786639d`. Two more ways past it were measured, and the previous round’s own residual paragraph was one of them.
+
+**Hole 4 — a nested template literal switched the whole scan off.** `literalEnd()` scanned for the next unescaped backtick and knew nothing about `${ … }` substitutions, so `` `a ${ `/*` } b` `` closed the OUTER template on the INNER literal’s opening backtick and the inner literal’s text landed in perceived-CODE position. Measured on the committed guard `0b0f00e2787cca25cce6732c931d30b5a7c205b3a1b1cc81ea789e5607b5c174`, verbatim:
+
+```
+stripComments(nested `/*`): "export function p08(text) {\n  const t = `a ${ `"
+purityViolations(same):     []
+stripComments(nested `//`): "export function p09(text) {\n  const t = `a ${ `\n  return t\n}"
+purityViolations(same):     []
+```
+
+The `/*` spelling deletes to end of FILE, the `//` spelling to end of line. Both walked past all four guarded modules end to end — the 32-run table is in Task 2’s fifth-review note.
+
+**Hole 5 — the previous round’s residual was walkable, and nothing enforced the premise that kept it harmless.** That paragraph said a regex written directly after `)`, `}` or `]` is read as a division and that "nothing is hidden by it unless that body contains a literal `//` or `/*`. No guarded module contains either shape." `/\//` contains exactly that, at its escape and at its terminator; and the second sentence was a property of the four modules on that day, held by no test, while Tasks 6-10 kept adding code to all four. Measured on the same committed guard:
+
+```
+stripComments("export function p02(text) {\n  if (text) /\\//.test(document.title + Date.now())\n  return 1\n}")
+  → "export function p02(text) {\n  if (text) /\\\n  return 1\n}"
+purityViolations(same): []
+```
+
+**The repair, and what it does not claim.** The scan now carries a STACK, so `${ … }` is scanned as code and a template opened inside one nests. And a `/` the division rule claims, which also parses as a regular-expression literal whose RAW TEXT carries `//` or `/*`, is emitted verbatim instead of walked into one character later. The `)`/`}`/`]` position is still LEXED as a division — that is unchanged, and the doc comment still says so — but the mis-lexing can no longer DELETE, which was its only way to hide anything: every other character is emitted under both readings. `]` was checked rather than assumed and is not a hole at all: `a[0] /re/.test(t)` is a SyntaxError (`Unexpected token '.'`), while the `)` and `}` shapes both parse, so no valid module can spell the third.
+
+**It changes no existing scan.** `stripComments` output is byte-identical under `0b0f00e2…` and the repaired guard over every `.mjs`/`.js` file in `viewer/atlas39/`, `viewer/atlas39/core/`, `test/`, `test/helpers/` and `scripts/`: **49 files, 49 `SAME`, 0 `DIFF`**, compared by `sha256` of the stripped text with both scanners imported side by side. The other direction is pinned by test rather than only measured here — `total / 2 // half of it` still divides and still loses its comment, `a / b /* note */ + c` likewise, an ordinary `` `a ${ b } c` `` round-trips unchanged, and a comment INSIDE a substitution is still removed, so the repair is not "never strip anything inside a template".
+
+**Two denylist spellings closed with it.** `\u0044ate.now()` and `\u0064ocument.title` are valid JavaScript and resolve to the real globals — measured, not argued: importing `export const now = \u0044ate.now()` from a `data:` URL yields a `number`, which is why the new test uses a `data:` import and needs neither `eval` nor the `Function` constructor to prove it. They defeat every `\b<name>\b` rule, so the rule added is the ESCAPE itself, `IDENTIFIER_ESCAPE = /\\u\{?[0-9a-fA-F]/` over the comment-free code, and not a longer list of names. `Function` joins `eval` in FORBIDDEN_IDENTIFIERS, where it should always have been. Neither fires on the four guarded modules: `Function` occurs only inside `gesture.mjs`’s JSDoc `@returns` blocks, which the strip removes, and no guarded module contains a `\u` escape at all — `viewer/atlas39/core/scene-guard.mjs:40` does, and is not one of the four.
 
 **Corrected 2026-08-20 (fourth review of Task 3).** The block above is the repaired guard, `shasum -a 256 test/helpers/purity.mjs` = `0b0f00e2787cca25cce6732c931d30b5a7c205b3a1b1cc81ea789e5607b5c174`. The scanner could still be walked past, and the paragraph that was supposed to warn the next reader named the wrong position.
 
