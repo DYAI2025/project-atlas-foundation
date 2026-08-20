@@ -4717,7 +4717,7 @@ Replace lines 60-72 (`.a39-stage-controls` group through the closing `</div>` of
     <h2 class="a39-legend-title" id="legend-title">Edge legend</h2>
     <div class="a39-legend-group" id="legend-edges" role="group" aria-labelledby="legend-title"></div>
     <p class="a39-legend-note" id="legend-note"></p>
-    <h3 class="a39-legend-title" id="legend-depth-title">Hierarchy</h3>
+    <h2 class="a39-legend-title" id="legend-depth-title">Hierarchy</h2>
     <div class="a39-legend-group" id="legend-depth" role="group" aria-labelledby="legend-depth-title"></div>
     <p class="a39-legend-note" id="legend-depth-note"></p>
   </section>
@@ -4746,6 +4746,19 @@ block, all of them in what the markup *claims* to expose:
 Task 7's `assert.match(legend, /aria-labelledby="legend-title"/)` is re-stated with this
 block, because under the new markup it would have gone on passing by matching the inner
 group instead of the section it names — a green assertion proving something else.
+
+**Corrected 2026-08-20 (fourth review of Task 6).** A fourth defect of the same class, one
+level down: the two legend groups are **peers** inside `<section aria-label="Graph legend">`,
+and they were headed `<h2 id="legend-title">Edge legend</h2>` and
+`<h3 id="legend-depth-title">Hierarchy</h3>`. A user navigating by heading level therefore
+heard Hierarchy as a *subsection of* Edge legend — the same mis-description defect 2 fixed
+one level up when the region stopped being named "Edge legend", and a direct contradiction
+of D7's "separately headed" / "is NOT the Edge Legend". Both are now `h2`, which is also the
+level every other named panel section in this shell uses (`index.html`, `#inspector-selection`
+and `#inspector-boundary`), so the document outline stays `h1` → `h2` with no skipped level.
+Nothing selects the tag: `grep -rn 'h2\|h3' viewer/atlas39/shell.css` returns `502:.a39-failure h2 {`
+and `534:.a39-section h2 {` only, and both headings carry `class="a39-legend-title"`, which is
+what styles them. Task 7's `assert.match(legend, />Edge legend</)` is unaffected.
 
 Notes that matter:
 - The legend loses `aria-hidden="true"`. AC7 asks for a *visible* legend; a legend hidden from assistive technology is visible to some users only.
@@ -4889,15 +4902,25 @@ body[data-saved-view="refused"] .a39-saved-view-state {
 rules do not guarantee the second half. Measured in the shipped file: `.a39-stage-controls`
 is `position: absolute; top: var(--s4); right: var(--s4); z-index: 5` (`shell.css:444-452`);
 `.a39-view-controls` overrides `right`/`left` only, so it inherits the same `top` and the
-same `z-index` (`shell.css:762-767`), sits later in DOM order (`index.html`, the view group
+same `z-index` (`shell.css:771-776`), sits later in DOM order (`index.html`, the view group
 follows the zoom group), and is allowed `max-width: calc(100% - 2 * var(--s4))` — the whole
 stage width. `#view-readout` has no width limit of its own; only `.a39-saved-view-state`
-gets `max-width: 34ch` (`shell.css:775-777`). A readout as long as `Direct neighbourhood of
+gets `max-width: 34ch` (`shell.css:784-786`). A readout as long as `Direct neighbourhood of
 “ATLAS Single Source of Truth” — 4 of 5 nodes, 3 of 4 relations.` therefore *may* reach
 under the zoom group and, at equal `z-index` and later in DOM order, would paint over it.
 No layout change is made on that reasoning — the overlap is a rendered fact and nothing
 here has rendered it. The comment now states what the rules do and hands the measurement
 to Task 9, which must report the result at both acceptance viewports either way.
+*(**Re-measured 2026-08-20, fourth review of Task 6.** Two of the three `shell.css`
+citations in the paragraph above went stale in the same round that re-measured the z-index
+counts one paragraph earlier: this round's Step 2 repair added six lines to the media query
+and shifted everything after it by nine. `.a39-view-controls` was cited at `762-767` and
+`.a39-saved-view-state { max-width: 34ch }` at `775-777`; measured now,
+`grep -n '^\.a39-view-controls' viewer/atlas39/shell.css` → `771:.a39-view-controls {` with
+the rule closing at 776, and `grep -n '34ch' viewer/atlas39/shell.css` → `785:  max-width: 34ch;`
+inside a rule opening at 784 and closing at 786. Both citations are corrected above. The third,
+`shell.css:444-452` for `.a39-stage-controls`, was re-measured and is unchanged. No claim in the
+paragraph moves; only where to look for it.)*
 
 Delete the now-unused `.a39-swatch[data-depth="0"|"1"|"2"]` rules (`:486-496`) — the swatch colour is set from the token the module returns (D8), so a second CSS list can no longer disagree with it. Keep the base `.a39-swatch` rule.
 
@@ -5019,12 +5042,6 @@ function paintLegend() {
     text.textContent = `${entry.relationType} · ${entry.origin} (${entry.count})`
     row.append(swatch, text)
     edgeRows.append(row)
-  }
-  if (edgeLegend.empty) {
-    edgeRows.append(Object.assign(document.createElement('div'), {
-      className: 'a39-legend-row',
-      textContent: 'No relations in this view.'
-    }))
   }
   dom.legendEdges.replaceChildren(edgeRows)
   dom.legendNote.textContent = edgeLegendNote(edgeLegend)
@@ -5203,6 +5220,16 @@ the repository rule is to fail closed:
   only the five admitted tokens, pinned by `test/atlas40-scene.test.mjs`), which is exactly
   why it must fail closed if the ladder ever changes: the row keeps its label and count and
   simply carries **no** swatch, so no colour is claimed that this build cannot back.
+
+**Corrected 2026-08-20 (fourth review of Task 6).** `paintLegend` said an empty edge legend
+**twice**: it appended a row reading `No relations in this view.` *and* set `#legend-note`
+from `edgeLegendNote(edgeLegend)`, which for an empty legend is `This view draws no
+relations.` (`core/legend.mjs`, the `legend.empty` branch). Two differently-worded sentences
+for one fact read as two facts. Reachable only for an isolated anchor, so this was cosmetic
+rather than a defect — but the duplicate row is the copy that goes: `core/legend.mjs` owns
+that sentence and `test/atlas40-legend.test.mjs` pins it, while the row was a second,
+unpinned spelling in the shell. The `if (edgeLegend.empty)` block is removed from this block
+above; `#legend-note` is the element that already exists to say what the rows cannot.
 
 `paintStage()` — draw the displayed model:
 
@@ -5499,12 +5526,62 @@ being removed.
 
 ```js
   state.store = openStore()
-  state.savedViewPresent = state.store !== null && typeof state.store.getItem(SAVED_VIEW_KEY) === 'string'
-  dom.body.dataset.savedView = state.savedViewPresent ? 'saved' : 'none'
+  let storeRefusedRead = false
+  if (state.store !== null) {
+    try {
+      state.savedViewPresent = typeof state.store.getItem(SAVED_VIEW_KEY) === 'string'
+    } catch {
+      storeRefusedRead = true
+    }
+  }
+  dom.body.dataset.savedView = storeRefusedRead ? 'refused' : state.savedViewPresent ? 'saved' : 'none'
   dom.savedViewState.textContent = state.store === null
     ? 'This browser did not allow the workspace to store a saved view.'
-    : state.savedViewPresent ? 'A saved view is stored.' : 'No saved view.'
+    : storeRefusedRead
+      ? 'This browser did not allow the workspace to read a saved view.'
+      : state.savedViewPresent ? 'A saved view is stored.' : 'No saved view.'
 ```
+
+**Corrected 2026-08-20 (fourth review of Task 6).** The first draft of this block read the
+store **bare**: `state.savedViewPresent = state.store !== null && typeof
+state.store.getItem(SAVED_VIEW_KEY) === 'string'`. It was the only storage call in the
+whole shell outside a `try` — `grep -n 'getItem\|setItem\|removeItem' viewer/atlas39/app.mjs`
+returned 514, 515 (inside `openStore`'s own try), 680, 700, 751 (each inside a try) and that
+one line — and `onRestoreView` wraps the **identical** `state.store.getItem(SAVED_VIEW_KEY)`
+call and refuses it with `E_SAVED_VIEW_STORAGE`, so the file itself asserts the call can
+throw. `openStore()` proves the store is *writable*, which is not the same as readable: an
+engine that accepts the probe `setItem`/`removeItem` and refuses `getItem` gets a store back
+and then throws here — between `openStore()` and `wireEvents()`/`render()`, inside an
+`async boot()` that is called bare (`boot()`, no `.catch`). Measured on a mirror of
+`openStore` plus those two lines, against exactly that store:
+
+```
+BOOT REJECTED: SecurityError: The operation is insecure.
+REACHED: ["openStore returned a store"]
+render() ran: false
+data-stage set: false
+```
+
+No graph, no `showFailure` panel, `data-stage` neither `ready` nor `failed` — the quiet dead
+workspace this slice exists to remove, reached by a browser setting rather than by a bug.
+The read is now refused the way `onRestoreView` refuses it. Re-measured on the shipped block
+with the same store, by a mirror that checks both bodies verbatim against `app.mjs` first:
+
+```
+BOOT RESOLVED
+REACHED: ["openStore returned a store","wireEvents ran"]
+render() ran: true
+data-stage set: ready
+data-saved-view: refused
+savedViewPresent: false
+#saved-view-state: "This browser did not allow the workspace to read a saved view."
+```
+
+`data-saved-view` is `refused` rather than `none` because the workspace does not know
+whether a saved view exists — `none` would be a claim the refused read cannot back — and it
+is the value the existing `body[data-saved-view="refused"] .a39-saved-view-state` rule
+already colours. `refuseSavedView()` is deliberately not called: it announces, and the boot
+announcement one call later would overwrite it in the single live region.
 
 **Step 4: Verify the wiring parses and nothing regressed yet**
 
@@ -5592,6 +5669,13 @@ test('the shell routes the stage through the view-state projection, not the raw 
   assert.match(app, /buildScene\(model, layout, selectFocus\(model, state\.focusId\)\)/)
   // The canonical view model is not rewritten by a view.
   assert.equal(/state\.viewModel\s*=\s*applyView/.test(app), false)
+  // resolveDisplayed's fallback is unreachable while every assignment to
+  // state.view goes through a validated path, which is exactly why it has to be
+  // VISIBLE if it is ever reached: a quiet return to Overview would look like
+  // the user's own choice. Deleting the announce() leaves `function
+  // resolveDisplayed()` intact, so the assertion has to name the sentence.
+  // Measured: shipped=true, announce-deleted mutant=false.
+  assert.match(app, /announce\(`That view could not be shown: \$\{applied\.reason\}\. Showing the whole graph instead\.`\)/)
 })
 
 test('both view modes are reachable, labelled and reflected in the controls', () => {
@@ -5675,8 +5759,16 @@ test('a search that leaves the view says so, and the focus is centred against th
   // And the centring reads the layout render() just produced, not the layout of
   // the view that was left — paintStage lays out the PROJECTED model, so the
   // previous layout does not contain a node that arrived from outside it.
+  //
+  // Compared on the CODE, not on the English. setFocus carries a comment that
+  // contains the literal text `render()` ABOVE the centring block — the comment
+  // that documents this very repair — so `indexOf('render()')` over the raw
+  // source finds the comment first and the comparison holds even when the CALL
+  // has moved back below the block. Measured on that mutant: raw indexOf
+  // passes: true, stripComments indexOf passes: false.
+  const setFocusCode = stripComments(setFocus)
   assert.ok(
-    setFocus.indexOf('render()') < setFocus.indexOf('state.layout.placements.find'),
+    setFocusCode.indexOf('render()') < setFocusCode.indexOf('state.layout.placements.find'),
     'the centring block still reads the layout of the view that was left'
   )
   assert.match(setFocus, /applyTransform\(centerOn\(state\.transform, placement\.x, placement\.y, state\.world\)\)/)
@@ -5688,6 +5780,18 @@ test('the saved view is versioned, probed storage, and refuses without touching 
   // A store that merely exists is not a store that works.
   assert.match(app, /function openStore\(\)/)
   assert.match(app, /store\.setItem\(probe, '1'\)/)
+  // …and a store that is writable is not a store that is readable. The one
+  // storage read that runs BEFORE anything is drawn is inside a try: a throw
+  // there sits between openStore() and render() in a bare-called async boot(),
+  // so it takes the whole workspace down with no graph, no failure panel and
+  // data-stage neither `ready` nor `failed`. Measured on the bare-getItem
+  // mutant: shipped=true, mutant=false. See the fourth Task 6 correction.
+  assert.match(app, /try \{\n\s*state\.savedViewPresent = typeof state\.store\.getItem\(SAVED_VIEW_KEY\) === 'string'\n\s*\} catch \{/)
+  // Every saved-view handler answers a null store LOUDLY, onClearSavedView
+  // included — it is the one that used to return in silence, and its button is
+  // disabled while the store is null, so nothing else would catch a relapse.
+  // Measured on the silent-return mutant: shipped=true, mutant=false.
+  assert.match(app, /refuseSavedView\(E_SAVED_VIEW_STORAGE, 'This browser did not allow the workspace to clear a saved view'\)/)
   const refuse = /function refuseSavedView\([\s\S]*?\n\}/.exec(app)?.[0]
   assert.ok(refuse, 'refuseSavedView is missing')
   assert.match(refuse, /Nothing on the stage was changed/)
@@ -5750,6 +5854,18 @@ test('legend text reaches the DOM only through textContent', () => {
   assert.match(paintLegend, /text\.textContent = `\$\{entry\.relationType\} · \$\{entry\.origin\} \(\$\{entry\.count\}\)`/)
   // The only style property assigned is a depth token, behind an allowlist.
   assert.match(paintLegend, /DEPTH_TOKEN\.test\(entry\.token\)/)
+  // …and the swatch is CREATED inside that branch rather than merely left
+  // uncoloured outside it. A swatch built first and only conditionally coloured
+  // keeps the base `.a39-swatch` border, `var(--depth-n)`, which asserts the
+  // depth-n colour for a row that is not depth-n — and that degraded form still
+  // contains the substring on the line above, so the assertion has to reach the
+  // structure. Measured on it: shipped=true, mutant=false.
+  assert.match(paintLegend, /if \(DEPTH_TOKEN\.test\(entry\.token\)\) \{\n\s*const swatch = document\.createElement\('span'\)/)
+  // One sentence for an empty edge legend, not two: the row that used to read
+  // 'No relations in this view.' is gone, and core/legend.mjs's own
+  // 'This view draws no relations.' reaches #legend-note. See the fourth Task 6
+  // correction.
+  assert.equal(/No relations in this view\./.test(app), false)
 })
 
 test('the legend survives the responsive countercheck instead of disappearing', () => {
@@ -5822,7 +5938,24 @@ marker. They are listed here so the diff and the reason stay attached:
    against the view it landed in* — D3's announcement on the quiet path, and the
    `render()`-before-lookup ordering. The ordering is asserted as an `indexOf` comparison
    rather than as a regex, because the defect was the *sequence* of two lines that both
-   survived unchanged.
+   survived unchanged — **over the comment-stripped source**.
+   **Corrected 2026-08-20 (fourth review of Task 6).** As first written, that comparison
+   ran over the raw function text and did not pin the ordering at all: it was defeated by
+   the comment that documents the repair. `setFocus.indexOf('render()')` finds the first
+   occurrence of the literal `render()`, and the explanatory comment inside `setFocus`
+   ("This runs AFTER render(), against the layout render() just produced") sits *before*
+   `state.layout.placements.find`. Measured on the mutant that reinstates the exact defect
+   — the `render()` **call** moved back below the centring block, comment untouched:
+
+   ```
+   SHIPPED | raw indexOf passes: true | stripComments indexOf passes: true
+   MUTANT m4 | raw indexOf passes: true | stripComments indexOf passes: false
+   ```
+
+   The fix is one line, and the helper was already in the branch: `test/helpers/purity.mjs`
+   exports `stripComments` for exactly this — "scan the CODE, not the English" is the reason
+   that file exists — so the comparison is taken over `stripComments(setFocus)` and the
+   surviving mutant turns red as shown.
 9. `assert.match(small, /\.a39-legend \.a39-legend-note \{[\s\S]*?max-width: 100%/)` in
    *the legend survives the responsive countercheck instead of disappearing* — the row
    break needs the max-width clamp lifted (Step 2 correction of the same round), so the
@@ -5832,7 +5965,62 @@ All nine were dry-run against the shipped `app.mjs`, `index.html` and `shell.css
 this round committed — 5 tests, 5 pass, 0 fail — so Task 7 starts from a contract that
 already holds, and any later failure is a real regression rather than a stale expectation.
 
-`test/atlas40-shell.test.mjs` needs `shellCss` (already read at the top) and `join`/`VIEWER` (already imported).
+**Corrected 2026-08-20 (fourth review of Task 6).** Five more, and one honest limit.
+
+10. The depth swatch's **structure**, in *legend text reaches the DOM only through
+    textContent*: the third review's fail-closed repair was unpinned, because the degraded
+    form (swatch built first, only the colour conditional) still contains the
+    `DEPTH_TOKEN.test(entry.token)` substring the block already asserted. The new assertion
+    matches the `if` **and** the `createElement` inside it, so it reaches the structure
+    rather than the substring.
+11. `onClearSavedView`'s loud refusal, in *the saved view is versioned…*: same round, same
+    shape. Its button is disabled while the store is null, so nothing else — no other
+    assertion and no Task 9 check — would catch a relapse into a silent `return`.
+12. The guarded `boot()` read, in the same test: this round's repair, matched as the `try`
+    around `state.savedViewPresent = typeof state.store.getItem(SAVED_VIEW_KEY) === 'string'`
+    (see the fourth Task 6 correction of Step 3).
+13. `resolveDisplayed`'s visible fallback sentence, in *the shell routes the stage through
+    the view-state projection…*: the branch is unreachable while every assignment to
+    `state.view` goes through a validated path, which is exactly why it has to be visible if
+    it is ever reached — and deleting the `announce()` left `function resolveDisplayed()`
+    intact, so the assertion has to name the sentence.
+14. `assert.equal(/No relations in this view\./.test(app), false)` in *legend text reaches
+    the DOM only through textContent* — the duplicate empty-legend sentence, removed in the
+    same round.
+
+Ten through fourteen were each measured **against the mutant they exist to catch**, on a
+copy of `viewer/atlas39/` under the scratchpad, with Task 7's Step-2 and Step-3 blocks
+extracted verbatim from this document and run as one suite. Shipped: `ℹ tests 14 / pass 14 /
+fail 0`. Each mutant:
+
+| mutant | result |
+| --- | --- |
+| `render()` moved back below the centring block, comment untouched | `tests 14 / pass 13 / fail 1` — *a search that leaves the view says so…* |
+| depth swatch built first, only the colour conditional | `tests 14 / pass 13 / fail 1` — *legend text reaches the DOM only through textContent* |
+| `onClearSavedView` returns in silence | `tests 14 / pass 13 / fail 1` — *the saved view is versioned…* |
+| `boot()` reads the store bare again | `tests 14 / pass 13 / fail 1` — *the saved view is versioned…* |
+| `resolveDisplayed`'s `announce()` deleted | `tests 14 / pass 13 / fail 1` — *the shell routes the stage through the view-state projection…* |
+
+**And the limit this block does not overcome, stated rather than left implicit.** These are
+source-text assertions: they prove the words are in `app.mjs`, never that the wiring runs.
+Three mutants that disable the feature outright stay green — measured in the same harness,
+`ℹ tests 14 / pass 14 / fail 0` for each:
+
+- `render()` no longer calling `paintLegend()` / `paintViewControls()` — the legend is never
+  painted and the readout never updates;
+- the three saved-view listeners never registered in `wireEvents()` — Save, Restore and
+  Clear do nothing;
+- `boot()` replacing `openStore()` with a bare `window.localStorage` — a store that throws
+  on write silently swallows every save, and `assert.match(app, /store\.setItem\(probe,
+  '1'\)/)` still matches because `openStore` is merely *uncalled*.
+
+This is D9's own sentence — "a `node --test` regex can only prove the words are still there,
+which is exactly what let this defect ship" — applied to the whole slice-2 shell surface.
+Task 9 checks 1-10 catch the first two. **Nothing anywhere catches the third**, so a browser
+whose `localStorage` throws on write is a hole this branch closes by code review alone; it is
+recorded here rather than claimed covered.
+
+`test/atlas40-shell.test.mjs` needs `shellCss` (already read at the top), `join`/`VIEWER` (already imported), and one new import — `import { stripComments } from './helpers/purity.mjs'`, for the ordering assertion above.
 
 **Step 4: Run the shell suites**
 
@@ -6131,6 +6319,26 @@ New checks, at minimum:
 | 23 | fail-closed paths unchanged: invalid snapshot → visible panel, no graph, view + saved-view controls all `disabled`; no WebGL → `E_WEBGL_UNAVAILABLE`, nothing substituted |
 | 24 | console / pageerror / requestfailed / non-2xx buckets are all empty |
 | 25 | the **second** stale-suppression route (added by the Task-2 review, D9): drag across the threshold with a **touch** pointer (`touch-action: none` is set at `shell.css:329`, so the browser may or may not synthesise a click), release with `pointerup`, then activate a *different* node button **from the keyboard** (Tab to it, press Enter — no `pointerdown` precedes that click, so the `pointerdown` re-arm cannot mask a stale flag). Assert the keyboard-activated node becomes focused. Report which of the two happened: the click was swallowed (a second real route, to be repaired by keying the disarm on the invariant rather than on `pointercancel`), or it was not (the pan's own `pointerup` click spent the suppression as designed). **Measure it; do not assume either outcome.** |
+| 26 | **the view-widening guard, `leavesView` (D3, D5).** Focus `ATLAS Single Source of Truth` and press Neighbourhood, so the stage draws the neighbourhood of `…:14778372` — 4 of 5 nodes. Then activate the **sprint-plan** entry in the navigator rail (`Sprint 2 – Visible Real Semantic Atlas – Sprint Plan`, `…:22478849`), a real node that this neighbourhood does not draw. Assert: the stage is still alive (`body[data-stage="ready"]`, no `.a39-failure` panel, no `E_STAGE_SCENE_REFUSED` anywhere on the page), `#view-overview[aria-pressed="true"]`, **5** `.a39-gnode` buttons, `#view-readout` back to the Overview caption, and `#live` beginning `Left the focused view.` |
+
+**Added 2026-08-20 (fourth review of Task 6): why check 26 exists.** `leavesView` is the
+guard whose whole purpose is to stop a saved view or a search tearing the stage down with
+`E_STAGE_SCENE_REFUSED`, and until this round **neither gate exercised its effect.** Task 7
+asserts only the *text* `leavesView(state.view, nodeId)`; mutating `app.mjs:798` from
+`if (leftView) state.view = { ...DEFAULT_VIEW }` to `if (false) state.view = { ...DEFAULT_VIEW }`
+— the guard computed and then ignored — scores `ℹ tests 14 / pass 14 / fail 0` against the
+whole Task-7 block. A regex over that line is not a substitute either: it would pin the
+spelling, not the behaviour, which is exactly the limit recorded at the end of Task 7. What
+that mutant produces is the failure D5 forbids: in a neighbourhood view, activating a
+navigator or inspector entry outside it leaves `state.focusId` outside `state.displayed.model`;
+`selectFocus` still reports `hasFocus: true` (applyView keeps the full-graph adjacency by
+design, D1), `buildScene` marks every node `dim` with nothing tabbable, and
+`core/scene-guard.mjs` refuses the scene with `0 nodes are in the tab order, expected exactly
+1` → `showFailure('Stage refused', …, 'E_STAGE_SCENE_REFUSED')`. It is also the outcome the
+first Task-6 correction of 2026-08-20 measured on the restore path. None of checks 1-25
+reaches it: check 6 anchors on the node it has just focused, check 9 switches to Overview
+before focusing a different node, and check 10 restores a focus its own saved view draws.
+Check 26 is therefore the only executable evidence in this slice that the widening happens.
 
 **Step 3: Reproduce the pointercancel defect against the pre-fix build (counterexample)**
 
@@ -6179,6 +6387,32 @@ Hard gates:
 - the `package.json` / `package-lock.json` diff is **0 lines**: no dependency was added
 - `test/golden/*.svg` is **not** in the diff — the golden gate must be untouched
 - `viewer/atlas65/**`, `scripts/atlas65/**`, `viewer/atlas39/tokens.css`, `viewer/atlas39/stage.css` are **not** in the diff
+
+**Recorded 2026-08-20 (fourth review of Task 6): `npm test` on this branch is
+nondeterministic, from a pre-existing latent race the extra test files now trigger.** It is
+**not** this slice's defect and it is not repaired here — both files are untouched by the
+branch, measured: `git diff --name-only 7b88d4f05f422cdf63e19e62cede57e3188b62ca..HEAD --
+test/architecture-diagrams.test.mjs test/atlas39-visual.test.mjs` prints nothing. It is
+recorded before Task 10 measures a "green run", because a `fail 0` gate that can flake has
+to be read knowing that.
+
+`test/atlas39-visual.test.mjs:100-113` (*a missing golden fails closed rather than passing
+vacuously*) `rmSync`es the tracked `test/golden/atlas39-stage-focus.svg` and restores it in
+a `finally`, while `test/architecture-diagrams.test.mjs` builds a fixture repo by copying
+every tracked file — `statSync` at `:207`, `cpSync` at `:214`, with the window between them
+— and `node --test` runs test FILES concurrently. When the copy lands in that window the run
+reports `Error: ENOENT: no such file or directory, lstat '…/test/golden/atlas39-stage-focus.svg'
+at cpSync … at makeFixtureRepo (…/test/architecture-diagrams.test.mjs:214:5)`. Measured by
+the review: 1 such failure in 4 consecutive runs (`ℹ tests 483 / pass 481 / fail 2`; the other
+three runs `pass 482 / fail 1`).
+
+**How Task 10 must treat it:** a failure whose message is that `lstat` ENOENT on
+`test/golden/atlas39-stage-focus.svg` inside `makeFixtureRepo` is this race and must be
+re-run, **not** waved through as "flaky" in general. Any other failure is a real one. Report
+the number of runs it took to obtain the green measurement, verbatim. Repairing the race
+would mean editing `test/atlas39-visual.test.mjs` or `test/architecture-diagrams.test.mjs`,
+neither of which is in this plan's §2 file inventory, so it is a separate change and is
+deferred rather than smuggled in here.
 
 **Step 2: Adversarial pass — hunt for these specific failure shapes**
 
@@ -6243,7 +6477,7 @@ Exactly these seven sections, with measured values only:
 3. **TEST EVIDENCE** — per-suite results, full `npm run check` tail, secret-scan tail, every negative path, and both mutation runs with verbatim exit codes and failing test names.
 4. **VISIBLE BROWSER EVIDENCE** — Playwright version, browser build, viewports, the check table with pass/fail counts, console/network buckets, evidence location (scratchpad, uncommitted).
 5. **PR EVIDENCE** — commit SHA, branch, PR number, exact head SHA, changed-file count, dependency delta (expected `0`), CI run IDs + conclusions for that exact head, review threads.
-6. **DEFERRED / KNOWN ISSUES** — Minimap (AC6), performance/benchmark/LOD (AC8), any remaining Minor, and an explicit statement that ATLAS-25 / PR #19 remained untouched.
+6. **DEFERRED / KNOWN ISSUES** — Minimap (AC6), performance/benchmark/LOD (AC8), any remaining Minor, the pre-existing `test/atlas39-visual.test.mjs` / `test/architecture-diagrams.test.mjs` golden-file race recorded under Task 10 Step 1 (with the number of runs the green measurement took), the three feature-disabling mutants Task 7's source-text gate cannot see (recorded at the end of Task 7), and an explicit statement that ATLAS-25 / PR #19 remained untouched.
 7. **VERDICT** — exactly one of `READY_FOR_PO_REVIEW` / `CHANGES_REQUIRED` / `BLOCKED`.
 
 Do not merge. Do not claim ATLAS-40 Done.

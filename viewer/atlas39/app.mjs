@@ -576,13 +576,13 @@ function paintLegend() {
     row.append(swatch, text)
     edgeRows.append(row)
   }
-  if (edgeLegend.empty) {
-    edgeRows.append(Object.assign(document.createElement('div'), {
-      className: 'a39-legend-row',
-      textContent: 'No relations in this view.'
-    }))
-  }
   dom.legendEdges.replaceChildren(edgeRows)
+  // An empty edge legend is said ONCE. This used to append a row reading "No
+  // relations in this view." as well, so the same fact arrived twice in two
+  // different wordings, which reads as two separate facts. The sentence that
+  // survives is the module's, because core/legend.mjs owns and pins it
+  // (test/atlas40-legend.test.mjs), and the note is the element that already
+  // exists to say what the rows cannot.
   dom.legendNote.textContent = edgeLegendNote(edgeLegend)
 
   const depthLegend = buildDepthLegend(model)
@@ -1185,11 +1185,29 @@ async function boot() {
   // that offered "Save view" and then did nothing would be the quiet failure
   // this slice exists to remove.
   state.store = openStore()
-  state.savedViewPresent = state.store !== null && typeof state.store.getItem(SAVED_VIEW_KEY) === 'string'
-  dom.body.dataset.savedView = state.savedViewPresent ? 'saved' : 'none'
+  // openStore() proves the store is WRITABLE, which is not the same as
+  // readable: an engine that accepts the probe write and refuses getItem gets a
+  // store back and then throws on this read. That throw sits between
+  // openStore() and wireEvents()/render() inside a boot() that is called bare,
+  // so it would take the whole workspace down silently — no graph, no
+  // showFailure panel, data-stage neither `ready` nor `failed`, which is the
+  // quiet dead workspace the comment above says this slice exists to remove.
+  // onRestoreView refuses the identical `state.store.getItem(SAVED_VIEW_KEY)`
+  // call with E_SAVED_VIEW_STORAGE rather than letting it escape; so does this.
+  let storeRefusedRead = false
+  if (state.store !== null) {
+    try {
+      state.savedViewPresent = typeof state.store.getItem(SAVED_VIEW_KEY) === 'string'
+    } catch {
+      storeRefusedRead = true
+    }
+  }
+  dom.body.dataset.savedView = storeRefusedRead ? 'refused' : state.savedViewPresent ? 'saved' : 'none'
   dom.savedViewState.textContent = state.store === null
     ? 'This browser did not allow the workspace to store a saved view.'
-    : state.savedViewPresent ? 'A saved view is stored.' : 'No saved view.'
+    : storeRefusedRead
+      ? 'This browser did not allow the workspace to read a saved view.'
+      : state.savedViewPresent ? 'A saved view is stored.' : 'No saved view.'
 
   wireEvents()
   render()
