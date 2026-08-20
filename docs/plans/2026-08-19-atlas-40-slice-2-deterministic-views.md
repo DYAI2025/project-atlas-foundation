@@ -5774,6 +5774,35 @@ test helper, never served to a browser, and none of the three guarantees is clai
 §2 already lists `test/atlas39-shell.test.mjs` under **Modify**, so this adds no file to the
 scope contract.
 
+**Corrected 2026-08-20 (second review of Task 7).** The paragraphs above describe that test in
+prose but shipped no `js` fence for it, unlike every other assertion in this task. The
+convention on this branch is that a plan block is extracted **verbatim** into the test file —
+which is how the other four blocks in this task were verified byte-exact — so a re-execution
+from the plan alone could not reproduce it. The committed body is therefore pasted here, and
+it is the whole of the addition: `test/atlas39-shell.test.mjs:59-71`, appended directly under
+the `AUTHORED` list above. It also needs one import widened at `:10`, from
+`import { spawnSync } from 'node:child_process'` to
+`import { execFileSync, spawnSync } from 'node:child_process'` — measured on the pre-slice-2
+file, `git show 7b88d4f05f422cdf63e19e62cede57e3188b62ca:test/atlas39-shell.test.mjs | grep -n
+child_process` returns `10:import { spawnSync } from 'node:child_process'`, so `execFileSync`
+was not already in scope and the block does not run without it.
+
+```js
+test('AUTHORED is every file under viewer/atlas39, so no source escapes these rules', () => {
+  const prefix = 'viewer/atlas39/'
+  const carried = execFileSync(
+    'git',
+    ['-C', repoRoot, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', prefix],
+    { encoding: 'utf8' }
+  )
+    .split('\0')
+    .filter(Boolean)
+    .map((rel) => rel.slice(prefix.length))
+  assert.ok(carried.length > 0, 'the viewer source listing must not be empty')
+  assert.deepEqual([...AUTHORED].sort(), carried.sort())
+})
+```
+
 **Step 2: Replace the two pointer assertions that moved**
 
 In `test/atlas40-shell.test.mjs`, rewrite the test at `:154-168`:
@@ -5931,7 +5960,19 @@ test('a search that leaves the view says so, and the focus is centred against th
   // source finds the comment first and the comparison holds even when the CALL
   // has moved back below the block. Measured on that mutant: raw indexOf
   // passes: true, stripComments indexOf passes: false.
+  //
+  // The PRESENCE of the call is asserted before the ordering, because the
+  // comparison alone passes VACUOUSLY without it: `indexOf` answers -1 for an
+  // absent call, and -1 is smaller than every real index. Measured on the
+  // deletion of the `render()` call at app.mjs:844 with the comment untouched —
+  // `indexOf render()=-1 | indexOf placements.find=515 | assertion passes:
+  // true`, and `npm test` at `tests 497 / pass 497 / fail 0`. Renaming it
+  // (`render()` -> `paintEverything()`) scored the same. That mutant is strictly
+  // worse than the ordering defect this was written for: setFocus would stop
+  // repainting altogether — no focus ring, no view projection, no navigator
+  // update — with the whole contract green.
   const setFocusCode = stripComments(setFocus)
+  assert.ok(setFocusCode.includes('render()'), 'setFocus no longer repaints before centring')
   assert.ok(
     setFocusCode.indexOf('render()') < setFocusCode.indexOf('state.layout.placements.find'),
     'the centring block still reads the layout of the view that was left'
@@ -6013,7 +6054,14 @@ test('the legend is derived at render time and is no longer three fixed rows of 
   // correction of 2026-08-20.
   assert.match(app, /const sharedFrom = depthLegend\.entries\.find\(\(e\) => depthTokenCounts\.get\(e\.token\) > 1\) \?\? null/)
   assert.match(app, /sharedFrom === null \? '' : `\$\{depthCaption\(sharedFrom\.depth\)\} and deeper share one colour\.`/)
-  assert.equal(/'Level 3 and deeper share one colour\.'/.test(app), false, 'the level is hardcoded again')
+  // In ANY quoting. Pinning the single-quoted spelling alone let the same
+  // constant come back as a double-quoted string or a backtick template, which
+  // is the identical defect written differently.
+  assert.equal(
+    /['"`]Level 3 and deeper share one colour\.['"`]/.test(app),
+    false,
+    'the level is hardcoded again'
+  )
   // AC7 asks for a VISIBLE legend, so it is no longer hidden from assistive tech.
   const legend = /<section class="a39-legend"[\s\S]*?<\/section>/.exec(html)?.[0]
   assert.ok(legend, 'the legend section is missing')
@@ -6060,20 +6108,43 @@ test('the legend survives the responsive countercheck instead of disappearing', 
   // hidden again, by a second mechanism. See the Task 6 correction of
   // 2026-08-20.
   assert.equal(/\.a39-legend \{[^}]*position:\s*static/.test(small), false, 'an in-flow legend paints under the canvas')
-  assert.match(small, /\.a39-legend \{[\s\S]*?bottom: var\(--s4\)/)
-  assert.match(small, /\.a39-legend \{[\s\S]*?flex-direction: row/)
+  // `[^}]*`, not `[\s\S]*?`: the lazy form crosses the rule's closing brace, so
+  // it would also pass if the declaration moved into a LATER rule of the same
+  // @media block, which would leave the legend unpositioned exactly as the
+  // negatives above forbid. Nothing else in the 960px block (shell.css:689-744)
+  // declares either of these today, so this is latent fragility rather than a live
+  // hole — closed with the same precise form the negatives on the two lines
+  // above already use.
+  assert.match(small, /\.a39-legend \{[^}]*bottom: var\(--s4\)/)
+  assert.match(small, /\.a39-legend \{[^}]*flex-direction: row/)
   // The note's row break only exists if the 46ch max-width clamp is lifted: per
   // CSS Flexbox §9.2 the hypothetical main size is the flex base size clamped by
   // the used max main size, so `flex-basis: 100%` alone left the note sharing a
   // row. See the Step 2 correction of 2026-08-20 (third review of Task 6).
-  assert.match(small, /\.a39-legend \.a39-legend-note \{[\s\S]*?max-width: 100%/)
+  assert.match(small, /\.a39-legend \.a39-legend-note \{[^}]*max-width: 100%/)
 })
 
 test('a failed stage offers no view, no saved view and no legend', () => {
   const showFailure = /function showFailure\([\s\S]*?\n\}/.exec(app)?.[0]
   assert.ok(showFailure)
   assert.match(showFailure, /dom\.viewOverview, dom\.viewNeighbourhood, dom\.saveViewBtn, dom\.restoreViewBtn, dom\.clearSavedViewBtn/)
+  // All FIVE legend/view lines, not the first one. The test's name claims no
+  // view and no legend survives the failure; pinning `#legend-edges` alone made
+  // it claim more than it checked. Measured on the deletion of
+  // `dom.legendDepth?.replaceChildren()` from showFailure (verified gone,
+  // `grep -c` = 0): the two shell suites scored `tests 55 / pass 55 / fail 0`
+  // and the whole suite `tests 497 / pass 497 / fail 0`, while the Hierarchy
+  // swatches kept explaining a graph that is no longer drawn after an
+  // onContextLost failure — the same failure path, the sibling element, as the
+  // `#saved-view-state` repair asserted below.
   assert.match(showFailure, /dom\.legendEdges\?\.replaceChildren\(\)/)
+  assert.match(showFailure, /dom\.legendDepth\?\.replaceChildren\(\)/)
+  assert.match(
+    showFailure,
+    /if \(dom\.legendNote\) dom\.legendNote\.textContent = 'No graph is drawn, so there is nothing to explain\.'/
+  )
+  assert.match(showFailure, /if \(dom\.legendDepthNote\) dom\.legendDepthNote\.textContent = ''/)
+  assert.match(showFailure, /if \(dom\.viewReadout\) dom\.viewReadout\.textContent = '—'/)
   // …and no saved-view claim survives the failure either. showFailure is not
   // only a boot path — onContextLost calls it long after a save or a restore,
   // and #saved-view-state then still read `Restored.` beside a disabled Save
@@ -6231,6 +6302,43 @@ the previous commit, read out with `git show HEAD:viewer/atlas39/app.mjs`,
 `ℹ tests 4 / ℹ pass 0 / ℹ fail 4`. Each one turns red on exactly the defect it was written
 for, so none of them is a green assertion proving something else.
 
+**Corrected 2026-08-20 (second review of Task 7).** Four changes in this block belong to Task 7
+itself — two assertions that did not hold what their surrounding prose claimed, and two that
+held it only against one spelling. Each was measured against the mutant it exists for, on the
+shipped `app.mjs`/`shell.css`, restored afterwards and verified by `shasum -a 256`
+(`app.mjs` = `d7759c63d0058cf5b567843e8ef3cb206b1c786b09dd5eddf3ae27d047c7e203`,
+`shell.css` = `ad598b34530926e79b41ef6e73da3160f836857041b56d3c83133450cdfc4ad2`, both back to
+their pristine values). The shipped tree scores `ℹ tests 55 / ℹ pass 55 / ℹ fail 0` on
+`node --test test/atlas39-shell.test.mjs test/atlas40-shell.test.mjs`.
+
+20. `assert.ok(setFocusCode.includes('render()'), …)` **before** the ordering comparison, in
+    *a search that leaves the view says so…*. The comparison alone passed VACUOUSLY when the
+    call was gone: `indexOf` answers -1, and `-1 < 515` is true. That is a strictly worse
+    defect than the ordering it was written for — `setFocus` would stop repainting entirely —
+    and the whole contract stayed green on it. Measured: deleting the `render()` call at
+    `app.mjs:844`, comment untouched, `tests 55 / pass 54 / fail 1` on *setFocus no longer
+    repaints before centring*; renaming it to `paintEverything()`, same score, same assertion.
+    Before the change both mutants scored `tests 55 / pass 55 / fail 0`.
+21. The four missing teardown assertions in *a failed stage offers no view, no saved view and
+    no legend*. `showFailure` clears five legend/view lines and the test pinned one, so the
+    name claimed more than the body checked. Measured, each deletion run on its own:
+    `dom.legendDepth?.replaceChildren()`, the `dom.legendNote` sentence, the
+    `dom.legendDepthNote` reset and the `dom.viewReadout` reset each score
+    `tests 55 / pass 54 / fail 1` on that test now, and each scored `tests 55 / pass 55 /
+    fail 0` before. Same failure path and sibling elements as correction 18 one round earlier.
+22. `[^}]*` in place of `[\s\S]*?` on the three positive `@media (max-width: 960px)` matches.
+    The lazy form crosses the rule's closing brace, so it would also pass with the declaration
+    moved into a later rule of the same block — the in-flow legend the two negatives on the
+    lines above exist to forbid. Measured on that mutant (`bottom: var(--s4)` moved out of
+    `.a39-legend` and into `.a39-legend .a39-legend-note`): old regex `true`, new regex
+    `false`, suite `tests 55 / pass 54 / fail 1`. Latent, not live — nothing else in the
+    960px block declares those properties today.
+23. ``/['"`]Level 3 and deeper share one colour\.['"`]/`` in place of the single-quoted-only
+    negative, in *the legend is derived at render time…*. Measured on the constant
+    reintroduced as a double-quoted `const` beside the derived template — which leaves the
+    paired positive assertion green: old negative `false` (no match, test passes), new
+    negative `true`, suite `tests 55 / pass 54 / fail 1` on *the level is hardcoded again*.
+
 **Step 3b: rename the zoom control group (added 2026-08-20, fifth review of Task 6)**
 
 Also modify: `viewer/atlas39/index.html:60`.
@@ -6258,6 +6366,19 @@ turned a green slice-1 assertion red for a reason unrelated to Task 6's own Step
 
 Task 6 Step 1's block carries a pointer to this step so the two names cannot drift apart
 unnoticed.
+
+**Corrected 2026-08-20 (second review of Task 7).** The `:138` above is anchored to the Task-6
+repair commit, where it is true — `git show 1eef208:test/atlas40-shell.test.mjs | sed -n '138p'`
+prints `  assert.match(html, /aria-label="Graph view controls"/)`, and the same line at
+`7b88d4f05f422cdf63e19e62cede57e3188b62ca` prints the same text. It stops being true **inside
+this task**: Step 3's own new `import { stripComments } from './helpers/purity.mjs'` adds one
+line above it, so in the committed file the assertion sits at `:139` —
+`sed -n '138p;139p' test/atlas40-shell.test.mjs` prints
+`  assert.match(html, /id="zoom-level"/)` then
+`  assert.match(html, /aria-label="Zoom and focus controls"/)`. A reader of the finished branch
+following the `:138` in this paragraph, in this task's **Files** block, or in Task 6's Step 1
+pointer lands one line short. The offset is recorded rather than rewritten, because all three
+citations describe the file as it stood when they were measured.
 
 `test/atlas40-shell.test.mjs` needs `shellCss` (already read at the top), `join`/`VIEWER` (already imported), and one new import — `import { stripComments } from './helpers/purity.mjs'`, for the ordering assertion above.
 

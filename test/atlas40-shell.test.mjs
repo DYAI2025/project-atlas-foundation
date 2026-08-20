@@ -376,7 +376,19 @@ test('a search that leaves the view says so, and the focus is centred against th
   // source finds the comment first and the comparison holds even when the CALL
   // has moved back below the block. Measured on that mutant: raw indexOf
   // passes: true, stripComments indexOf passes: false.
+  //
+  // The PRESENCE of the call is asserted before the ordering, because the
+  // comparison alone passes VACUOUSLY without it: `indexOf` answers -1 for an
+  // absent call, and -1 is smaller than every real index. Measured on the
+  // deletion of the `render()` call at app.mjs:844 with the comment untouched —
+  // `indexOf render()=-1 | indexOf placements.find=515 | assertion passes:
+  // true`, and `npm test` at `tests 497 / pass 497 / fail 0`. Renaming it
+  // (`render()` -> `paintEverything()`) scored the same. That mutant is strictly
+  // worse than the ordering defect this was written for: setFocus would stop
+  // repainting altogether — no focus ring, no view projection, no navigator
+  // update — with the whole contract green.
   const setFocusCode = stripComments(setFocus)
+  assert.ok(setFocusCode.includes('render()'), 'setFocus no longer repaints before centring')
   assert.ok(
     setFocusCode.indexOf('render()') < setFocusCode.indexOf('state.layout.placements.find'),
     'the centring block still reads the layout of the view that was left'
@@ -458,7 +470,14 @@ test('the legend is derived at render time and is no longer three fixed rows of 
   // correction of 2026-08-20.
   assert.match(app, /const sharedFrom = depthLegend\.entries\.find\(\(e\) => depthTokenCounts\.get\(e\.token\) > 1\) \?\? null/)
   assert.match(app, /sharedFrom === null \? '' : `\$\{depthCaption\(sharedFrom\.depth\)\} and deeper share one colour\.`/)
-  assert.equal(/'Level 3 and deeper share one colour\.'/.test(app), false, 'the level is hardcoded again')
+  // In ANY quoting. Pinning the single-quoted spelling alone let the same
+  // constant come back as a double-quoted string or a backtick template, which
+  // is the identical defect written differently.
+  assert.equal(
+    /['"`]Level 3 and deeper share one colour\.['"`]/.test(app),
+    false,
+    'the level is hardcoded again'
+  )
   // AC7 asks for a VISIBLE legend, so it is no longer hidden from assistive tech.
   const legend = /<section class="a39-legend"[\s\S]*?<\/section>/.exec(html)?.[0]
   assert.ok(legend, 'the legend section is missing')
@@ -505,20 +524,43 @@ test('the legend survives the responsive countercheck instead of disappearing', 
   // hidden again, by a second mechanism. See the Task 6 correction of
   // 2026-08-20.
   assert.equal(/\.a39-legend \{[^}]*position:\s*static/.test(small), false, 'an in-flow legend paints under the canvas')
-  assert.match(small, /\.a39-legend \{[\s\S]*?bottom: var\(--s4\)/)
-  assert.match(small, /\.a39-legend \{[\s\S]*?flex-direction: row/)
+  // `[^}]*`, not `[\s\S]*?`: the lazy form crosses the rule's closing brace, so
+  // it would also pass if the declaration moved into a LATER rule of the same
+  // @media block, which would leave the legend unpositioned exactly as the
+  // negatives above forbid. Nothing else in the 960px block (shell.css:689-744)
+  // declares either of these today, so this is latent fragility rather than a live
+  // hole — closed with the same precise form the negatives on the two lines
+  // above already use.
+  assert.match(small, /\.a39-legend \{[^}]*bottom: var\(--s4\)/)
+  assert.match(small, /\.a39-legend \{[^}]*flex-direction: row/)
   // The note's row break only exists if the 46ch max-width clamp is lifted: per
   // CSS Flexbox §9.2 the hypothetical main size is the flex base size clamped by
   // the used max main size, so `flex-basis: 100%` alone left the note sharing a
   // row. See the Step 2 correction of 2026-08-20 (third review of Task 6).
-  assert.match(small, /\.a39-legend \.a39-legend-note \{[\s\S]*?max-width: 100%/)
+  assert.match(small, /\.a39-legend \.a39-legend-note \{[^}]*max-width: 100%/)
 })
 
 test('a failed stage offers no view, no saved view and no legend', () => {
   const showFailure = /function showFailure\([\s\S]*?\n\}/.exec(app)?.[0]
   assert.ok(showFailure)
   assert.match(showFailure, /dom\.viewOverview, dom\.viewNeighbourhood, dom\.saveViewBtn, dom\.restoreViewBtn, dom\.clearSavedViewBtn/)
+  // All FIVE legend/view lines, not the first one. The test's name claims no
+  // view and no legend survives the failure; pinning `#legend-edges` alone made
+  // it claim more than it checked. Measured on the deletion of
+  // `dom.legendDepth?.replaceChildren()` from showFailure (verified gone,
+  // `grep -c` = 0): the two shell suites scored `tests 55 / pass 55 / fail 0`
+  // and the whole suite `tests 497 / pass 497 / fail 0`, while the Hierarchy
+  // swatches kept explaining a graph that is no longer drawn after an
+  // onContextLost failure — the same failure path, the sibling element, as the
+  // `#saved-view-state` repair asserted below.
   assert.match(showFailure, /dom\.legendEdges\?\.replaceChildren\(\)/)
+  assert.match(showFailure, /dom\.legendDepth\?\.replaceChildren\(\)/)
+  assert.match(
+    showFailure,
+    /if \(dom\.legendNote\) dom\.legendNote\.textContent = 'No graph is drawn, so there is nothing to explain\.'/
+  )
+  assert.match(showFailure, /if \(dom\.legendDepthNote\) dom\.legendDepthNote\.textContent = ''/)
+  assert.match(showFailure, /if \(dom\.viewReadout\) dom\.viewReadout\.textContent = '—'/)
   // …and no saved-view claim survives the failure either. showFailure is not
   // only a boot path — onContextLost calls it long after a save or a restore,
   // and #saved-view-state then still read `Restored.` beside a disabled Save
