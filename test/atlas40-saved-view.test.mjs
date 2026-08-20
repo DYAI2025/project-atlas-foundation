@@ -24,6 +24,10 @@ import {
   E_SAVED_VIEW_SNAPSHOT,
   E_SAVED_VIEW_STALE_NODE
 } from '../viewer/atlas39/core/saved-view.mjs'
+// Imported for exactly one assertion in counterexample 2. Re-deriving an
+// edge_id is unavoidable there — it is what keeps Graph C contract valid — so
+// the test has to show that the edge_id is not what the fingerprint reacted to.
+import { canonicalGraphString } from '../viewer/atlas39/core/graph-fingerprint.mjs'
 // The purity guard is the shared one every pure-core suite is scanned with,
 // imported rather than re-spelled — see the test at the bottom of this file.
 import {
@@ -33,6 +37,17 @@ import {
   FORBIDDEN_IDENTIFIERS,
   MODULE_SPECIFIER
 } from './helpers/purity.mjs'
+// The repository's own graph contract, imported rather than re-spelled: a
+// counterexample is only evidence if the graph it is built from is one this
+// repository would actually accept. `composeEdgeId` is the single source of the
+// edge-identity derivation, so a mutated fixture cannot drift from the rule the
+// validator enforces. Precedent: test/atlas65-snapshot.test.mjs imports the same
+// module for the same reason.
+import {
+  validateSnapshot,
+  composeEdgeId,
+  EDGE_ORIGINS
+} from '../src/gbrain-read-contract/validate.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const EVIDENCE = join(repoRoot, 'docs/evidence/atlas-65')
@@ -53,6 +68,63 @@ const sample = () =>
     transform: { scale: 1.75, tx: -412, ty: -88 },
     viewport: VIEWPORT
   })
+
+const GOVERNANCE = 'ATLAS:confluence:14778372:14680066'
+
+/**
+ * Re-derives every edge_id from the contract's own composition rule and restores
+ * the contract's edge order, so a mutated fixture stays a graph the repository
+ * accepts.
+ *
+ * WHY THIS EXISTS. The first counterexample in this suite moved an edge's `from`
+ * and deliberately left `edge_id` alone, which made the changed field maximally
+ * visible but made Graph B a document `validateSnapshot()` rejects with
+ * E_ID_DERIVATION — and a graph the contract refuses cannot demonstrate what the
+ * saved-view identity protects in production. Endpoints are composed from the
+ * endpoint nodes' `source_ref`, never from their `node_id`, because that is what
+ * composeEdgeId() is fed everywhere else in the repository.
+ */
+const rederiveEdgeIdentity = (raw) => {
+  const refById = new Map(raw.nodes.map((node) => [node.node_id, node.source_ref]))
+  raw.edges = raw.edges
+    .map((edge) => ({
+      ...edge,
+      edge_id: composeEdgeId(
+        raw.project_id,
+        raw.source.source_kind,
+        raw.source.source_id,
+        edge.relation_type,
+        refById.get(edge.from),
+        refById.get(edge.to)
+      )
+    }))
+    .sort((a, b) => (a.edge_id < b.edge_id ? -1 : a.edge_id > b.edge_id ? 1 : 0))
+  return raw
+}
+
+/** The saved view every counterexample below is captured against Graph A with. */
+const capturedAgainstA = () =>
+  parseSavedView(
+    serializeSavedView(
+      captureSavedView({
+        viewModel: vm,
+        view: { mode: 'neighbourhood', anchorId: DELIVERY },
+        focusId: SPRINT,
+        transform: { scale: 1.75, tx: -412, ty: -88 },
+        viewport: VIEWPORT
+      })
+    )
+  ).value
+
+/** The seven-field identity of an arbitrary graph, read the way capture reads it. */
+const identityOf = (viewModel) =>
+  captureSavedView({
+    viewModel,
+    view: { mode: 'overview', anchorId: null },
+    focusId: null,
+    transform: { scale: 1, tx: 0, ty: 0 },
+    viewport: VIEWPORT
+  }).snapshot
 
 test('the contract version is pinned and carried in every saved view', () => {
   assert.equal(SAVED_VIEW_VERSION, 2)
@@ -732,7 +804,7 @@ test('the module carries no storage, clock, randomness or DOM, and imports only 
   assert.deepEqual(purityViolations(body), [], 'the purity rules disagree with each other')
 })
 
-test('COUNTEREXAMPLE: a graph that keeps all six cardinal fields but moves a page is refused', () => {
+test('COUNTEREXAMPLE (contract-invalid construction): a graph that keeps all six cardinal fields but moves a page is refused', () => {
   // THE HOLE THIS CLOSES. Until the fingerprint, the saved-view identity was
   // six cardinal facts plus a check that the saved ids still resolve. Every one
   // of those can hold across a re-scan that MOVED a page: same project, same
@@ -745,12 +817,27 @@ test('COUNTEREXAMPLE: a graph that keeps all six cardinal fields but moves a pag
   // Graph B re-parents SPRINT from DELIVERY to GOVERNANCE. The edge's
   // `edge_id` is deliberately left untouched, so the ONLY changed fact in the
   // whole snapshot is that one edge's `from`.
-  const GOVERNANCE = 'ATLAS:confluence:14778372:14680066'
   const rawB = JSON.parse(JSON.stringify(snapshot))
   const moved = rawB.edges.find((edge) => edge.to === SPRINT)
   assert.equal(moved.from, DELIVERY, 'the fixture no longer has SPRINT under DELIVERY')
   moved.from = GOVERNANCE
   const b = buildViewModel(rawB, provenance)
+
+  // NAMED, NOT HIDDEN. This construction keeps the original `edge_id` so the
+  // single changed fact is maximally visible — which also means Graph B here is
+  // NOT a document the repository's contract accepts: the id no longer derives
+  // from the endpoints it now joins. The finding is asserted rather than left
+  // for a reviewer to discover, and the contract-VALID counterexamples below
+  // carry the production evidence.
+  //
+  // Exactly one finding, not two: keeping the stale id is also what keeps the
+  // edge ORDER valid, so `E_ORDER` is deliberately absent here and appears only
+  // if a future edit re-derives the id without re-sorting.
+  assert.deepEqual(
+    validateSnapshot(rawB).map((error) => `${error.path} ${error.code}`),
+    ['/snapshot/edges/3/edge_id E_ID_DERIVATION'],
+    'this construction is no longer contract-invalid in the way the comment claims'
+  )
 
   const saved = captureSavedView({
     viewModel: vm,
@@ -812,4 +899,174 @@ test('COUNTEREXAMPLE: a graph that keeps all six cardinal fields but moves a pag
   // 6. and repeating it is idempotent, not merely successful twice.
   assert.deepEqual(restored[1], restored[0])
   assert.deepEqual(restored[2], restored[0])
+})
+
+test('CONTRACT-VALID COUNTEREXAMPLE 1 (topology): both graphs pass the gbrain-read/v1 contract, and the moved page is still refused', () => {
+  // Graph A is the accepted evidence snapshot, unmodified.
+  assert.deepEqual(validateSnapshot(snapshot), [], 'Graph A is not contract valid')
+
+  // Graph B re-parents SPRINT from DELIVERY to GOVERNANCE and then re-derives the
+  // edge identity and edge order the way the contract requires, so B is a graph
+  // the repository would accept from a re-scan — not a fixture only this suite
+  // tolerates.
+  const rawB = rederiveEdgeIdentity(
+    (() => {
+      const g = JSON.parse(JSON.stringify(snapshot))
+      const moved = g.edges.find((edge) => edge.to === SPRINT)
+      assert.equal(moved.from, DELIVERY, 'the fixture no longer has SPRINT under DELIVERY')
+      moved.from = GOVERNANCE
+      return g
+    })()
+  )
+  assert.deepEqual(validateSnapshot(rawB), [], 'Graph B is not contract valid')
+
+  // The re-derivation really happened: the stale id is gone and the contract id
+  // is present, so this is not the weak counterexample under a new name.
+  const movedB = rawB.edges.find((edge) => edge.to === SPRINT)
+  assert.equal(movedB.edge_id, 'ATLAS:confluence:14778372:parent_of:14680066:22478849')
+  assert.equal(
+    rawB.edges.some((edge) => edge.edge_id === 'ATLAS:confluence:14778372:parent_of:15171611:22478849'),
+    false,
+    'the stale edge_id survived the re-derivation'
+  )
+
+  const b = buildViewModel(rawB, provenance)
+  const parsed = capturedAgainstA()
+  const idB = identityOf(b)
+
+  // 1. Every field the pre-fingerprint contract compared is identical.
+  const cardinal = IDENTITY_FIELDS.filter((field) => field !== 'graph_fingerprint')
+  assert.equal(cardinal.length, 6)
+  for (const field of cardinal) {
+    assert.equal(parsed.snapshot[field], idB[field], `${field} differs, so this is not testing what it claims`)
+  }
+  // 2. and the saved anchor and the saved focus both still exist in B.
+  assert.equal(b.adjacency.has(DELIVERY), true, 'the saved anchor is not in Graph B')
+  assert.equal(b.adjacency.has(SPRINT), true, 'the saved focus is not in Graph B')
+  // 3. and yet the neighbourhood the user saved resolves to something else in B.
+  assert.deepEqual([...vm.adjacency.get(DELIVERY)].sort(), [ROOT, SPRINT].sort())
+  assert.deepEqual([...b.adjacency.get(DELIVERY)].sort(), [ROOT])
+  // 4. so only the fingerprint can tell the two graphs apart.
+  assert.notEqual(parsed.snapshot.graph_fingerprint, idB.graph_fingerprint)
+
+  // 5. A -> B is refused, and the refusal exposes no restorable state at all.
+  const refused = restoreSavedView(b, parsed, VIEWPORT)
+  assert.equal(refused.ok, false, 'a moved page restored as if nothing had changed')
+  assert.equal(refused.code, E_SAVED_VIEW_SNAPSHOT)
+  assert.deepEqual(Object.keys(refused).sort(), ['code', 'ok', 'reason'])
+  for (const leaked of ['view', 'focusId', 'transform']) {
+    assert.equal(leaked in refused, false, `the refusal exposed ${leaked}`)
+  }
+  assert.equal(refused.reason.includes(DELIVERY), false, 'the refusal leaked a node id')
+  assert.equal(refused.reason.includes(SPRINT), false, 'the refusal leaked a node id')
+
+  // 6. A -> A still succeeds, and repeating it is idempotent rather than merely
+  //    successful twice.
+  const restored = [0, 1, 2].map(() => restoreSavedView(vm, parsed, VIEWPORT))
+  assert.equal(restored[0].ok, true, restored[0].reason)
+  assert.equal(restored[0].view.mode, 'neighbourhood')
+  assert.equal(restored[0].view.anchorId, DELIVERY)
+  assert.equal(restored[0].focusId, SPRINT)
+  assert.deepEqual(restored[0].transform, { scale: 1.75, tx: -412, ty: -88 })
+  assert.deepEqual(restored[1], restored[0])
+  assert.deepEqual(restored[2], restored[0])
+})
+
+test('CONTRACT-VALID COUNTEREXAMPLE 2 (relation semantics): identical topology, one changed relation_type, still refused', () => {
+  // Counterexample 1 changes an endpoint, so a fingerprint that bound only the
+  // adjacency would already catch it. This one changes NOTHING a reader can see
+  // in the adjacency: the same two nodes stay joined, and only the meaning of the
+  // join changes. Nothing but relation_type being an input to the fingerprint can
+  // refuse it, which is what makes this the sharper of the two.
+  const rawC = rederiveEdgeIdentity(
+    (() => {
+      const g = JSON.parse(JSON.stringify(snapshot))
+      const retyped = g.edges.find((edge) => edge.to === SPRINT)
+      assert.equal(retyped.relation_type, 'parent_of')
+      retyped.relation_type = 'links_to'
+      return g
+    })()
+  )
+  // relation_type is syntactically constrained but deliberately NOT an enum —
+  // both the validator (validate.mjs, "Syntactically constrained, deliberately
+  // NOT an enum") and the published schema ($defs.edge.relation_type, a bare
+  // id_component with no enum) admit any identifier-safe token. So the CONTRACT
+  // admits this graph.
+  //
+  // What this deliberately does NOT claim: that today's re-scan would produce
+  // it. The only producer of a snapshot edge is src/atlas65/snapshot.mjs, which
+  // emits the constant `parent_of` and drops every readback link that is not
+  // one. This counterexample therefore proves the fingerprint holds for every
+  // graph the contract admits, which is the surface the saved-view contract is
+  // written against — not only for the narrower set the current importer emits.
+  assert.deepEqual(validateSnapshot(rawC), [], 'Graph C is not contract valid')
+
+  const c = buildViewModel(rawC, provenance)
+  const parsed = capturedAgainstA()
+  const idC = identityOf(c)
+
+  const cardinal = IDENTITY_FIELDS.filter((field) => field !== 'graph_fingerprint')
+  for (const field of cardinal) {
+    assert.equal(parsed.snapshot[field], idC[field], `${field} differs, so this is not testing what it claims`)
+  }
+  assert.equal(c.adjacency.has(DELIVERY), true)
+  assert.equal(c.adjacency.has(SPRINT), true)
+  // Every node keeps exactly the neighbours it had in Graph A — same node set,
+  // same adjacency AS SETS. The two documents are NOT byte-identical: keeping
+  // Graph C contract valid forces the edge_id to be re-derived and the edge
+  // order restored, and SPRINT's derived depth goes from 2 to null once its
+  // only parent_of edge is re-typed. None of that is bound by the fingerprint,
+  // which is the point — the sort below is what makes the comparison a
+  // comparison of neighbourhoods rather than of insertion order.
+  for (const node of vm.nodes) {
+    assert.deepEqual(
+      [...c.adjacency.get(node.node_id)].sort(),
+      [...vm.adjacency.get(node.node_id)].sort(),
+      `${node.node_id} has a different neighbourhood, so this is a topology change after all`
+    )
+  }
+  assert.notEqual(parsed.snapshot.graph_fingerprint, idC.graph_fingerprint)
+
+  // AND it reacted to the relation type, not to the edge_id that re-derivation
+  // necessarily changed along with it. From the assertions above alone a reader
+  // could not separate those two, because keeping Graph C contract valid is
+  // exactly what forces the id to move. The fingerprint's own canonical string
+  // settles it: no edge_id of either graph appears in it, while the relation
+  // type and the origin both do.
+  const canonicalA = canonicalGraphString(vm)
+  for (const edge of [...vm.edges, ...c.edges]) {
+    assert.equal(
+      canonicalA.includes(edge.edge_id),
+      false,
+      `edge_id ${edge.edge_id} is bound by the fingerprint, so this test cannot attribute the refusal to relation_type`
+    )
+  }
+  assert.equal(canonicalA.includes('parent_of'), true, 'the fingerprint does not bind relation_type')
+  assert.equal(canonicalA.includes('explicit'), true, 'the fingerprint does not bind origin')
+
+  const refused = restoreSavedView(c, parsed, VIEWPORT)
+  assert.equal(refused.ok, false, 'a re-typed relation restored as if nothing had changed')
+  assert.equal(refused.code, E_SAVED_VIEW_SNAPSHOT)
+  assert.deepEqual(Object.keys(refused).sort(), ['code', 'ok', 'reason'])
+  for (const leaked of ['view', 'focusId', 'transform']) {
+    assert.equal(leaked in refused, false, `the refusal exposed ${leaked}`)
+  }
+
+  const restored = [0, 1, 2].map(() => restoreSavedView(vm, parsed, VIEWPORT))
+  assert.equal(restored[0].ok, true, restored[0].reason)
+  assert.deepEqual(restored[1], restored[0])
+  assert.deepEqual(restored[2], restored[0])
+})
+
+test('a contract-valid ORIGIN counterexample is impossible under gbrain-read/v1, and that is asserted rather than assumed', () => {
+  // `origin` IS an enum in the v1 contract — `explicit` and nothing else — so no
+  // graph the repository accepts can differ from another only in origin. The
+  // fingerprint binds origin anyway, for the day the enum widens. Saying "origin
+  // is covered" without this assertion would be the overclaim; saying nothing
+  // would leave a reader unable to tell a gap from a deliberate omission.
+  assert.deepEqual(EDGE_ORIGINS, ['explicit'])
+  const rawD = JSON.parse(JSON.stringify(snapshot))
+  rawD.edges[0].origin = 'inferred'
+  const codes = validateSnapshot(rawD).map((error) => error.code)
+  assert.deepEqual(codes, ['E_ENUM'], 'the contract now admits a second origin; add the origin counterexample')
 })
