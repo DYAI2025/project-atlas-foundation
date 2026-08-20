@@ -745,9 +745,20 @@ body[data-panning="true"] .a39-stage-host {
   }
 }
 
-/* Slice 2: the view + saved-view controls. They sit opposite the zoom controls
- * so neither group covers the other, and they share .a39-stage-controls so the
- * stage keydown handler treats them as controls, not as graph. */
+/* Slice 2: the view + saved-view controls. They are anchored to the opposite
+ * edge from the zoom controls, and they share .a39-stage-controls so the stage
+ * keydown handler treats them as controls, not as graph.
+ *
+ * What these rules do NOT guarantee is that the two groups never cover each
+ * other, and an earlier version of this comment claimed they did. Both groups
+ * inherit `top: var(--s4)` and `z-index: 5` from .a39-stage-controls, this one
+ * is later in DOM order, and `max-width: calc(100% - 2 * var(--s4))` permits it
+ * to span the whole stage width — #view-readout carries no width limit of its
+ * own and holds a sentence as long as `Direct neighbourhood of “…” — 4 of 5
+ * nodes, 3 of 4 relations.` — so a long enough readout would paint over the
+ * zoom group. Task 9 measures the rendered result headed at both acceptance
+ * viewports and reports either way; nothing here may assert the outcome
+ * beforehand. */
 .a39-view-controls {
   right: auto;
   left: var(--s4);

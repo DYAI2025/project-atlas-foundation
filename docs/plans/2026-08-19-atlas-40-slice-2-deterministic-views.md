@@ -4769,9 +4769,20 @@ which is compact under either reading and hidden under neither.
 Append (colours by token only — `shell.css` may contain no colour literal):
 
 ```css
-/* Slice 2: the view + saved-view controls. They sit opposite the zoom controls
- * so neither group covers the other, and they share .a39-stage-controls so the
- * stage keydown handler treats them as controls, not as graph. */
+/* Slice 2: the view + saved-view controls. They are anchored to the opposite
+ * edge from the zoom controls, and they share .a39-stage-controls so the stage
+ * keydown handler treats them as controls, not as graph.
+ *
+ * What these rules do NOT guarantee is that the two groups never cover each
+ * other, and an earlier version of this comment claimed they did. Both groups
+ * inherit `top: var(--s4)` and `z-index: 5` from .a39-stage-controls, this one
+ * is later in DOM order, and `max-width: calc(100% - 2 * var(--s4))` permits it
+ * to span the whole stage width — #view-readout carries no width limit of its
+ * own and holds a sentence as long as `Direct neighbourhood of “…” — 4 of 5
+ * nodes, 3 of 4 relations.` — so a long enough readout would paint over the
+ * zoom group. Task 9 measures the rendered result headed at both acceptance
+ * viewports and reports either way; nothing here may assert the outcome
+ * beforehand. */
 .a39-view-controls {
   right: auto;
   left: var(--s4);
@@ -4823,6 +4834,21 @@ body[data-saved-view="refused"] .a39-saved-view-state {
   flex: none;
 }
 ```
+
+**Corrected 2026-08-20 (second review of Task 6).** The first line of that comment read
+"They sit opposite the zoom controls **so neither group covers the other**", and the
+rules do not guarantee the second half. Measured in the shipped file: `.a39-stage-controls`
+is `position: absolute; top: var(--s4); right: var(--s4); z-index: 5` (`shell.css:444-452`);
+`.a39-view-controls` overrides `right`/`left` only, so it inherits the same `top` and the
+same `z-index` (`shell.css:762-767`), sits later in DOM order (`index.html`, the view group
+follows the zoom group), and is allowed `max-width: calc(100% - 2 * var(--s4))` — the whole
+stage width. `#view-readout` has no width limit of its own; only `.a39-saved-view-state`
+gets `max-width: 34ch` (`shell.css:775-777`). A readout as long as `Direct neighbourhood of
+“ATLAS Single Source of Truth” — 4 of 5 nodes, 3 of 4 relations.` therefore *may* reach
+under the zoom group and, at equal `z-index` and later in DOM order, would paint over it.
+No layout change is made on that reasoning — the overlap is a rendered fact and nothing
+here has rendered it. The comment now states what the rules do and hands the measurement
+to Task 9, which must report the result at both acceptance viewports either way.
 
 Delete the now-unused `.a39-swatch[data-depth="0"|"1"|"2"]` rules (`:486-496`) — the swatch colour is set from the token the module returns (D8), so a second CSS list can no longer disagree with it. Keep the base `.a39-swatch` rule.
 
@@ -4985,7 +5011,7 @@ function paintViewControls() {
   const scope = state.displayed.scope
   dom.viewOverview.setAttribute('aria-pressed', String(scope.mode === 'overview'))
   dom.viewNeighbourhood.setAttribute('aria-pressed', String(scope.mode === 'neighbourhood'))
-  dom.viewNeighbourhood.disabled = state.focusId === null
+  dom.viewNeighbourhood.disabled = state.focusId === null && state.view.anchorId === null
   dom.viewReadout.textContent = viewCaption(scope, anchorLabel())
   dom.saveViewBtn.disabled = state.store === null
   dom.restoreViewBtn.disabled = state.store === null || !state.savedViewPresent
@@ -5147,7 +5173,7 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
   ... // centring block unchanged
   render()
   if (quiet) return
-  if (!known) { announce('Focus cleared. Showing the whole graph.'); return }
+  if (!known) { announce(`Focus cleared. ${viewCaption(state.displayed.scope, anchorLabel())}`); return }
   const node = vm.nodes.find((n) => n.node_id === nodeId)
   announce(
     `${leftView ? 'Left the focused view. ' : ''}${node.label} focused. ` +
@@ -5155,6 +5181,34 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
   )
 }
 ```
+
+**Corrected 2026-08-20 (second review of Task 6).** The `!known` branch above said
+`'Focus cleared. Showing the whole graph.'` — slice 1's sentence, carried into a slice
+that made `state.view` independent of `state.focusId`. `setFocus(null)` clears the focus
+and, by the first branch of `leavesView`, deliberately does **not** widen the view, so
+the sentence became a statement about the stage that is sometimes false. It is reachable
+by two ordinary interactions, the `#clear-focus` button and Escape on the stage.
+**Measured on the accepted snapshot**, mirroring the shipped `setFocus`/`leavesView`/
+`applyView` after click-node → "Neighbourhood" → "Clear focus" with anchor
+`ATLAS:confluence:14778372:14778372`:
+
+```
+stateView:            {"mode":"neighbourhood","anchorId":"ATLAS:confluence:14778372:14778372"}
+focusId:              null
+shownNodes/total:     4 / 5
+#view-readout:        Direct neighbourhood of “ATLAS Single Source of Truth” — 4 of 5 nodes, 3 of 4 relations.
+live region:          Focus cleared. Showing the whole graph.
+```
+
+The visible readout and the announcement contradicted each other, and only the
+assistive-technology user got the wrong one — the overclaim class D1/D3/D7 exist to
+forbid. The fix is the caption itself rather than a second sentence that could drift
+from it: the branch now announces `` `Focus cleared. ${viewCaption(state.displayed.scope,
+anchorLabel())}` ``, which is the exact string `#view-readout` shows. Widening the view
+instead was rejected: it would re-couple view to focus, which this task separated on
+purpose, and it would not close the same state on the restore path, where
+`saved-view.mjs:161,190` admit `focus_id: null` under a neighbourhood view. Task 7 pins
+both the new sentence and the absence of the old one.
 
 **Corrected 2026-08-20 (review of Task 6).** The first draft put the "a focus must
 never land where it cannot be seen" guard in `setFocus` alone and let `onRestoreView`
@@ -5240,13 +5294,32 @@ function wirePointer() {
 ```js
   dom.viewOverview.addEventListener('click', () => setView({ ...DEFAULT_VIEW }))
   dom.viewNeighbourhood.addEventListener('click', () => {
-    if (state.focusId === null) return
-    setView({ mode: 'neighbourhood', anchorId: state.focusId })
+    const anchorId = state.focusId ?? state.view.anchorId
+    if (anchorId === null) return
+    setView({ mode: 'neighbourhood', anchorId })
   })
   dom.saveViewBtn.addEventListener('click', onSaveView)
   dom.restoreViewBtn.addEventListener('click', onRestoreView)
   dom.clearSavedViewBtn.addEventListener('click', onClearSavedView)
 ```
+
+**Corrected 2026-08-20 (second review of Task 6).** The first draft disabled the
+neighbourhood control on `state.focusId === null` alone and anchored its click on the
+focus alone. Together those put the control into `aria-pressed="true"` **and**
+`disabled` — measured on the accepted snapshot after click-node → "Neighbourhood" →
+"Clear focus", the same sequence that produced the false announcement above:
+`neighbourhoodAriaPressed: "true"`, `neighbourhoodDisabled: true`. The one control that
+reports the mode on the stage was the one control the user could not operate, and the
+state is not only reachable interactively: `saved-view.mjs:161,190` admit
+`focus_id: null`, so restoring a saved neighbourhood view reaches it too — which is why
+the repair is at the paint site rather than in `setFocus`. The rule is now "unavailable
+only when there is no node to anchor on at all", and the handler falls back to the
+anchor already drawn, so an enabled control always has something to do and always
+announces the result through `setView`. This makes the pair symmetric: `#view-overview`
+carries no `disabled` at all (`index.html`) and re-asserts its own mode when pressed.
+It is deliberately **not** a toggle that returns to Overview when clicked while pressed
+— that would cost the re-anchor path (focus a neighbour, press "Neighbourhood", get
+that node's neighbourhood in one click), and the Overview button is the exit.
 
 `showFailure` — disable the new controls too, so a failed stage offers no view it cannot draw:
 
@@ -5260,8 +5333,19 @@ function wirePointer() {
   dom.legendEdges?.replaceChildren()
   dom.legendDepth?.replaceChildren()
   if (dom.legendNote) dom.legendNote.textContent = 'No graph is drawn, so there is nothing to explain.'
+  if (dom.legendDepthNote) dom.legendDepthNote.textContent = ''
   if (dom.viewReadout) dom.viewReadout.textContent = '—'
 ```
+
+**Corrected 2026-08-20 (second review of Task 6).** The `dom.legendDepthNote` line was
+shipped without being in this block, which made it an undeclared deviation from an
+audited code block rather than a defect: it is the fourth sibling of the three lines
+this block already specifies, and without it a stage that failed while the hierarchy
+rows shared a swatch would keep asserting "Level 3 and deeper share one colour." about
+rows that are no longer on screen — the very thing "a failed stage offers no legend"
+forbids. `#legend-depth-note` was added to Step 1's markup by the third review of Task 5
+and this block was not extended with it at the same time. It is declared here instead of
+being removed.
 
 `boot()` — open the store and seed the saved-view state, after `paintStatus()` and before `wireEvents()`:
 
@@ -5370,6 +5454,13 @@ test('both view modes are reachable, labelled and reflected in the controls', ()
   assert.match(app, /dom\.viewOverview\.setAttribute\('aria-pressed'/)
   assert.match(app, /dom\.viewNeighbourhood\.setAttribute\('aria-pressed'/)
   assert.match(app, /viewCaption\(state\.displayed\.scope, anchorLabel\(\)\)/)
+  // The control that REPORTS the active mode must not be the one control the
+  // user cannot operate. Disabling it on `state.focusId === null` alone left it
+  // aria-pressed AND disabled after click-node -> Neighbourhood -> Clear focus,
+  // and a restored saved view carrying `focus_id: null` reaches the same state.
+  // See the second Task 6 correction of 2026-08-20.
+  assert.match(app, /dom\.viewNeighbourhood\.disabled = state\.focusId === null && state\.view\.anchorId === null/)
+  assert.match(app, /const anchorId = state\.focusId \?\? state\.view\.anchorId/)
 })
 
 test('a focus that the current view does not draw returns to the whole graph, and says so', () => {
@@ -5377,6 +5468,14 @@ test('a focus that the current view does not draw returns to the whole graph, an
   assert.ok(setFocus, 'setFocus is missing')
   assert.match(setFocus, /leavesView\(state\.view, nodeId\)/)
   assert.match(setFocus, /Left the focused view/)
+  // Clearing the focus does NOT widen the view, so the sentence must describe
+  // the view that is on the stage. Slice 1's 'Focus cleared. Showing the whole
+  // graph.' contradicted #view-readout as soon as a neighbourhood was shown,
+  // and only the assistive-technology user got the wrong one. The caption
+  // itself is announced, so the two cannot drift apart. See the second Task 6
+  // correction of 2026-08-20.
+  assert.match(setFocus, /announce\(`Focus cleared\. \$\{viewCaption\(state\.displayed\.scope, anchorLabel\(\)\)\}`\)/)
+  assert.equal(/Focus cleared\. Showing the whole graph\./.test(app), false)
   // The predicate itself, and the fact that it is the ONE place the invariant
   // lives: a second, re-spelled copy is how the two could drift apart.
   assert.match(app, /function leavesView\(view, nodeId\)/)
@@ -5498,6 +5597,27 @@ test('the new controls cannot swallow the graph arrow keys', () => {
   assert.match(app, /event\.target\.closest\?\.\('\.a39-stage-controls'\)/)
 })
 ```
+
+**Corrected 2026-08-20 (review of Task 6).** Five assertions in this block were changed
+by the Task-6 rounds rather than by Task 7 itself, and the first three carried only
+inline comments — a reader diffing Task 7 alone saw changed expectations with no dated
+marker. They are listed here so the diff and the reason stay attached:
+
+1. `assert.match(setFocus, /isInView\(state\.displayed, nodeId\)/)` →
+   `/leavesView\(state\.view, nodeId\)/`, plus the two new `leavesView` assertions and
+   the whole new test *a restored saved view can never focus a node its own view does not
+   draw* — the predicate was named and given a second caller (first Task 6 correction of
+   2026-08-20, with the `E_STAGE_SCENE_REFUSED` measurement).
+2. `restore.indexOf('state.view = bound.view')` → `restore.indexOf('state.view =')` —
+   the applied value became a conditional in the same correction, and matching the
+   assignment *target* keeps the "nothing is assigned before every check passes" proof
+   intact instead of silently matching nothing.
+3. `assert.match(small, /\.a39-legend \{[\s\S]*?position: static/)` → the negative
+   `position: static` assertion plus `bottom: var(--s4)` and `flex-direction: row` — the
+   responsive rule stopped being in-flow (Task 6 Step 2 correction of 2026-08-20).
+4. The two `announce(\`Focus cleared. …\`)` assertions above — second Task 6 correction
+   of 2026-08-20.
+5. The two `viewNeighbourhood` availability assertions above — same round.
 
 `test/atlas40-shell.test.mjs` needs `shellCss` (already read at the top) and `join`/`VIEWER` (already imported).
 

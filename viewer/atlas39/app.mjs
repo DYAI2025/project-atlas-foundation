@@ -616,7 +616,15 @@ function paintViewControls() {
   const scope = state.displayed.scope
   dom.viewOverview.setAttribute('aria-pressed', String(scope.mode === 'overview'))
   dom.viewNeighbourhood.setAttribute('aria-pressed', String(scope.mode === 'neighbourhood'))
-  dom.viewNeighbourhood.disabled = state.focusId === null
+  // Unavailable only when there is no node to anchor on at all. Disabling it on
+  // `state.focusId === null` alone left the button `aria-pressed="true"` AND
+  // `disabled` — measured after click-node → "Neighbourhood" → "Clear focus" —
+  // i.e. the control that reports the mode on the stage was the one control the
+  // user could not operate. The Overview button stays clickable while pressed
+  // and re-asserts its mode; this one now behaves the same way, anchoring on the
+  // focus or, when the focus was cleared under a neighbourhood, on the anchor
+  // already drawn.
+  dom.viewNeighbourhood.disabled = state.focusId === null && state.view.anchorId === null
   dom.viewReadout.textContent = viewCaption(scope, anchorLabel())
   dom.saveViewBtn.disabled = state.store === null
   dom.restoreViewBtn.disabled = state.store === null || !state.savedViewPresent
@@ -786,7 +794,17 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
   render()
   if (quiet) return
   if (!known) {
-    announce('Focus cleared. Showing the whole graph.')
+    // Slice 1 could say "Showing the whole graph" here because one view existed.
+    // Slice 2 made `state.view` independent of `state.focusId`, and clearing the
+    // focus deliberately does NOT widen the view — so that sentence became a
+    // sometimes-lie: measured after click-node → "Neighbourhood" → "Clear
+    // focus" on the accepted snapshot, `state.view` stays
+    // `{mode:'neighbourhood', anchorId:'ATLAS:confluence:14778372:14778372'}`,
+    // 4 of 5 nodes are drawn, and #view-readout says so while the live region
+    // claimed the whole graph. Only the assistive-technology user got the wrong
+    // one. The readout's own sentence is announced instead, so the two cannot
+    // disagree.
+    announce(`Focus cleared. ${viewCaption(state.displayed.scope, anchorLabel())}`)
     return
   }
   const node = vm.nodes.find((n) => n.node_id === nodeId)
@@ -994,8 +1012,15 @@ function wireEvents() {
 
   dom.viewOverview.addEventListener('click', () => setView({ ...DEFAULT_VIEW }))
   dom.viewNeighbourhood.addEventListener('click', () => {
-    if (state.focusId === null) return
-    setView({ mode: 'neighbourhood', anchorId: state.focusId })
+    // The focus is the anchor. When the focus was cleared while a neighbourhood
+    // is on the stage — or a restored saved view carries `focus_id: null`
+    // (saved-view.mjs admits it) — the anchor already drawn is re-asserted,
+    // which is exactly what the Overview button does in its own mode. So an
+    // enabled control always has something to do and always announces the
+    // result; it is never an enabled button that silently does nothing.
+    const anchorId = state.focusId ?? state.view.anchorId
+    if (anchorId === null) return
+    setView({ mode: 'neighbourhood', anchorId })
   })
   dom.saveViewBtn.addEventListener('click', onSaveView)
   dom.restoreViewBtn.addEventListener('click', onRestoreView)
