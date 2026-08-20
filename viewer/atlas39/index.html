@@ -57,22 +57,31 @@
 <main class="a39-main" id="stage" tabindex="-1" aria-label="Graph stage">
   <div class="a39-stage-host" id="stage-host"></div>
 
-  <div class="a39-stage-controls" role="group" aria-label="Zoom and focus controls">
-    <button type="button" class="a39-button" id="zoom-out" aria-label="Zoom out">−</button>
-    <span class="a39-zoom" id="zoom-level">100%</span>
-    <button type="button" class="a39-button" id="zoom-in" aria-label="Zoom in">+</button>
-    <button type="button" class="a39-button" id="reset-view" disabled>Reset view</button>
-    <button type="button" class="a39-button" id="clear-focus" disabled>Clear focus</button>
-  </div>
+  <!-- The two stage-control groups are children of ONE bar so a single flex
+       formatting context lays them out. As two independently anchored absolute
+       boxes in the same band they covered each other and every zoom control
+       became unclickable; see the "one bar, one flex line" comment in
+       shell.css for the measurement and the reasoning. The view group is first
+       because it is drawn first (left), so reading order, DOM order and tab
+       order are the same order. -->
+  <div class="a39-stage-controlbar">
+    <div class="a39-stage-controls a39-view-controls" role="group" aria-label="Graph views">
+      <button type="button" class="a39-button" id="view-overview" aria-pressed="true">Overview</button>
+      <button type="button" class="a39-button" id="view-neighbourhood" aria-pressed="false" disabled>Neighbourhood</button>
+      <span class="a39-view-readout" id="view-readout">—</span>
+      <button type="button" class="a39-button" id="save-view">Save view</button>
+      <button type="button" class="a39-button" id="restore-view" disabled>Restore view</button>
+      <button type="button" class="a39-button" id="clear-saved-view" disabled>Clear saved view</button>
+      <span class="a39-saved-view-state" id="saved-view-state"></span>
+    </div>
 
-  <div class="a39-stage-controls a39-view-controls" role="group" aria-label="Graph views">
-    <button type="button" class="a39-button" id="view-overview" aria-pressed="true">Overview</button>
-    <button type="button" class="a39-button" id="view-neighbourhood" aria-pressed="false" disabled>Neighbourhood</button>
-    <span class="a39-view-readout" id="view-readout">—</span>
-    <button type="button" class="a39-button" id="save-view">Save view</button>
-    <button type="button" class="a39-button" id="restore-view" disabled>Restore view</button>
-    <button type="button" class="a39-button" id="clear-saved-view" disabled>Clear saved view</button>
-    <span class="a39-saved-view-state" id="saved-view-state"></span>
+    <div class="a39-stage-controls a39-zoom-controls" role="group" aria-label="Zoom and focus controls">
+      <button type="button" class="a39-button" id="zoom-out" aria-label="Zoom out">−</button>
+      <span class="a39-zoom" id="zoom-level">100%</span>
+      <button type="button" class="a39-button" id="zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" class="a39-button" id="reset-view" disabled>Reset view</button>
+      <button type="button" class="a39-button" id="clear-focus" disabled>Clear focus</button>
+    </div>
   </div>
 
   <section class="a39-legend" aria-label="Graph legend">

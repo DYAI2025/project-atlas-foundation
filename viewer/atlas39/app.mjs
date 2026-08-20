@@ -1054,8 +1054,20 @@ function wirePointer() {
   const gesture = createDragGesture()
 
   // Capture phase, so this runs before the node button's own click handler.
+  //
+  // The DOM event is forwarded as-is here too: `consumeClick` reads `detail` to
+  // tell a click a pointer produced (click count >= 1) from one nothing
+  // produced (0, because HTML's "fire a synthetic pointer event" — the
+  // algorithm behind `element.click()` and behind a keyboard activation — never
+  // initialises it). Only the former can be the tail of a pan, so only the
+  // former may spend the suppression.
+  //
+  // On this stage the reachable non-pointer route is a click dispatched by
+  // script or by assistive technology, not the keyboard: onStageKeydown
+  // preventDefaults Enter and Space over a node, so the button's activation
+  // behaviour — and with it any click — never runs. Measured headed 2026-08-20.
   dom.stageHost.addEventListener('click', (event) => {
-    if (!gesture.consumeClick()) return
+    if (!gesture.consumeClick(event)) return
     event.stopPropagation()
     event.preventDefault()
   }, true)

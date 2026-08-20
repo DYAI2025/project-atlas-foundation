@@ -166,7 +166,13 @@ test('a pan may start on a node, and a drag does not also activate it', () => {
   assert.ok(wirePointer, 'wirePointer is missing')
   assert.match(app, /import \{ createDragGesture \} from '\.\/core\/gesture\.mjs'/)
   assert.match(wirePointer, /const gesture = createDragGesture\(\)/)
-  assert.match(wirePointer, /gesture\.consumeClick\(\)/)
+  // The click EVENT is forwarded, not just the call made. `consumeClick` reads
+  // `detail` to tell the click a pointer produced from one produced by a
+  // keyboard activation or by `element.click()`, so a shell that called
+  // `consumeClick()` with nothing would hand the module a record it cannot read
+  // and every pan's own click would be delivered instead of swallowed — the
+  // slice-1 behaviour this whole state machine exists to keep.
+  assert.match(wirePointer, /gesture\.consumeClick\(event\)/)
   assert.match(wirePointer, /addEventListener\('click',[\s\S]*?\}, true\)/, 'the click guard must run in the capture phase')
   assert.match(wirePointer, /gesture\.end\(event\)/)
   assert.equal(
@@ -629,8 +635,10 @@ test('the legend survives the responsive countercheck instead of disappearing', 
   // The two negatives read the WHOLE stylesheet, not the 960px block. Scoped to
   // that block they were defeated by one media query over: measured with
   // `.a39-legend { display: none; }` appended inside `@media (max-width: 1200px)`
-  // at shell.css:680-682 and nothing else changed, the base
-  // `.a39-legend { display: flex }` at shell.css:454 loses on source order at
+  // (which opened at shell.css:680 when this was measured and opens at :703
+  // after the DEFECT A repair of 2026-08-20 added the control bar above it) and
+  // nothing else changed, the base
+  // `.a39-legend { display: flex }` — shell.css:454 then, :504 now — loses on source order at
   // equal (0,1,0) specificity and the 960px block declares no `display` at all,
   // so the legend is hidden at BOTH breakpoints — the exact AC7 regression these
   // lines exist to prevent — and the two shell suites scored

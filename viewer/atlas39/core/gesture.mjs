@@ -13,7 +13,7 @@
 // wrong, nothing errors, the application simply ignores the user once. So the
 // state machine lives here, where the defect is a test rather than a comment.
 //
-// Three invariants keep a gesture this module never sees the end of from
+// Four invariants keep a gesture this module never sees the end of from
 // outliving the press that started it, because every one of them shipped as a
 // measured defect in an earlier round of this file:
 //
@@ -23,15 +23,43 @@
 //   3. A pan whose owner answers nothing while two presses arrive is presumed
 //      lost, so it cannot disable the stage for the life of the page
 //      (`start()`).
+//   4. Only the click a gesture PRODUCED may spend its suppression. Keying the
+//      disarm on the cause — `pointercancel` — left the flag armed after a pan
+//      ended by `pointerup` that the engine answered with no click at all, and
+//      the headed run of 2026-08-20 measured that swallowing the user's next
+//      activation (`consumeClick()`).
 //
 // This module knows nothing about the DOM. It consumes plain records
-// {type, pointerId, button, buttons, clientX, clientY} and returns what the
-// shell should do about them.
+// {type, pointerId, button, buttons, clientX, clientY} for pointers and
+// {type, detail} for clicks, and returns what the shell should do about them.
 //
 // Pure: no IO, no clock, no randomness, no DOM.
 
 /** Screen pixels of movement that turn a press into a pan instead of a click. */
 export const DRAG_THRESHOLD = 4
+
+/**
+ * Was this click produced by a pointer at all?
+ *
+ * UI Events defines `detail` on a click as the click count, so every click a
+ * pointer produces carries at least 1. HTML's "fire a synthetic pointer event"
+ * — the algorithm behind `element.click()` and behind the activation behaviour
+ * that a keyboard Enter or Space runs on a button — initialises `type`,
+ * `bubbles`, `cancelable`, the modifier keys and `view`, and never initialises
+ * `detail`, which therefore keeps the 0 default of UIEventInit. A
+ * script-constructed `new MouseEvent('click', {bubbles: true})` is the same.
+ *
+ * This is a fact about the event, not about a browser: nothing here asks what a
+ * pointer type is or what any engine does with one.
+ *
+ * An unreadable `detail` counts as "no pointer produced this", which is the
+ * direction that DELIVERS the click. A record whose provenance this module
+ * cannot read is not evidence that the pan's own click has arrived, and the
+ * defect this module exists to prevent is a swallowed one.
+ *
+ * @param {{detail?: number}} [event]
+ */
+const producedByPointer = (event) => Number.isFinite(event?.detail) && event.detail >= 1
 
 export const E_GESTURE_THRESHOLD = 'E_GESTURE_THRESHOLD'
 
@@ -223,12 +251,30 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
      * suppression. That is what stops a pan this module never saw the end of
      * from eating an unrelated click: the fresh finger that taps a node while a
      * lost pan is still believed to be in flight is delivered, not ignored.
+     *
+     * THE SECOND REPAIR (2026-08-20). Only the click this gesture PRODUCED may
+     * spend its suppression. `end()` disarms on `pointercancel` because a
+     * cancelled pointer delivers no click — but that keys the disarm on the
+     * CAUSE, and the invariant is "a suppression that no click will ever spend
+     * must not outlive the gesture". A pan ended by `pointerup` that yields no
+     * synthesised click leaves the identical stale flag, and the headed
+     * acceptance run of 2026-08-20 measured exactly that: after a touch pan
+     * ended by `pointerup`, Chromium 151.0.7922.34 synthesised no click, the
+     * flag stayed armed, and the user's next activation was swallowed.
+     *
+     * So a click no pointer produced is delivered AND retires the suppression:
+     * had the engine synthesised the pan's click, it would have arrived before
+     * this one. Nothing here branches on pointer type and nothing encodes what
+     * an engine does — in an engine that does synthesise that click, it arrives
+     * first, carries `detail >= 1`, and is swallowed as it should be.
+     *
+     * @param {{detail?: number}} [event] the click event itself.
      */
-    consumeClick() {
+    consumeClick(event) {
       if (!suppressClick) return false
       if (active !== null) return false
       suppressClick = false
-      return true
+      return producedByPointer(event)
     },
 
     /** True while a pan is in progress. A press that has not moved is not one. */

@@ -148,6 +148,58 @@ The `pointerdown` handler re-arms `suppressClick = false`, which **masks** the s
 
 A further route belongs to Task 9's measurement rather than to this repair: the module keys the disarm on the *cause* (`event.type === 'pointercancel'`), not on the invariant "a suppression that no click will ever spend must not outlive the gesture". A pan ended by `pointerup` that yields no synthesised click would leave the identical stale flag. Whether a real browser synthesises a click after a *touch* pan on a surface with `touch-action: none` (`shell.css:329`) is **unmeasured** — Task 9 measures it alongside the pointercancel route and reports either way. No code change is made for it in this slice on an assumption.
 
+**Corrected 2026-08-20 (headed acceptance).** It is measured, and it was a defect. Verbatim from the run:
+
+```
+FAIL  S2-25b a click suppression must not outlive the gesture that armed it (touch pan ended by pointerup)
+  MEASURED: Chromium 151.0.7922.34 synthesised a click after the touch pan = false.
+  A later click carrying no pointerdown -> aria-pressed=false (swallowed=true).
+  D9 left this case explicitly unmeasured; it is now measured and the flag DOES outlive the
+  gesture in the shipped build.
+```
+
+So the paragraph above is no longer a hypothetical, and "no code change on an assumption" is
+satisfied by making the change on a measurement instead. **The repair is engine-independent
+and is keyed on the invariant, not on the cause:** only the click a gesture PRODUCED may
+spend its suppression. `consumeClick(event)` now reads `detail` — UI Events defines it on a
+click as the click count, so a pointer-produced click carries at least 1, while HTML's
+"fire a synthetic pointer event" (the algorithm behind `element.click()` and behind a
+keyboard activation) never initialises it and it keeps the 0 default of `UIEventInit`. A
+click that no pointer produced is delivered **and retires the suppression**, because the
+pan's own click would have arrived before it had the engine ever synthesised one. Nothing
+branches on `pointerType`, and nothing encodes what any engine does: in an engine that *does*
+synthesise the click after a touch pan, that click arrives first, carries `detail >= 1`, and
+is swallowed exactly as it should be.
+
+The `detail` discriminator was verified against the shipped wiring rather than taken on
+trust — every record captured in the capture phase on `#stage-host`, which is where
+`wirePointer()` binds the guard, so these are the records `consumeClick` receives:
+
+| route | measured |
+| --- | --- |
+| the click a mouse pan synthesises at pointerup | `detail 1`, `isTrusted true` |
+| a plain mouse click on a node | `detail 1`, `isTrusted true` |
+| `element.click()` | `detail 0`, `isTrusted false` |
+| `new MouseEvent('click', {bubbles: true})` | `detail 0`, `isTrusted false` |
+| a keyboard Enter on a focused node button | **no click event at all** |
+| a touch pan ended by pointerup | **no click event at all** |
+
+Two of those rows correct this decision's own account of the exposure. First, the keyboard
+route D9 named as "the concrete case" is **not a click route in this build**: `onStageKeydown`
+calls `preventDefault()` on Enter and Space over a node, which cancels the button's activation
+behaviour, so no click is synthesised there. The reachable non-pointer route is a click
+dispatched by script or by assistive technology. Second, `isTrusted` is deliberately *not*
+the discriminator: a trusted click synthesised after a touch pan must still be swallowed.
+
+The pure regression test is `REGRESSION: a suppression is spent only by a click a pointer
+produced, never by one it did not` in `test/atlas40-gesture.test.mjs`. Mutation-proved by
+reverting `return producedByPointer(event)` to `return true`: `node --test
+test/atlas40-gesture.test.mjs` scored exit 1, `tests 24 / pass 23 / fail 1`, with that test
+the only red one; restored, exit 0, `tests 24 / pass 24 / fail 0`. Both behaviours the repair
+must not break stayed green throughout — `a threshold-crossing drag suppresses exactly the
+click it produced` and the `pointercancel` REGRESSION test. Re-measured headed after the
+repair, `S2-25b` passes with `aria-pressed=true (swallowed=false)`.
+
 Task 9 must therefore report honestly: the *state* defect is proven by a pure test; whether a **user-visible** swallow reproduces in a real browser is measured, not assumed, and reported either way.
 
 The repair is one branch in `end()`. Getting a real regression test for it requires the state machine to leave `app.mjs` — a `node --test` regex over `wirePointer` can only prove the words are still there, which is exactly what let this defect ship. `core/gesture.mjs` consumes plain `{type, pointerId, button, clientX, clientY}` records and returns what the shell should do.
@@ -401,6 +453,35 @@ const down = (over = {}) => ({ type: 'pointerdown', pointerId: 1, button: 0, cli
 const move = (over = {}) => ({ type: 'pointermove', pointerId: 1, buttons: 1, clientX: 100, clientY: 100, ...over })
 const up = (over = {}) => ({ type: 'pointerup', pointerId: 1, ...over })
 const cancel = (over = {}) => ({ type: 'pointercancel', pointerId: 1, ...over })
+// `detail` is part of the click record the module reads, and the two fixtures
+// below are the two values it distinguishes. UI Events defines `detail` on a
+// click as the click count, so a click a pointer produced carries at least 1.
+// HTML's "fire a synthetic pointer event" — the algorithm behind
+// `element.click()` and behind the activation behaviour a keyboard Enter or
+// Space runs — initialises `type`, `bubbles`, `cancelable`, the modifier keys
+// and `view`, and never initialises `detail`, so it keeps the 0 default of
+// UIEventInit. `new MouseEvent('click', {bubbles: true})` is the same story.
+//
+// Measured against the shipped wiring, headed, 2026-08-20, Chromium
+// 151.0.7922.34, every record captured in the capture phase on #stage-host —
+// which is where wirePointer() binds the guard, so these are the records
+// consumeClick actually receives:
+//
+//   the click a mouse pan synthesises at pointerup   detail 1, isTrusted true
+//   a plain mouse click on a node                    detail 1, isTrusted true
+//   element.click()                                  detail 0, isTrusted false
+//   new MouseEvent('click', {bubbles: true})         detail 0, isTrusted false
+//   a keyboard Enter on a focused node button        NO click event at all
+//   a touch pan ended by pointerup                   NO click event at all
+//
+// The keyboard row is the one D9 predicted and it is not a click route in this
+// build: onStageKeydown calls preventDefault() on Enter and Space over a node
+// (app.mjs, the Enter/' ' case), which cancels the button's activation
+// behaviour. `isTrusted` is deliberately NOT the discriminator — an engine that
+// synthesises a trusted click after a touch pan must still have it swallowed,
+// and `detail` is what separates "a pointer caused this" from "nothing did".
+const pointerClick = (over = {}) => ({ type: 'click', detail: 1, ...over })
+const uncausedClick = (over = {}) => ({ type: 'click', detail: 0, ...over })
 
 /** Drags far enough to cross the threshold. Returns the gesture. */
 function panned() {
@@ -430,7 +511,7 @@ test('a movement below the threshold is a click, not a pan', () => {
   assert.equal(g.isPanning(), false, 'a press that moved below the threshold is not a pan')
   assert.equal(g.isClickSuppressed(), false, 'a click gesture must never suppress its own click')
   g.end(up())
-  assert.equal(g.consumeClick(), false)
+  assert.equal(g.consumeClick(pointerClick()), false)
 })
 
 test('the threshold is 4 screen pixels, and exactly that far already pans', () => {
@@ -507,9 +588,9 @@ test('a threshold-crossing drag suppresses exactly the click it produced', () =>
   // already found and repaired for its sibling `isPanning()`.
   assert.equal(g.isPanning(), false, 'the pan is over once its pointer lifted')
   assert.equal(g.isClickSuppressed(), true, 'the suppression the pan armed did not survive its own pointerup')
-  assert.equal(g.consumeClick(), true, 'the click that ends a pan must be swallowed')
+  assert.equal(g.consumeClick(pointerClick()), true, 'the click that ends a pan must be swallowed')
   // Spent, not sticky: a second click is a real click again.
-  assert.equal(g.consumeClick(), false, 'the suppression leaked into a second click')
+  assert.equal(g.consumeClick(pointerClick()), false, 'the suppression leaked into a second click')
 })
 
 test('REGRESSION: pointercancel after a threshold-crossing drag does not swallow the next click', () => {
@@ -520,7 +601,56 @@ test('REGRESSION: pointercancel after a threshold-crossing drag does not swallow
   assert.equal(done.wasPanning, true)
   // A cancelled pointer delivers no click, so nothing is left to swallow.
   assert.equal(g.isClickSuppressed(), false, 'pointercancel left the click suppression armed')
-  assert.equal(g.consumeClick(), false, 'the next unrelated click was swallowed')
+  assert.equal(g.consumeClick(pointerClick()), false, 'the next unrelated click was swallowed')
+})
+
+test('REGRESSION: a suppression is spent only by a click a pointer produced, never by one it did not', () => {
+  // The second route to the identical user-visible defect, and the one D9 left
+  // explicitly unmeasured until the headed acceptance run of 2026-08-20 —
+  // reported there verbatim as:
+  //
+  //   FAIL  S2-25b a click suppression must not outlive the gesture that armed
+  //         it (touch pan ended by pointerup)
+  //     MEASURED: Chromium 151.0.7922.34 synthesised a click after the touch
+  //     pan = false. A later click carrying no pointerdown -> aria-pressed=false
+  //     (swallowed=true).
+  //
+  // A touch pan ended by `pointerup` produced no click in that engine, so a
+  // disarm keyed on the CAUSE (`event.type === 'pointercancel'`) never fired and
+  // the armed flag was spent on the next unrelated click instead — the same
+  // swallowed click as the pointercancel route, one gesture sideways.
+  //
+  // The repair is keyed on the INVARIANT, not on an engine: only the click this
+  // gesture produced may spend its suppression. A click carrying `detail === 0`
+  // was produced by no pointer at all — see the fixture comments above — so it
+  // is delivered, and it retires the suppression, because the pan's own click
+  // would have arrived before it if the engine had ever synthesised one. In an
+  // engine that DOES synthesise the click after a touch pan, that click arrives
+  // first, carries `detail >= 1`, and is swallowed exactly as it should be:
+  // nothing here branches on pointer type, and nothing here encodes what any
+  // particular browser does.
+  const g = panned()
+  g.end(up())
+  assert.equal(g.isClickSuppressed(), true, 'precondition: the pan armed the suppression')
+  assert.equal(
+    g.consumeClick(uncausedClick()),
+    false,
+    'a click no pointer produced was swallowed by a pan that produced no click either'
+  )
+  assert.equal(
+    g.isClickSuppressed(),
+    false,
+    'the suppression outlived the gesture and is still waiting for a click that will never come'
+  )
+  // And the suppression is really gone, not merely skipped once: a pointer
+  // click arriving afterwards is a real click again.
+  assert.equal(g.consumeClick(pointerClick()), false, 'the retired suppression swallowed a later real click')
+
+  // The mirror case, so this test cannot be satisfied by never swallowing
+  // anything: the same pan, and the click the pan DID produce.
+  const h = panned()
+  h.end(up())
+  assert.equal(h.consumeClick(pointerClick()), true, "the pan's own synthesised click was no longer swallowed")
 })
 
 test('a cancelled drag below the threshold also leaves nothing armed', () => {
@@ -528,7 +658,7 @@ test('a cancelled drag below the threshold also leaves nothing armed', () => {
   g.start(down())
   g.move(move({ clientX: 101 }))
   g.end(cancel())
-  assert.equal(g.consumeClick(), false)
+  assert.equal(g.consumeClick(pointerClick()), false)
 })
 
 test('the state machine ignores a second, unrelated pointer', () => {
@@ -558,7 +688,7 @@ test('a pointercancel from a pointer this gesture does not own leaves the suppre
   const done = g.end(up())
   assert.equal(done.ended, true)
   assert.equal(done.wasPanning, true)
-  assert.equal(g.consumeClick(), true, "the pan's own click was let through onto a node")
+  assert.equal(g.consumeClick(pointerClick()), true, "the pan's own click was let through onto a node")
 })
 
 test('an accidental second press by another pointer is refused while the panning pointer is alive', () => {
@@ -617,7 +747,7 @@ test('a lost panning TOUCH pointer gives the stage back on the second unanswered
     'the first fresh finger stole a pan that may still be live'
   )
   // That refused tap must not be eaten by the lost pan's suppression either.
-  assert.equal(g.consumeClick(), false, "the fresh finger's tap was swallowed by a pan it has nothing to do with")
+  assert.equal(g.consumeClick(pointerClick()), false, "the fresh finger's tap was swallowed by a pan it has nothing to do with")
   assert.equal(g.start(down({ pointerId: 13, clientX: 500, clientY: 500 })), true, 'the stage stayed bricked against every later finger')
   assert.equal(g.isPanning(), false, 're-anchoring left the stale pan running')
   assert.equal(g.isClickSuppressed(), false, 're-anchoring left the stale suppression armed')
@@ -638,11 +768,11 @@ test('a click that arrives while a gesture is still running is not that gesture 
   // exists to prevent, one gesture removed.
   const g = panned()
   assert.equal(g.isClickSuppressed(), true, 'precondition: the pan armed the suppression')
-  assert.equal(g.consumeClick(), false, "a click during a live pan was swallowed as that pan's tail")
+  assert.equal(g.consumeClick(pointerClick()), false, "a click during a live pan was swallowed as that pan's tail")
   assert.equal(g.isClickSuppressed(), true, 'a click that is not the pan tail spent the suppression anyway')
   const done = g.end(up())
   assert.equal(done.ended, true)
-  assert.equal(g.consumeClick(), true, "the pan's own click was no longer swallowed")
+  assert.equal(g.consumeClick(pointerClick()), true, "the pan's own click was no longer swallowed")
 })
 
 test('a press that never panned is replaceable by any other pointer', () => {
@@ -723,7 +853,7 @@ test('a press whose end this module never sees is dropped by the first move with
   // The stale press is gone, not merely skipped: even a later move that does
   // report a held button cannot resurrect it without a fresh pointerdown.
   assert.equal(g.move(move({ clientX: 900, clientY: 900 })).panning, false, 'a dropped press still drove the stage')
-  assert.equal(g.consumeClick(), false)
+  assert.equal(g.consumeClick(pointerClick()), false)
 
   // Same story one step further along: a pan that crossed the threshold and
   // whose pointerup the module never saw. Here the suppression is already
@@ -735,7 +865,7 @@ test('a press whose end this module never sees is dropped by the first move with
   assert.equal(hover2.panning, false, 'a bare hover kept panning the stage')
   assert.equal(p.isPanning(), false, 'a pan with no button held is still a pan')
   assert.equal(p.isClickSuppressed(), false, 'a lost pan left a suppression with no click left to spend it on')
-  assert.equal(p.consumeClick(), false, "the user's next real click was swallowed")
+  assert.equal(p.consumeClick(pointerClick()), false, "the user's next real click was swallowed")
 })
 
 test('a step whose button state or coordinates cannot be read is refused, not treated as a pan', () => {
@@ -1210,6 +1340,22 @@ test('the purity guard cannot be switched off by a nested template literal or a 
 })
 ```
 
+**Corrected 2026-08-20 (headed acceptance).** The block above is the file as it now stands.
+Three changes, all of them the test half of the D9 second repair:
+
+1. Two fixtures are added beside `down`/`move`/`up`/`cancel` — `pointerClick()` with
+   `detail: 1` and `uncausedClick()` with `detail: 0` — carrying the measured table of what
+   each real route produces in the shipped wiring.
+2. One test is added, `REGRESSION: a suppression is spent only by a click a pointer
+   produced, never by one it did not`. Mutation-proved by reverting
+   `return producedByPointer(event)` to `return true`: exit 1, `tests 24 / pass 23 / fail 1`,
+   with that test the only red one; restored, exit 0, `tests 24 / pass 24 / fail 0`.
+3. Every existing `consumeClick()` call site now passes `pointerClick()`. That is not
+   cosmetic: with no argument the module would read no `detail`, and a suite whose fixtures
+   all lack it could not tell the repair from a build that swallows nothing at all. The two
+   behaviours the repair must not break — `a threshold-crossing drag suppresses exactly the
+   click it produced` and the `pointercancel` REGRESSION test — are the two that pin it.
+
 This block is the file verbatim; the `readFileSync` import the purity test needs is inside it.
 
 **Corrected 2026-08-20 (fifth review of Task 3).** The block above is the repaired suite, `shasum -a 256 test/atlas40-gesture.test.mjs` = `81ccad6d9b56f9ed8ee03bb5492bfa5bb332db4efb6be6ef8f58d8a81baa983f`. This is the first round that changes the test COUNT: **23**, not 22, because the repair adds a second guard-on-the-guard test instead of more assertions inside the existing one. `node --test test/atlas40-gesture.test.mjs` exits **0** at `tests 23 / pass 23 / fail 0`, and `npm test` at `tests 483 / pass 483 / fail 0`.
@@ -1266,7 +1412,7 @@ Create `viewer/atlas39/core/gesture.mjs`:
 // wrong, nothing errors, the application simply ignores the user once. So the
 // state machine lives here, where the defect is a test rather than a comment.
 //
-// Three invariants keep a gesture this module never sees the end of from
+// Four invariants keep a gesture this module never sees the end of from
 // outliving the press that started it, because every one of them shipped as a
 // measured defect in an earlier round of this file:
 //
@@ -1276,15 +1422,43 @@ Create `viewer/atlas39/core/gesture.mjs`:
 //   3. A pan whose owner answers nothing while two presses arrive is presumed
 //      lost, so it cannot disable the stage for the life of the page
 //      (`start()`).
+//   4. Only the click a gesture PRODUCED may spend its suppression. Keying the
+//      disarm on the cause — `pointercancel` — left the flag armed after a pan
+//      ended by `pointerup` that the engine answered with no click at all, and
+//      the headed run of 2026-08-20 measured that swallowing the user's next
+//      activation (`consumeClick()`).
 //
 // This module knows nothing about the DOM. It consumes plain records
-// {type, pointerId, button, buttons, clientX, clientY} and returns what the
-// shell should do about them.
+// {type, pointerId, button, buttons, clientX, clientY} for pointers and
+// {type, detail} for clicks, and returns what the shell should do about them.
 //
 // Pure: no IO, no clock, no randomness, no DOM.
 
 /** Screen pixels of movement that turn a press into a pan instead of a click. */
 export const DRAG_THRESHOLD = 4
+
+/**
+ * Was this click produced by a pointer at all?
+ *
+ * UI Events defines `detail` on a click as the click count, so every click a
+ * pointer produces carries at least 1. HTML's "fire a synthetic pointer event"
+ * — the algorithm behind `element.click()` and behind the activation behaviour
+ * that a keyboard Enter or Space runs on a button — initialises `type`,
+ * `bubbles`, `cancelable`, the modifier keys and `view`, and never initialises
+ * `detail`, which therefore keeps the 0 default of UIEventInit. A
+ * script-constructed `new MouseEvent('click', {bubbles: true})` is the same.
+ *
+ * This is a fact about the event, not about a browser: nothing here asks what a
+ * pointer type is or what any engine does with one.
+ *
+ * An unreadable `detail` counts as "no pointer produced this", which is the
+ * direction that DELIVERS the click. A record whose provenance this module
+ * cannot read is not evidence that the pan's own click has arrived, and the
+ * defect this module exists to prevent is a swallowed one.
+ *
+ * @param {{detail?: number}} [event]
+ */
+const producedByPointer = (event) => Number.isFinite(event?.detail) && event.detail >= 1
 
 export const E_GESTURE_THRESHOLD = 'E_GESTURE_THRESHOLD'
 
@@ -1476,12 +1650,30 @@ export function createDragGesture({ threshold = DRAG_THRESHOLD } = {}) {
      * suppression. That is what stops a pan this module never saw the end of
      * from eating an unrelated click: the fresh finger that taps a node while a
      * lost pan is still believed to be in flight is delivered, not ignored.
+     *
+     * THE SECOND REPAIR (2026-08-20). Only the click this gesture PRODUCED may
+     * spend its suppression. `end()` disarms on `pointercancel` because a
+     * cancelled pointer delivers no click — but that keys the disarm on the
+     * CAUSE, and the invariant is "a suppression that no click will ever spend
+     * must not outlive the gesture". A pan ended by `pointerup` that yields no
+     * synthesised click leaves the identical stale flag, and the headed
+     * acceptance run of 2026-08-20 measured exactly that: after a touch pan
+     * ended by `pointerup`, Chromium 151.0.7922.34 synthesised no click, the
+     * flag stayed armed, and the user's next activation was swallowed.
+     *
+     * So a click no pointer produced is delivered AND retires the suppression:
+     * had the engine synthesised the pan's click, it would have arrived before
+     * this one. Nothing here branches on pointer type and nothing encodes what
+     * an engine does — in an engine that does synthesise that click, it arrives
+     * first, carries `detail >= 1`, and is swallowed as it should be.
+     *
+     * @param {{detail?: number}} [event] the click event itself.
      */
-    consumeClick() {
+    consumeClick(event) {
       if (!suppressClick) return false
       if (active !== null) return false
       suppressClick = false
-      return true
+      return producedByPointer(event)
     },
 
     /** True while a pan is in progress. A press that has not moved is not one. */
@@ -4773,6 +4965,87 @@ Notes that matter:
   `test/atlas40-shell.test.mjs:138` assertion that pins it, because this task must not touch
   that file.
 
+**Corrected 2026-08-20 (headed acceptance).** The two control groups in the block above are
+**siblings**, and that is the defect. Each was anchored on its own — the zoom group with
+slice 1's `position: absolute; top: var(--s4); right: var(--s4)`, the view group with the
+`left`/`max-width` override in Step 2 — so nothing decided which of them got which pixels,
+and the later one in DOM order simply painted over the earlier. Measured headed on
+2026-08-20 against the shipped build, with the longest readout this build can produce on
+screen, `document.elementFromPoint` at each control's own centre:
+
+```
+=== 1440x900 ===  zoom group box [762,72,302,28]   view group box [264,72,800,64]
+zoom-out           reachable=false  topmost=view-readout
+zoom-level         reachable=false  topmost=view-readout
+zoom-in            reachable=false  topmost=view-readout
+reset-view         reachable=false  topmost=view-readout
+clear-focus        reachable=false  topmost=view-readout
+=== 1280x800 ===  zoom group box [602,72,302,28]   view group box [264,72,640,89]
+zoom-out … clear-focus   reachable=false  topmost=a39-stage-controls a39-view-controls
+=== 900x700 ===   zoom group box [582,310,302,28]  view group box [16,310,868,64]
+zoom-out … reset-view    reachable=false  topmost=view-readout
+clear-focus              reachable=false  topmost=save-view
+```
+
+Five accepted slice-1 controls, none of them clickable by mouse, at all three acceptance
+viewports — a slice-1 regression, reported by the acceptance run as
+`FAIL S1-REGRESSION all five slice-1 zoom / focus controls are hittable at 1440x900` and by
+`S2-22c`/`S2-22d` at each viewport.
+
+The repair is structural, because the defect is: two independently anchored absolute boxes
+in one band cannot be made disjoint by any width or z-index that is not a guess about
+content. Both groups become children of **one** absolutely positioned bar laid out as a
+single non-wrapping flex line, so the browser computes the disjointness — boxes on a flex
+line never overlap, at any width, for any content. The view group leads the line because it
+is drawn first (left), which also makes DOM order, reading order and tab order the same
+order; the zoom group is held against the right edge by an auto margin and keeps exactly the
+position slice 1 accepted for it. Replace the two sibling `<div>`s above with:
+
+```html
+  <!-- The two stage-control groups are children of ONE bar so a single flex
+       formatting context lays them out. As two independently anchored absolute
+       boxes in the same band they covered each other and every zoom control
+       became unclickable; see the "one bar, one flex line" comment in
+       shell.css for the measurement and the reasoning. The view group is first
+       because it is drawn first (left), so reading order, DOM order and tab
+       order are the same order. -->
+  <div class="a39-stage-controlbar">
+    <div class="a39-stage-controls a39-view-controls" role="group" aria-label="Graph views">
+      <button type="button" class="a39-button" id="view-overview" aria-pressed="true">Overview</button>
+      <button type="button" class="a39-button" id="view-neighbourhood" aria-pressed="false" disabled>Neighbourhood</button>
+      <span class="a39-view-readout" id="view-readout">—</span>
+      <button type="button" class="a39-button" id="save-view">Save view</button>
+      <button type="button" class="a39-button" id="restore-view" disabled>Restore view</button>
+      <button type="button" class="a39-button" id="clear-saved-view" disabled>Clear saved view</button>
+      <span class="a39-saved-view-state" id="saved-view-state"></span>
+    </div>
+
+    <div class="a39-stage-controls a39-zoom-controls" role="group" aria-label="Zoom and focus controls">
+      <button type="button" class="a39-button" id="zoom-out" aria-label="Zoom out">−</button>
+      <span class="a39-zoom" id="zoom-level">100%</span>
+      <button type="button" class="a39-button" id="zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" class="a39-button" id="reset-view" disabled>Reset view</button>
+      <button type="button" class="a39-button" id="clear-focus" disabled>Clear focus</button>
+    </div>
+  </div>
+```
+
+Both groups keep `class="a39-stage-controls"`, so the `onStageKeydown` guard above still
+holds for both, and Task 7's `assert.match(html, /class="a39-stage-controls a39-view-controls"/)`
+still matches. Re-measured after the repair, at all three viewports: every one of the ten
+controls in the two groups reports `reachable=true` with its own id as `topmost`, the
+overlapping-pair list is empty, the legend is still `display: flex`, `visibility: visible`,
+4 rows and inside the stage at every viewport, and the acceptance run reports
+`obscured controls encountered: []` and `138/138 checks passed, 0 failed`.
+
+One consequence is real and is named rather than hidden: the view group now precedes the
+zoom group in the **tab order**. Nothing in slice 1 pinned an order between them — the view
+group did not exist — and the new order is the reading order, which is the direction an
+order change should go. It did move one assumption inside the acceptance harness, whose
+check 17 anchored its Tab walk on `#clear-focus` and therefore walked away from the five
+view controls; that anchor is corrected in the harness (scratchpad, never a repository
+artefact), not in the application.
+
 **Step 2: `shell.css`**
 
 Change the `@media (max-width: 960px)` rule (currently `:718-720`) from hiding the legend to laying it out compactly — a legend that disappears at the countercheck viewport cannot satisfy AC7 there:
@@ -4835,27 +5108,99 @@ than the appended rule — `@media` adds no specificity, so a `max-width` declar
 rendered result at the 960px countercheck viewport; this correction only removes a rule whose
 stated effect was unreachable.
 
+**Corrected 2026-08-20 (headed acceptance).** Replace slice 1's `.a39-stage-controls` rule
+(`shell.css:444-452`) — the one that anchored the zoom group on its own — with the bar that
+now owns the anchoring for both groups. This is the CSS half of the structural repair
+described under Step 1; the measurement is recorded there:
+
+```css
+/* ---------- one bar, one flex line ----------
+ * Slice 1 anchored the zoom group on its own with `position: absolute; top:
+ * var(--s4); right: var(--s4)`. Slice 2 anchored the view group the same way
+ * against the opposite edge and let it grow to `calc(100% - 2 * var(--s4))`,
+ * and the two boxes then shared one band with nothing deciding who gets which
+ * pixels. Measured headed at three viewports on 2026-08-20, with the longest
+ * readout this build can produce on screen:
+ *
+ *   1440x900  every one of zoom-out, zoom-level, zoom-in, reset-view and
+ *             clear-focus reported elementFromPoint(centre) = #view-readout
+ *   1280x800  the same five reported the view GROUP box itself
+ *   900x700   four reported #view-readout, clear-focus reported #save-view
+ *
+ * Five accepted slice-1 controls, none of them clickable by mouse. Raising the
+ * zoom group's z-index would only trade which five are unreachable, and
+ * clipping the readout would answer a layout question by deleting the sentence
+ * the view is supposed to state. So the two groups are given DISJOINT SPACE,
+ * and the disjointness is computed rather than asserted: both are children of
+ * one absolutely positioned bar, laid out as one non-wrapping flex line. Boxes
+ * on a flex line never overlap, at any width, for any content — so no width, no
+ * height and no content length is assumed anywhere in these rules.
+ *
+ * The bar spans the stage with the same var(--s4) inset the zoom group used
+ * alone, and the zoom group is pushed to the end of the line by an auto margin,
+ * so it keeps exactly the position slice 1 accepted for it. The view group
+ * absorbs every width change instead: it may shrink (`min-width: 0`) and wraps
+ * its own items onto further rows, growing downward inside its own column,
+ * which is space the zoom group does not occupy.
+ *
+ * The bar is `pointer-events: none` and the groups restore `auto`. The bar is a
+ * sibling of #stage-host that covers the top of the stage, so without that it
+ * would swallow every pan and every node click that starts up there. */
+.a39-stage-controlbar {
+  position: absolute;
+  top: var(--s4);
+  left: var(--s4);
+  right: var(--s4);
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--s3);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.a39-stage-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  pointer-events: auto;
+}
+
+/* The zoom group never shrinks and never wraps: it is the slice-1 group, and
+ * the line has to give way around it, not through it. The auto margin is what
+ * holds it against the right edge once the view group is content-sized. */
+.a39-zoom-controls {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
+```
+
+The `pointer-events` pair is load-bearing, not decoration: the bar spans the stage width, so
+without it every pan and every node activation that begins in the top strip would land on
+the bar instead of on `#stage-host`, which is where `wirePointer()` binds. The declaration
+count this file's own countercheck rests on is unchanged by the repair — the bar takes over
+the single `z-index: 5` declaration the zoom group's rule carried, so `grep -cE '^\s*z-index:'
+viewer/atlas39/shell.css` still returns **5**.
+
 Append (colours by token only — `shell.css` may contain no colour literal):
 
 ```css
-/* Slice 2: the view + saved-view controls. They are anchored to the opposite
- * edge from the zoom controls, and they share .a39-stage-controls so the stage
- * keydown handler treats them as controls, not as graph.
+/* Slice 2: the view + saved-view controls. They lead the stage control bar, so
+ * they sit at the left of the line with the zoom group at its right, and they
+ * share .a39-stage-controls so the stage keydown handler treats them as
+ * controls, not as graph.
  *
- * What these rules do NOT guarantee is that the two groups never cover each
- * other, and an earlier version of this comment claimed they did. Both groups
- * inherit `top: var(--s4)` and `z-index: 5` from .a39-stage-controls, this one
- * is later in DOM order, and `max-width: calc(100% - 2 * var(--s4))` permits it
- * to span the whole stage width — #view-readout carries no width limit of its
- * own and holds a sentence as long as `Direct neighbourhood of “…” — 4 of 5
- * nodes, 3 of 4 relations.` — so a long enough readout would paint over the
- * zoom group. Task 9 measures the rendered result headed at both acceptance
- * viewports and reports either way; nothing here may assert the outcome
- * beforehand. */
+ * This group is the one that gives way. #view-readout carries no width limit of
+ * its own and holds a sentence as long as `Direct neighbourhood of “14 –
+ * Delivery Model, Program Increment and Sprint Plan” — 3 of 5 nodes, 2 of 4
+ * relations.`, so the group has to be allowed to shrink below its content width
+ * (`min-width: 0`, which a flex item does not do by default) and to wrap its
+ * items onto further rows. It grows DOWNWARD inside its own flex column; the
+ * zoom group's column is not part of that space, which is what makes the
+ * earlier overlap unreachable rather than merely unlikely. */
 .a39-view-controls {
-  right: auto;
-  left: var(--s4);
-  max-width: calc(100% - 2 * var(--s4));
+  flex: 0 1 auto;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
@@ -4928,6 +5273,23 @@ the rule closing at 776, and `grep -n '34ch' viewer/atlas39/shell.css` → `785:
 inside a rule opening at 784 and closing at 786. Both citations are corrected above. The third,
 `shell.css:444-452` for `.a39-stage-controls`, was re-measured and is unchanged. No claim in the
 paragraph moves; only where to look for it.)*
+*(**Resolved 2026-08-20, headed acceptance.** The measurement that paragraph handed to
+Task 9 has been taken, and the overlap it described as possible is what the browser drew:
+all five zoom controls were unreachable at all three acceptance viewports. The rules it
+describes — `.a39-view-controls { right: auto; left: var(--s4); max-width: calc(100% - 2 *
+var(--s4)) }` over an absolutely positioned `.a39-stage-controls` — no longer exist; both
+groups are now children of one flex bar. The paragraph is kept because it is the record of
+what was believed before it was measured, and of the round that refused to assert an
+outcome it had not rendered. The evidence and the replacement rules are two blocks up, and
+the raw before/after tables are in the acceptance evidence under
+`controls-geometry-before.json` and `controls-geometry-after1.json`.
+**Every `shell.css` line citation in the two paragraphs above is now historical**, because
+the repair inserted the control bar above them and shifted the file: measured after the
+repair, `.a39-stage-controls` opens at **:489** (cited as `444-452`), `.a39-view-controls`
+at **:820** (cited as `771`), and `max-width: 34ch` sits at **:833** (cited as `785`).
+`shell.css:329` for `touch-action: none` is above the insertion point and is unchanged. The
+declaration count the z-index argument rests on is also unchanged: `grep -cE '^\s*z-index:'
+viewer/atlas39/shell.css` still returns **5**, now at lines 85, 485, 516, 549 and 718.)*
 
 Delete the now-unused `.a39-swatch[data-depth="0"|"1"|"2"]` rules (`:486-496`) — the swatch colour is set from the token the module returns (D8), so a second CSS list can no longer disagree with it. Keep the base `.a39-swatch` rule.
 
@@ -5509,8 +5871,13 @@ function wirePointer() {
   const gesture = createDragGesture()
 
   // Capture phase, so this runs before the node button's own click handler.
+  //
+  // Corrected 2026-08-20 (headed acceptance): the click EVENT is forwarded, not
+  // just the call made. `consumeClick` reads `detail` to tell a click a pointer
+  // produced (click count >= 1) from one nothing produced (0, because HTML's
+  // "fire a synthetic pointer event" never initialises it). See D9.
   dom.stageHost.addEventListener('click', (event) => {
-    if (!gesture.consumeClick()) return
+    if (!gesture.consumeClick(event)) return
     event.stopPropagation()
     event.preventDefault()
   }, true)
@@ -5830,7 +6197,14 @@ test('a pan may start on a node, and a drag does not also activate it', () => {
   assert.ok(wirePointer, 'wirePointer is missing')
   assert.match(app, /import \{ createDragGesture \} from '\.\/core\/gesture\.mjs'/)
   assert.match(wirePointer, /const gesture = createDragGesture\(\)/)
-  assert.match(wirePointer, /gesture\.consumeClick\(\)/)
+  // Corrected 2026-08-20 (headed acceptance). The click EVENT is forwarded, not
+  // just the call made. `consumeClick` reads `detail` to tell the click a
+  // pointer produced from one produced by a keyboard activation or by
+  // `element.click()`, so a shell that called `consumeClick()` with nothing
+  // would hand the module a record it cannot read and every pan's own click
+  // would be delivered instead of swallowed — the slice-1 behaviour this whole
+  // state machine exists to keep.
+  assert.match(wirePointer, /gesture\.consumeClick\(event\)/)
   assert.match(wirePointer, /addEventListener\('click',[\s\S]*?\}, true\)/, 'the click guard must run in the capture phase')
   assert.match(wirePointer, /gesture\.end\(event\)/)
   assert.equal(
@@ -6948,10 +7322,10 @@ New checks, at minimum:
 | 19 | pointercancel regression: real mouse drag across the threshold on the stage, dispatch a real `pointercancel`, then click a node — assert the node becomes focused (`aria-pressed="true"`) and the inspector updated |
 | 20 | normal suppression still holds: drag across the threshold from on top of a node, release, assert the node did **not** become focused |
 | 21 | at 900×700 the legend is still rendered and visible (`getBoundingClientRect().height > 0`, `visibility !== 'hidden'`), and no legend row is clipped by the stage border |
-| 22 | at every viewport: no `.a39-gnode` label is clipped, the canvas does not overlap the shell chrome, and the new control group does not overlap the zoom group |
+| 22 | at every viewport: no `.a39-gnode` label is clipped, the canvas does not overlap the shell chrome, and the new control group does not overlap the zoom group. **Strengthened 2026-08-20 (headed acceptance):** non-overlap is not enough on its own — the view group's own transparent container box covered the zoom controls at 1280×800 while the per-child overlap list was empty — so the check also asserts, for every control in **both** groups, that `document.elementFromPoint` at its own centre returns that control. That is the form in which DEFECT A was found and the form in which the repair is proved |
 | 23 | fail-closed paths unchanged: invalid snapshot → visible panel, no graph, view + saved-view controls all `disabled`; no WebGL → `E_WEBGL_UNAVAILABLE`, nothing substituted |
-| 24 | console / pageerror / requestfailed / non-2xx buckets are all empty |
-| 25 | the **second** stale-suppression route (added by the Task-2 review, D9): drag across the threshold with a **touch** pointer (`touch-action: none` is set at `shell.css:329`, so the browser may or may not synthesise a click), release with `pointerup`, then activate a *different* node button **from the keyboard** (Tab to it, press Enter — no `pointerdown` precedes that click, so the `pointerdown` re-arm cannot mask a stale flag). Assert the keyboard-activated node becomes focused. Report which of the two happened: the click was swallowed (a second real route, to be repaired by keying the disarm on the invariant rather than on `pointercancel`), or it was not (the pan's own `pointerup` click spent the suppression as designed). **Measure it; do not assume either outcome.** |
+| 24 | console / pageerror / requestfailed / non-2xx buckets are all empty. **Clarified 2026-08-20 (headed acceptance):** the harness itself induces a 503 on `graph-snapshot.json` in the fail-closed context, and Chromium logs its own resource-load line for it. That line is the harness's noise, not the application's — `grep -rn 'console\.' viewer/atlas39/` returns nothing, so the application writes no console output in any context — so it is removed from **that context's bucket only**, recorded on the bucket as `injectedByHarness`, and the removal is itself asserted, so a filter that stops matching or silently matches nothing is red rather than quietly green. Scoping it per context is a harness repair; nothing in the application changed for it |
+| 25 | the **second** stale-suppression route (added by the Task-2 review, D9): drag across the threshold with a **touch** pointer (`touch-action: none` is set at `shell.css:329`, so the browser may or may not synthesise a click), release with `pointerup`, then activate a *different* node button **from the keyboard** (Tab to it, press Enter — no `pointerdown` precedes that click, so the `pointerdown` re-arm cannot mask a stale flag). Assert the keyboard-activated node becomes focused. Report which of the two happened: the click was swallowed (a second real route, to be repaired by keying the disarm on the invariant rather than on `pointercancel`), or it was not (the pan's own `pointerup` click spent the suppression as designed). **Measure it; do not assume either outcome.** — **Measured and repaired 2026-08-20 (headed acceptance); see the correction under D9.** It was the first of the two: `S2-25b` reported `MEASURED: Chromium 151.0.7922.34 synthesised a click after the touch pan = false. A later click carrying no pointerdown -> aria-pressed=false (swallowed=true).` The check is no longer a report-either-way probe but a **pass/fail** one — the node activated after the pan must become focused — and it passes on the repaired build with `aria-pressed=true (swallowed=false)`. Two details of the check itself are corrected by the same measurement: the keyboard leg probes nothing about suppression on this stage, because `onStageKeydown` preventDefaults Enter and Space over a node so **no click is synthesised at all** on that route (that leg is kept, as `S2-25a`, because "the keyboard still works after a touch pan" is worth asserting on its own); the probe that actually carries the check is a click dispatched with no `pointerdown` before it, which is `detail 0` and therefore exactly the class the repair delivers rather than swallows. |
 | 26 | **the view-widening guard, `leavesView` (D3, D5).** Focus `ATLAS Single Source of Truth` and press Neighbourhood, so the stage draws the neighbourhood of `…:14778372` — 4 of 5 nodes. Then activate the **sprint-plan** entry in the navigator rail (`Sprint 2 – Visible Real Semantic Atlas – Sprint Plan`, `…:22478849`), a real node that this neighbourhood does not draw. Assert: the stage is still alive (`body[data-stage="ready"]`, no `.a39-failure` panel, no `E_STAGE_SCENE_REFUSED` anywhere on the page), `#view-overview[aria-pressed="true"]`, **5** `.a39-gnode` buttons, `#view-readout` back to the Overview caption, and `#live` beginning `Left the focused view.` |
 
 **Added 2026-08-20 (fourth review of Task 6): why check 26 exists.** `leavesView` is the

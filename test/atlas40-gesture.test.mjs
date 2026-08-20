@@ -36,6 +36,35 @@ const down = (over = {}) => ({ type: 'pointerdown', pointerId: 1, button: 0, cli
 const move = (over = {}) => ({ type: 'pointermove', pointerId: 1, buttons: 1, clientX: 100, clientY: 100, ...over })
 const up = (over = {}) => ({ type: 'pointerup', pointerId: 1, ...over })
 const cancel = (over = {}) => ({ type: 'pointercancel', pointerId: 1, ...over })
+// `detail` is part of the click record the module reads, and the two fixtures
+// below are the two values it distinguishes. UI Events defines `detail` on a
+// click as the click count, so a click a pointer produced carries at least 1.
+// HTML's "fire a synthetic pointer event" — the algorithm behind
+// `element.click()` and behind the activation behaviour a keyboard Enter or
+// Space runs — initialises `type`, `bubbles`, `cancelable`, the modifier keys
+// and `view`, and never initialises `detail`, so it keeps the 0 default of
+// UIEventInit. `new MouseEvent('click', {bubbles: true})` is the same story.
+//
+// Measured against the shipped wiring, headed, 2026-08-20, Chromium
+// 151.0.7922.34, every record captured in the capture phase on #stage-host —
+// which is where wirePointer() binds the guard, so these are the records
+// consumeClick actually receives:
+//
+//   the click a mouse pan synthesises at pointerup   detail 1, isTrusted true
+//   a plain mouse click on a node                    detail 1, isTrusted true
+//   element.click()                                  detail 0, isTrusted false
+//   new MouseEvent('click', {bubbles: true})         detail 0, isTrusted false
+//   a keyboard Enter on a focused node button        NO click event at all
+//   a touch pan ended by pointerup                   NO click event at all
+//
+// The keyboard row is the one D9 predicted and it is not a click route in this
+// build: onStageKeydown calls preventDefault() on Enter and Space over a node
+// (app.mjs, the Enter/' ' case), which cancels the button's activation
+// behaviour. `isTrusted` is deliberately NOT the discriminator — an engine that
+// synthesises a trusted click after a touch pan must still have it swallowed,
+// and `detail` is what separates "a pointer caused this" from "nothing did".
+const pointerClick = (over = {}) => ({ type: 'click', detail: 1, ...over })
+const uncausedClick = (over = {}) => ({ type: 'click', detail: 0, ...over })
 
 /** Drags far enough to cross the threshold. Returns the gesture. */
 function panned() {
@@ -65,7 +94,7 @@ test('a movement below the threshold is a click, not a pan', () => {
   assert.equal(g.isPanning(), false, 'a press that moved below the threshold is not a pan')
   assert.equal(g.isClickSuppressed(), false, 'a click gesture must never suppress its own click')
   g.end(up())
-  assert.equal(g.consumeClick(), false)
+  assert.equal(g.consumeClick(pointerClick()), false)
 })
 
 test('the threshold is 4 screen pixels, and exactly that far already pans', () => {
@@ -142,9 +171,9 @@ test('a threshold-crossing drag suppresses exactly the click it produced', () =>
   // already found and repaired for its sibling `isPanning()`.
   assert.equal(g.isPanning(), false, 'the pan is over once its pointer lifted')
   assert.equal(g.isClickSuppressed(), true, 'the suppression the pan armed did not survive its own pointerup')
-  assert.equal(g.consumeClick(), true, 'the click that ends a pan must be swallowed')
+  assert.equal(g.consumeClick(pointerClick()), true, 'the click that ends a pan must be swallowed')
   // Spent, not sticky: a second click is a real click again.
-  assert.equal(g.consumeClick(), false, 'the suppression leaked into a second click')
+  assert.equal(g.consumeClick(pointerClick()), false, 'the suppression leaked into a second click')
 })
 
 test('REGRESSION: pointercancel after a threshold-crossing drag does not swallow the next click', () => {
@@ -155,7 +184,56 @@ test('REGRESSION: pointercancel after a threshold-crossing drag does not swallow
   assert.equal(done.wasPanning, true)
   // A cancelled pointer delivers no click, so nothing is left to swallow.
   assert.equal(g.isClickSuppressed(), false, 'pointercancel left the click suppression armed')
-  assert.equal(g.consumeClick(), false, 'the next unrelated click was swallowed')
+  assert.equal(g.consumeClick(pointerClick()), false, 'the next unrelated click was swallowed')
+})
+
+test('REGRESSION: a suppression is spent only by a click a pointer produced, never by one it did not', () => {
+  // The second route to the identical user-visible defect, and the one D9 left
+  // explicitly unmeasured until the headed acceptance run of 2026-08-20 —
+  // reported there verbatim as:
+  //
+  //   FAIL  S2-25b a click suppression must not outlive the gesture that armed
+  //         it (touch pan ended by pointerup)
+  //     MEASURED: Chromium 151.0.7922.34 synthesised a click after the touch
+  //     pan = false. A later click carrying no pointerdown -> aria-pressed=false
+  //     (swallowed=true).
+  //
+  // A touch pan ended by `pointerup` produced no click in that engine, so a
+  // disarm keyed on the CAUSE (`event.type === 'pointercancel'`) never fired and
+  // the armed flag was spent on the next unrelated click instead — the same
+  // swallowed click as the pointercancel route, one gesture sideways.
+  //
+  // The repair is keyed on the INVARIANT, not on an engine: only the click this
+  // gesture produced may spend its suppression. A click carrying `detail === 0`
+  // was produced by no pointer at all — see the fixture comments above — so it
+  // is delivered, and it retires the suppression, because the pan's own click
+  // would have arrived before it if the engine had ever synthesised one. In an
+  // engine that DOES synthesise the click after a touch pan, that click arrives
+  // first, carries `detail >= 1`, and is swallowed exactly as it should be:
+  // nothing here branches on pointer type, and nothing here encodes what any
+  // particular browser does.
+  const g = panned()
+  g.end(up())
+  assert.equal(g.isClickSuppressed(), true, 'precondition: the pan armed the suppression')
+  assert.equal(
+    g.consumeClick(uncausedClick()),
+    false,
+    'a click no pointer produced was swallowed by a pan that produced no click either'
+  )
+  assert.equal(
+    g.isClickSuppressed(),
+    false,
+    'the suppression outlived the gesture and is still waiting for a click that will never come'
+  )
+  // And the suppression is really gone, not merely skipped once: a pointer
+  // click arriving afterwards is a real click again.
+  assert.equal(g.consumeClick(pointerClick()), false, 'the retired suppression swallowed a later real click')
+
+  // The mirror case, so this test cannot be satisfied by never swallowing
+  // anything: the same pan, and the click the pan DID produce.
+  const h = panned()
+  h.end(up())
+  assert.equal(h.consumeClick(pointerClick()), true, "the pan's own synthesised click was no longer swallowed")
 })
 
 test('a cancelled drag below the threshold also leaves nothing armed', () => {
@@ -163,7 +241,7 @@ test('a cancelled drag below the threshold also leaves nothing armed', () => {
   g.start(down())
   g.move(move({ clientX: 101 }))
   g.end(cancel())
-  assert.equal(g.consumeClick(), false)
+  assert.equal(g.consumeClick(pointerClick()), false)
 })
 
 test('the state machine ignores a second, unrelated pointer', () => {
@@ -193,7 +271,7 @@ test('a pointercancel from a pointer this gesture does not own leaves the suppre
   const done = g.end(up())
   assert.equal(done.ended, true)
   assert.equal(done.wasPanning, true)
-  assert.equal(g.consumeClick(), true, "the pan's own click was let through onto a node")
+  assert.equal(g.consumeClick(pointerClick()), true, "the pan's own click was let through onto a node")
 })
 
 test('an accidental second press by another pointer is refused while the panning pointer is alive', () => {
@@ -252,7 +330,7 @@ test('a lost panning TOUCH pointer gives the stage back on the second unanswered
     'the first fresh finger stole a pan that may still be live'
   )
   // That refused tap must not be eaten by the lost pan's suppression either.
-  assert.equal(g.consumeClick(), false, "the fresh finger's tap was swallowed by a pan it has nothing to do with")
+  assert.equal(g.consumeClick(pointerClick()), false, "the fresh finger's tap was swallowed by a pan it has nothing to do with")
   assert.equal(g.start(down({ pointerId: 13, clientX: 500, clientY: 500 })), true, 'the stage stayed bricked against every later finger')
   assert.equal(g.isPanning(), false, 're-anchoring left the stale pan running')
   assert.equal(g.isClickSuppressed(), false, 're-anchoring left the stale suppression armed')
@@ -273,11 +351,11 @@ test('a click that arrives while a gesture is still running is not that gesture 
   // exists to prevent, one gesture removed.
   const g = panned()
   assert.equal(g.isClickSuppressed(), true, 'precondition: the pan armed the suppression')
-  assert.equal(g.consumeClick(), false, "a click during a live pan was swallowed as that pan's tail")
+  assert.equal(g.consumeClick(pointerClick()), false, "a click during a live pan was swallowed as that pan's tail")
   assert.equal(g.isClickSuppressed(), true, 'a click that is not the pan tail spent the suppression anyway')
   const done = g.end(up())
   assert.equal(done.ended, true)
-  assert.equal(g.consumeClick(), true, "the pan's own click was no longer swallowed")
+  assert.equal(g.consumeClick(pointerClick()), true, "the pan's own click was no longer swallowed")
 })
 
 test('a press that never panned is replaceable by any other pointer', () => {
@@ -358,7 +436,7 @@ test('a press whose end this module never sees is dropped by the first move with
   // The stale press is gone, not merely skipped: even a later move that does
   // report a held button cannot resurrect it without a fresh pointerdown.
   assert.equal(g.move(move({ clientX: 900, clientY: 900 })).panning, false, 'a dropped press still drove the stage')
-  assert.equal(g.consumeClick(), false)
+  assert.equal(g.consumeClick(pointerClick()), false)
 
   // Same story one step further along: a pan that crossed the threshold and
   // whose pointerup the module never saw. Here the suppression is already
@@ -370,7 +448,7 @@ test('a press whose end this module never sees is dropped by the first move with
   assert.equal(hover2.panning, false, 'a bare hover kept panning the stage')
   assert.equal(p.isPanning(), false, 'a pan with no button held is still a pan')
   assert.equal(p.isClickSuppressed(), false, 'a lost pan left a suppression with no click left to spend it on')
-  assert.equal(p.consumeClick(), false, "the user's next real click was swallowed")
+  assert.equal(p.consumeClick(pointerClick()), false, "the user's next real click was swallowed")
 })
 
 test('a step whose button state or coordinates cannot be read is refused, not treated as a pan', () => {

@@ -441,14 +441,64 @@ body[data-panning="true"] .a39-stage-host {
   color: var(--text-muted);
 }
 
-.a39-stage-controls {
+/* ---------- one bar, one flex line ----------
+ * Slice 1 anchored the zoom group on its own with `position: absolute; top:
+ * var(--s4); right: var(--s4)`. Slice 2 anchored the view group the same way
+ * against the opposite edge and let it grow to `calc(100% - 2 * var(--s4))`,
+ * and the two boxes then shared one band with nothing deciding who gets which
+ * pixels. Measured headed at three viewports on 2026-08-20, with the longest
+ * readout this build can produce on screen:
+ *
+ *   1440x900  every one of zoom-out, zoom-level, zoom-in, reset-view and
+ *             clear-focus reported elementFromPoint(centre) = #view-readout
+ *   1280x800  the same five reported the view GROUP box itself
+ *   900x700   four reported #view-readout, clear-focus reported #save-view
+ *
+ * Five accepted slice-1 controls, none of them clickable by mouse. Raising the
+ * zoom group's z-index would only trade which five are unreachable, and
+ * clipping the readout would answer a layout question by deleting the sentence
+ * the view is supposed to state. So the two groups are given DISJOINT SPACE,
+ * and the disjointness is computed rather than asserted: both are children of
+ * one absolutely positioned bar, laid out as one non-wrapping flex line. Boxes
+ * on a flex line never overlap, at any width, for any content — so no width, no
+ * height and no content length is assumed anywhere in these rules.
+ *
+ * The bar spans the stage with the same var(--s4) inset the zoom group used
+ * alone, and the zoom group is pushed to the end of the line by an auto margin,
+ * so it keeps exactly the position slice 1 accepted for it. The view group
+ * absorbs every width change instead: it may shrink (`min-width: 0`) and wraps
+ * its own items onto further rows, growing downward inside its own column,
+ * which is space the zoom group does not occupy.
+ *
+ * The bar is `pointer-events: none` and the groups restore `auto`. The bar is a
+ * sibling of #stage-host that covers the top of the stage, so without that it
+ * would swallow every pan and every node click that starts up there. */
+.a39-stage-controlbar {
   position: absolute;
   top: var(--s4);
+  left: var(--s4);
   right: var(--s4);
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--s3);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.a39-stage-controls {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  z-index: 5;
+  pointer-events: auto;
+}
+
+/* The zoom group never shrinks and never wraps: it is the slice-1 group, and
+ * the line has to give way around it, not through it. The auto margin is what
+ * holds it against the right edge once the view group is content-sized. */
+.a39-zoom-controls {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
 }
 
 .a39-legend {
@@ -754,24 +804,22 @@ body[data-panning="true"] .a39-stage-host {
   }
 }
 
-/* Slice 2: the view + saved-view controls. They are anchored to the opposite
- * edge from the zoom controls, and they share .a39-stage-controls so the stage
- * keydown handler treats them as controls, not as graph.
+/* Slice 2: the view + saved-view controls. They lead the stage control bar, so
+ * they sit at the left of the line with the zoom group at its right, and they
+ * share .a39-stage-controls so the stage keydown handler treats them as
+ * controls, not as graph.
  *
- * What these rules do NOT guarantee is that the two groups never cover each
- * other, and an earlier version of this comment claimed they did. Both groups
- * inherit `top: var(--s4)` and `z-index: 5` from .a39-stage-controls, this one
- * is later in DOM order, and `max-width: calc(100% - 2 * var(--s4))` permits it
- * to span the whole stage width — #view-readout carries no width limit of its
- * own and holds a sentence as long as `Direct neighbourhood of “…” — 4 of 5
- * nodes, 3 of 4 relations.` — so a long enough readout would paint over the
- * zoom group. Task 9 measures the rendered result headed at both acceptance
- * viewports and reports either way; nothing here may assert the outcome
- * beforehand. */
+ * This group is the one that gives way. #view-readout carries no width limit of
+ * its own and holds a sentence as long as `Direct neighbourhood of “14 –
+ * Delivery Model, Program Increment and Sprint Plan” — 3 of 5 nodes, 2 of 4
+ * relations.`, so the group has to be allowed to shrink below its content width
+ * (`min-width: 0`, which a flex item does not do by default) and to wrap its
+ * items onto further rows. It grows DOWNWARD inside its own flex column; the
+ * zoom group's column is not part of that space, which is what makes the
+ * earlier overlap unreachable rather than merely unlikely. */
 .a39-view-controls {
-  right: auto;
-  left: var(--s4);
-  max-width: calc(100% - 2 * var(--s4));
+  flex: 0 1 auto;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
