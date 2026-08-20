@@ -387,8 +387,16 @@ test('a search that leaves the view says so, and the focus is centred against th
   // worse than the ordering defect this was written for: setFocus would stop
   // repainting altogether — no focus ring, no view projection, no navigator
   // update — with the whole contract green.
+  //
+  // The presence is matched on a WORD BOUNDARY, not as a substring, which is
+  // the idiom two tests up at 'a pan gesture repaints the stage only'.
+  // `'rerender()'.includes('render()')` is true, so the substring form is
+  // satisfied by any identifier that merely ENDS in render. Measured on that
+  // mutant — setFocus's call replaced by a call to a new no-op
+  // `function rerender() {}` — the two shell suites scored
+  // `tests 55 / pass 55 / fail 0` with setFocus never repainting at all.
   const setFocusCode = stripComments(setFocus)
-  assert.ok(setFocusCode.includes('render()'), 'setFocus no longer repaints before centring')
+  assert.ok(/\brender\(\)/.test(setFocusCode), 'setFocus no longer repaints before centring')
   assert.ok(
     setFocusCode.indexOf('render()') < setFocusCode.indexOf('state.layout.placements.find'),
     'the centring block still reads the layout of the view that was left'
@@ -473,8 +481,18 @@ test('the legend is derived at render time and is no longer three fixed rows of 
   // In ANY quoting. Pinning the single-quoted spelling alone let the same
   // constant come back as a double-quoted string or a backtick template, which
   // is the identical defect written differently.
+  // Over the COMMENT-FREE source, for the reason test/helpers/purity.mjs
+  // exists at all: this branch's house style is long comments that quote the
+  // exact wording they forbid, and app.mjs:633 already carries
+  // `'Level 3 and deeper'` in one — one clause short of tripping this. Applied
+  // to the raw text the guard fires on prose: measured with only the comment
+  // `// The constant this replaced read "Level 3 and deeper share one colour."
+  // and` inserted above app.mjs:640, code untouched and correct, this test
+  // scored `tests 55 / pass 54 / fail 1`. It loses no power — measured on the
+  // real code mutant, `const HIERARCHY_NOTE = "Level 3 and deeper share one
+  // colour."` beside the derived template, stripComments(app) is still true.
   assert.equal(
-    /['"`]Level 3 and deeper share one colour\.['"`]/.test(app),
+    /['"`]Level 3 and deeper share one colour\.['"`]/.test(stripComments(app)),
     false,
     'the level is hardcoded again'
   )
@@ -517,20 +535,50 @@ test('the legend survives the responsive countercheck instead of disappearing', 
   // accepted viewport, so it is laid out compactly rather than hidden.
   const small = /@media \(max-width: 960px\)[\s\S]*?\n\}\n/.exec(shellCss)?.[0]
   assert.ok(small, 'the 960px breakpoint is missing')
-  assert.equal(/\.a39-legend \{[^}]*display:\s*none/.test(small), false, 'the legend is hidden at 960px')
-  // And it stays POSITIONED. `.a39-stage-host` is `position: absolute; inset: 0`
-  // with the opaque canvas inside it, and `z-index` applies to positioned
-  // elements only, so an in-flow legend would paint underneath the canvas —
-  // hidden again, by a second mechanism. See the Task 6 correction of
-  // 2026-08-20.
-  assert.equal(/\.a39-legend \{[^}]*position:\s*static/.test(small), false, 'an in-flow legend paints under the canvas')
+  // The two negatives below are derived from every rule that really targets the
+  // legend, not from one literal spelling of its selector. Anchored on
+  // `.a39-legend {` they saw exactly one rule and were blind to every other
+  // form the same declaration can take: measured with this block's last rule
+  // re-spelled `.a39-legend, .a39-header .a39-chips {`, keeping
+  // `display: none;`, the legend is hidden below 960px — the exact AC7
+  // regression these lines exist to prevent — and the two shell suites scored
+  // `tests 55 / pass 55 / fail 0`.
+  //
+  // So the rules are selected the way a browser selects them. CSS comments go
+  // first, because a declaration QUOTED in prose is not a declaration and the
+  // `.a39-legend` rule below carries `position: absolute` inside its own
+  // comment. That stripper is a regex and cannot tell `/*` inside a CSS string
+  // from a comment delimiter; measured over shell.css, the only two lines where
+  // a quote is followed by either sequence are :249 and :487, and both are
+  // prose INSIDE a comment, so no string value carries one today. Then the
+  // selector list is split on `,`, and a selector counts only when its
+  // SUBJECT — the last compound, after the final combinator — carries
+  // `.a39-legend` as a whole class, which is what keeps `.a39-legend-note` and
+  // `.a39-legend .a39-legend-note` (whose subject is the note) out of it.
+  const legendRules = [...small.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((rule) =>
+      rule[1].split(',').some((one) => /\.a39-legend(?![\w-])/.test(one.trim().split(/[\s>+~]+/).pop()))
+    )
+    .map((rule) => `${rule[1].trim()} {${rule[2]}}`)
+  assert.ok(legendRules.length > 0, 'the 960px block no longer styles the legend at all')
+  for (const rule of legendRules) {
+    assert.equal(/display:\s*none/.test(rule), false, `the legend is hidden at 960px: ${rule}`)
+    // And it stays POSITIONED. `.a39-stage-host` is `position: absolute; inset: 0`
+    // with the opaque canvas inside it, and `z-index` applies to positioned
+    // elements only, so an in-flow legend would paint underneath the canvas —
+    // hidden again, by a second mechanism. See the Task 6 correction of
+    // 2026-08-20.
+    assert.equal(/position:\s*static/.test(rule), false, `an in-flow legend paints under the canvas: ${rule}`)
+  }
   // `[^}]*`, not `[\s\S]*?`: the lazy form crosses the rule's closing brace, so
   // it would also pass if the declaration moved into a LATER rule of the same
   // @media block, which would leave the legend unpositioned exactly as the
   // negatives above forbid. Nothing else in the 960px block (shell.css:689-744)
   // declares either of these today, so this is latent fragility rather than a live
-  // hole — closed with the same precise form the negatives on the two lines
-  // above already use.
+  // hole — closed by binding each positive to the rule it is a claim about.
+  // The negatives above no longer need this form: they are evaluated once per
+  // selected rule, so a declaration that moves to another rule of the block
+  // moves WITH its rule and is still read.
   assert.match(small, /\.a39-legend \{[^}]*bottom: var\(--s4\)/)
   assert.match(small, /\.a39-legend \{[^}]*flex-direction: row/)
   // The note's row break only exists if the 46ch max-width clamp is lifted: per
@@ -544,6 +592,16 @@ test('a failed stage offers no view, no saved view and no legend', () => {
   const showFailure = /function showFailure\([\s\S]*?\n\}/.exec(app)?.[0]
   assert.ok(showFailure)
   assert.match(showFailure, /dom\.viewOverview, dom\.viewNeighbourhood, dom\.saveViewBtn, dom\.restoreViewBtn, dom\.clearSavedViewBtn/)
+  // …and the LIST is not the action. Pinning the array literal alone said
+  // nothing about what the loop under it does: measured with app.mjs:166
+  // changed from `if (control) control.disabled = true` to `= false`, the two
+  // shell suites scored `tests 55 / pass 55 / fail 0` and the whole suite
+  // `tests 497 / pass 497 / fail 0`, while a torn-down stage still offered Save
+  // view, Restore view, Clear saved view, Zoom and Reset. The slice-1 assertion
+  // in 'a failure tears the renderer down instead of leaving a stale frame
+  // behind' extracts the same showFailure and pins its own slice of the same
+  // array the same way, so this one line closes that mutant for both.
+  assert.match(showFailure, /if \(control\) control\.disabled = true/)
   // All FIVE legend/view lines, not the first one. The test's name claims no
   // view and no legend survives the failure; pinning `#legend-edges` alone made
   // it claim more than it checked. Measured on the deletion of

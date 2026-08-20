@@ -5725,8 +5725,16 @@ git commit -m "ATLAS-40: wire deterministic views, one saved view and the derive
 
 **Files:**
 - Modify: `test/atlas39-shell.test.mjs:28-32`
-- Modify: `test/atlas40-shell.test.mjs:138` (Step 3b), `:154-168` and append
+- Modify: `test/atlas40-shell.test.mjs:138` (Step 3b — `:139` in the committed file, see the
+  Step 3b correction), `:154-168` and append
 - Modify: `viewer/atlas39/index.html:60` (Step 3b — added 2026-08-20, fifth review of Task 6)
+
+**Corrected 2026-08-20 (third review of Task 7).** Only the parenthetical is new; the `:138`
+is the line as it stood when this task was written and stays, for the reason the Step 3b
+correction gives. A reader hits this **Files** block before that correction and previously
+landed one line short of the assertion it is about. Measured on the committed file:
+`sed -n '138p;139p' test/atlas40-shell.test.mjs` prints `  assert.match(html, /id="zoom-level"/)`
+then `  assert.match(html, /aria-label="Zoom and focus controls"/)`.
 
 **Step 1: `AUTHORED` must cover the new modules**
 
