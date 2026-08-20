@@ -116,6 +116,27 @@ export function applyView(viewModel, view) {
   // screen; hiding it would draw a graph the snapshot does not contain either.
   const edges = viewModel.edges.filter((edge) => inView.has(edge.from) && inView.has(edge.to))
 
+  // The spread carries the FULL-graph `adjacency` into a model whose `nodes`
+  // are restricted, and that is deliberate — `neighboursOf` and the degree it
+  // already computed are properties of the whole graph, not of this window onto
+  // it. The cost is exact and must be paid by every caller: `selectFocus`
+  // (view-model.mjs:234) decides `hasFocus` from `viewModel.adjacency.has(id)`,
+  // so on THIS model it answers `hasFocus: true` for a node the view does not
+  // draw. Measured on the accepted snapshot with anchor 22478849 and the node
+  // 15073290 that the view excludes: `selectFocus(applied.model, 15073290)` is
+  // `{hasFocus: true}` while `isInView(applied, 15073290)` is `false`, and
+  // feeding that focus state to `buildScene` (scene.mjs:277,
+  // `tabbable: focusState.hasFocus ? focusState.focusId === node.node_id : ...`)
+  // produces a scene with **tabbable count 0** and every node `dim` — the
+  // roving tabindex loses its only entry and the stage cannot be reached from
+  // the keyboard at all, which is the failure D3 exists to prevent.
+  //
+  // `isInView` below is the predicate that closes it: a shell must not hand
+  // `selectFocus` an id this view does not draw. The coupling is pinned in
+  // test/atlas40-view-state.test.mjs, "the neighbourhood model keeps the full
+  // adjacency, so selectFocus reports a focus this view does not draw", so a
+  // later change that drops either side is a red suite rather than an
+  // unreachable stage.
   return {
     ok: true,
     view: resolved,

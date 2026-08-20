@@ -130,7 +130,15 @@ export function buildDepthLegend(model) {
   for (const node of model.nodes) {
     // The depth itself, not its text. `String(node.depth)` grouped `1` with
     // `'1'` and `null` with `'null'` — one fabricated row each, measured — while
-    // Map's SameValueZero keeps every value apart for free.
+    // Map's SameValueZero keeps every value apart for free. That used to be an
+    // argument in this comment and nothing else, and an argument is not a
+    // guard: the conversion could be put back and the suite stayed green at
+    // exit 0, 13/13. It is a test now — test/atlas40-legend.test.mjs, in "an
+    // absent depth is never displayed, and unrooted nodes sort last", over four
+    // synthetic nodes with depths `1`, `'1'`, `null` and `'null'`, asserting 4
+    // rows. Synthetic on purpose: the loader computes `depth` itself, and the
+    // edge key one function up is pinned the same way against origins
+    // view-model.mjs:87 refuses.
     const key = node.depth
     const entry = counts.get(key)
     if (entry) entry.count += 1

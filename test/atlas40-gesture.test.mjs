@@ -489,6 +489,26 @@ const STRING_MARKER_MUTANT = [
 // for refusing both.
 const REGEX_MARKER_MUTANT = 'export const SLASH_RE = /\\//; export const stamp = () => document.title + Date.now()'
 
+// The mutation above spells the regex after `=`, which is the one position the
+// scanner already read correctly, so on its own it proved nothing about the
+// sibling positions. This one is the shape this codebase actually writes:
+// semicolon-free statements, so the keyword that licenses the regex follows an
+// IDENTIFIER across a newline. Measured on the committed scanner before the
+// word-boundary repair: `keep()` never ended a word at whitespace, so the
+// previous word here was `textreturn`, which is in no keyword list, `/\//`
+// lexed as a division and the `//` inside it deleted the rest of the line —
+// purityViolations() returned [] on this exact text, while the same function
+// with `String(text)` on the line above (a `)` ending the word, so `return` was
+// seen) returned ["document.","document"]. End to end, appended to
+// viewer/atlas39/core/view-state.mjs it left that suite at exit 0, 18/18 with a
+// DOM read and a clock on disk.
+const REGEX_AFTER_IDENTIFIER_MUTANT = [
+  'export function hasSlash(text) {',
+  '  const subject = text',
+  "  return /\\//.test(subject) ? document.title + Date.now() : ''",
+  '}'
+].join('\n')
+
 test('the gesture carries no clock, randomness or DOM', () => {
   const source = readFileSync(new URL('../viewer/atlas39/core/gesture.mjs', import.meta.url), 'utf8')
   const code = stripComments(source)
@@ -591,6 +611,37 @@ test('the purity guard cannot be switched off by a string or a regular expressio
   assert.ok(
     purityViolations(REGEX_MARKER_MUTANT).includes('Date.'),
     'a clock behind a regular expression literal passed the purity guard'
+  )
+
+  // 6b. The same literal one token boundary further away: the keyword that
+  //     licenses it follows an identifier across a newline, which is how every
+  //     statement in this semicolon-free codebase ends. A word that does not
+  //     close at whitespace re-opens the `//`-deletion hole of 6.
+  const scannedAfterIdentifier = stripComments(REGEX_AFTER_IDENTIFIER_MUTANT)
+  assert.match(
+    scannedAfterIdentifier,
+    /return \/\\\/\/\.test\(subject\)/,
+    'a keyword that follows an identifier across whitespace was not recognised, so the regex literal was lexed as a division'
+  )
+  assert.match(
+    scannedAfterIdentifier,
+    /document\.title/,
+    'a regex literal after a keyword that follows an identifier switched the scan off for the rest of the line'
+  )
+  assert.ok(
+    purityViolations(REGEX_AFTER_IDENTIFIER_MUTANT).includes('document.'),
+    'a DOM read behind a regex literal in statement-after-identifier position passed the purity guard'
+  )
+  assert.ok(
+    purityViolations(REGEX_AFTER_IDENTIFIER_MUTANT).includes('Date.'),
+    'a clock behind a regex literal in statement-after-identifier position passed the purity guard'
+  )
+  // The repair must not turn ordinary division into a regex: `subject` is not a
+  // keyword, so the slash after it still divides and the line survives whole.
+  assert.match(
+    stripComments('const half = subject / 2\nconst t = 1'),
+    /const half = subject \/ 2\nconst t = 1/,
+    'a division after an ordinary identifier was read as a regular expression'
   )
 
   // 7. Where the scanner cannot classify a slash it refuses instead of

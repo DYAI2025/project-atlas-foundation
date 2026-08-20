@@ -212,6 +212,34 @@ test('an absent depth is never displayed, and unrooted nodes sort last', () => {
   const real = buildDepthLegend(vm)
   assert.equal(new Set(real.entries.map((e) => e.token)).size, real.entries.length)
 
+  // The grouping key is the depth VALUE, and that was the only claim in this
+  // module argued in a comment instead of measured: `const key = node.depth`
+  // mutated to `const key = String(node.depth)` scored exit 0, 13/13, and so
+  // did `JSON.stringify(node.depth)`. The reason recorded for leaving it open —
+  // that pinning it would need a synthetic node whose shape the model does not
+  // permit — is contradicted by this same suite one function up, where `origin:
+  // 'derived'` (:76, :127) and `origin: 'v2|explicit'` (:247) are used for
+  // exactly that purpose against a loader that refuses any origin but
+  // 'explicit' (view-model.mjs:87). A key that is injective only for the values
+  // the loader happens to produce is not an injective key; it is an untested
+  // one.
+  //
+  // The row COUNT is the assertion, not the sorted depths: a string depth makes
+  // `a.depth - b.depth` NaN, so the order of such rows is not a property worth
+  // pinning. Measured: 4 rows on the shipped module, 2 on the
+  // `String(node.depth)` mutant, which now exits 1 at 12/13 on `actual: 2,
+  // expected: 4`. What it does NOT close, stated rather than left to be
+  // rediscovered: `JSON.stringify(node.depth)` still exits 0 at 13/13, because
+  // over these four values it is injective too (`1` / `"1"` / `null` /
+  // `"null"`). It merges a different pair — `NaN` with `null` — which is not
+  // pinned here, because a NaN depth has no caption or token of its own and
+  // pinning it would assert a shape this module has never had to answer for.
+  assert.equal(
+    buildDepthLegend(synthetic([], [mk(1, 0), mk('1', 1), mk(null, 2), mk('null', 3)])).entries.length,
+    4,
+    'the depth key converted to text and merged values that are not equal'
+  )
+
   // A graph with no nodes states that it has no hierarchy rather than showing a
   // row. `empty` is part of the contract the shell reads, and nothing else in
   // this file asked for it: `empty: entries.length === 0` mutated to

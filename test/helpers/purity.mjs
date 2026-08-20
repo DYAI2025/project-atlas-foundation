@@ -39,10 +39,24 @@
 // probe provably on disk. So the scanner now classifies a `/` before it decides
 // anything, and refuses rather than guesses when it cannot.
 //
+// The third hole was in the WORD the classification reads, not in the
+// characters it sees. `keep()` skipped whitespace without ending the word it
+// had been building, so `const subject = text` followed by
+// `return /\//.test(subject)` left the previous word as `textreturn`, which is
+// in no keyword list, so that `/` was lexed as a DIVISION and the `//`-deletion
+// hole above re-opened one line later. This codebase is semicolon-free, so that
+// is the ordinary shape of two statements, not a contrived one. Measured on the
+// committed predecessor: purityViolations() of that function returned [], while
+// the same function with `String(text)` on the line above — a `)` before the
+// `return`, which ends the word — returned ["document.","document"]. End to
+// end, appending it to viewer/atlas39/core/view-state.mjs left that suite green
+// at exit 0, 18/18 with a DOM read and a clock on disk. A word now starts fresh
+// after any non-identifier character, whitespace included.
+//
 // This helper's own capability is pinned by test in
 // test/atlas40-gesture.test.mjs ("the purity guard cannot be switched off by a
 // string or a regular expression literal, and sees imports and randomness"),
-// over the exact two mutations that defeated its predecessors.
+// over the exact three mutations that defeated its predecessors.
 
 /** Thrown instead of guessing. A scan that cannot classify a `/` deletes nothing. */
 export class PurityScanError extends Error {
@@ -127,32 +141,51 @@ const lineOf = (source, index) => source.slice(0, index).split('\n').length
  * - A `/` in any other position is a regex literal when a regex could start
  *   there, decided from the last significant character — an operand end
  *   (identifier, `)`, `]`, `}`, a closing quote) means division, anything else
- *   means regex, and an identifier is looked up in REGEX_AFTER_KEYWORDS.
+ *   means regex, and an identifier is looked up in REGEX_AFTER_KEYWORDS as the
+ *   WORD it ends, where a word starts fresh after any non-identifier character
+ *   including whitespace and a newline.
  * - A regex literal that does not close on its own line is refused with a
  *   PurityScanError. Nothing is deleted on a guess.
  *
- * The one residual: a regex literal written directly after `)` or `}` — the
+ * What is known to remain, stated as a list of measured shapes and not as a
+ * count: a regex literal written directly after `)`, `}` or `]` — the
  * `if (x) /re/.test(y)` and statement-position shapes — is read as a division,
  * because telling those apart needs the parenthesis's own keyword. The body is
  * then emitted verbatim, so nothing is hidden by it unless that body contains a
- * literal `//` or `/*`. No guarded module contains either shape; this is written
- * down so the next hole in this file is found by reading rather than by
- * measuring it.
+ * literal `//` or `/*`. No guarded module contains either shape.
+ *
+ * This paragraph used to open "The one residual", and that word `one` was
+ * false while it stood: the token-boundary hole described in the header — a
+ * keyword that follows an identifier across whitespace — was open at the same
+ * time, and `)` was in fact the SAFE position, because `)` is what ended the
+ * word and let `return` be recognised. The list above is therefore what has
+ * been measured, not a claim that nothing else is left; the next hole in this
+ * file is still likelier to be found by measuring than by reading.
  */
 export function stripComments(source) {
   let out = ''
   let i = 0
   // The last significant character emitted, and the identifier it ended, are
-  // all that separates a division from a regular expression.
+  // all that separates a division from a regular expression. `lastRaw` is the
+  // last character emitted INCLUDING whitespace, and it is what closes a word:
+  // without it `const subject = text` + a newline + `return` builds the word
+  // `textreturn`, which is in no keyword list, so `return /re/` lexes as a
+  // division and the regex body is read as code.
   let prev = ''
   let prevWord = ''
+  let lastRaw = ''
 
   const keep = (text) => {
     out += text
     for (const ch of text) {
-      if (/\s/.test(ch)) continue
-      prev = ch
-      prevWord = IDENTIFIER_CHAR.test(ch) ? prevWord + ch : ''
+      if (IDENTIFIER_CHAR.test(ch)) {
+        prevWord = IDENTIFIER_CHAR.test(lastRaw) ? prevWord + ch : ch
+        prev = ch
+      } else if (!/\s/.test(ch)) {
+        prev = ch
+        prevWord = ''
+      }
+      lastRaw = ch
     }
   }
 
@@ -175,12 +208,15 @@ export function stripComments(source) {
     }
     if (ch === '/' && next === '/') {
       while (i < source.length && source[i] !== '\n') i += 1
+      // A deleted comment still ended the token before it.
+      lastRaw = ' '
       continue
     }
     if (ch === '/' && next === '*') {
       i += 2
       while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1
       i += 2
+      lastRaw = ' '
       continue
     }
     if (ch === '/' && regexCanStart()) {

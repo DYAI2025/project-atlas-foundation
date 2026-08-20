@@ -854,6 +854,26 @@ const STRING_MARKER_MUTANT = [
 // for refusing both.
 const REGEX_MARKER_MUTANT = 'export const SLASH_RE = /\\//; export const stamp = () => document.title + Date.now()'
 
+// The mutation above spells the regex after `=`, which is the one position the
+// scanner already read correctly, so on its own it proved nothing about the
+// sibling positions. This one is the shape this codebase actually writes:
+// semicolon-free statements, so the keyword that licenses the regex follows an
+// IDENTIFIER across a newline. Measured on the committed scanner before the
+// word-boundary repair: `keep()` never ended a word at whitespace, so the
+// previous word here was `textreturn`, which is in no keyword list, `/\//`
+// lexed as a division and the `//` inside it deleted the rest of the line —
+// purityViolations() returned [] on this exact text, while the same function
+// with `String(text)` on the line above (a `)` ending the word, so `return` was
+// seen) returned ["document.","document"]. End to end, appended to
+// viewer/atlas39/core/view-state.mjs it left that suite at exit 0, 18/18 with a
+// DOM read and a clock on disk.
+const REGEX_AFTER_IDENTIFIER_MUTANT = [
+  'export function hasSlash(text) {',
+  '  const subject = text',
+  "  return /\\//.test(subject) ? document.title + Date.now() : ''",
+  '}'
+].join('\n')
+
 test('the gesture carries no clock, randomness or DOM', () => {
   const source = readFileSync(new URL('../viewer/atlas39/core/gesture.mjs', import.meta.url), 'utf8')
   const code = stripComments(source)
@@ -958,6 +978,37 @@ test('the purity guard cannot be switched off by a string or a regular expressio
     'a clock behind a regular expression literal passed the purity guard'
   )
 
+  // 6b. The same literal one token boundary further away: the keyword that
+  //     licenses it follows an identifier across a newline, which is how every
+  //     statement in this semicolon-free codebase ends. A word that does not
+  //     close at whitespace re-opens the `//`-deletion hole of 6.
+  const scannedAfterIdentifier = stripComments(REGEX_AFTER_IDENTIFIER_MUTANT)
+  assert.match(
+    scannedAfterIdentifier,
+    /return \/\\\/\/\.test\(subject\)/,
+    'a keyword that follows an identifier across whitespace was not recognised, so the regex literal was lexed as a division'
+  )
+  assert.match(
+    scannedAfterIdentifier,
+    /document\.title/,
+    'a regex literal after a keyword that follows an identifier switched the scan off for the rest of the line'
+  )
+  assert.ok(
+    purityViolations(REGEX_AFTER_IDENTIFIER_MUTANT).includes('document.'),
+    'a DOM read behind a regex literal in statement-after-identifier position passed the purity guard'
+  )
+  assert.ok(
+    purityViolations(REGEX_AFTER_IDENTIFIER_MUTANT).includes('Date.'),
+    'a clock behind a regex literal in statement-after-identifier position passed the purity guard'
+  )
+  // The repair must not turn ordinary division into a regex: `subject` is not a
+  // keyword, so the slash after it still divides and the line survives whole.
+  assert.match(
+    stripComments('const half = subject / 2\nconst t = 1'),
+    /const half = subject \/ 2\nconst t = 1/,
+    'a division after an ordinary identifier was read as a regular expression'
+  )
+
   // 7. Where the scanner cannot classify a slash it refuses instead of
   //    guessing, because guessing is what deleted the line above. A regex
   //    literal cannot span a line, so one that does not close on its own is a
@@ -971,6 +1022,10 @@ test('the purity guard cannot be switched off by a string or a regular expressio
 ```
 
 This block is the file verbatim; the `readFileSync` import the purity test needs is inside it.
+
+**Corrected 2026-08-20 (fourth review of Task 3).** The block above is the repaired suite, `shasum -a 256 test/atlas40-gesture.test.mjs` = `4133ce3612f385788ba796eae8acebb018a602cc0d67e57f49a1daa5ddbba0a8`. Still **22** tests: the repair adds one constant and five assertions inside the existing guard-on-the-guard test. `node --test test/atlas40-gesture.test.mjs` exits **0** at `tests 22 / pass 22 / fail 0`.
+
+`REGEX_MARKER_MUTANT` spells its regex literal after `=`, which is the one position the scanner already read correctly, so it gave **zero** coverage of the sibling positions while making the repair read as complete. The new `REGEX_AFTER_IDENTIFIER_MUTANT` is the shape this codebase actually writes — semicolon-free statements, so the keyword that licenses the regex follows an IDENTIFIER across a newline. Measured against the lexer as it was committed (the `keep()` body restored to `if (/\s/.test(ch)) continue; prev = ch; prevWord = IDENTIFIER_CHAR.test(ch) ? prevWord + ch : ''`, with the new assertions in place): exit **1**, `tests 22 / pass 21 / fail 1`, red on `a keyword that follows an identifier across whitespace was not recognised, so the regex literal was lexed as a division`. Restored to the repaired helper `0b0f00e2787cca25cce6732c931d30b5a7c205b3a1b1cc81ea789e5607b5c174` — the hash printed and compared, never an empty `diff` — it exits **0** at 22/22. Four of the five assertions are about that mutant; the fifth pins the other direction, that `subject / 2` after an ordinary identifier is still a division and not a regex. The lexer repair itself, its probe and the four-module byte-identity are in Task 3, Step 0.
 
 **Corrected 2026-08-19 (third review of Task 3).** The block above gained the `PurityScanError` import, a `REGEX_MARKER_MUTANT` constant and four assertions, and the guard-on-the-guard test is renamed to `the purity guard cannot be switched off by a string or a regular expression literal, and sees imports and randomness`. Still 22 tests: `node --test test/atlas40-gesture.test.mjs` exits **0** at `tests 22 / pass 22 / fail 0`. The guard those assertions pin is the shared one in `test/helpers/purity.mjs`, whose verbatim block and measured repair are in Task 3, Step 0 — the scanner knew string literals but not regular-expression ones, which is the same class of hole a third time. With only the regex branch of the repaired scanner disabled (`if (false && ch === '/' && regexCanStart())`), this suite exits **1** at `pass 21 / fail 1`, red on `the scanner truncated the regular expression literal`.
 
@@ -1396,10 +1451,24 @@ Create `test/helpers/purity.mjs`:
 // probe provably on disk. So the scanner now classifies a `/` before it decides
 // anything, and refuses rather than guesses when it cannot.
 //
+// The third hole was in the WORD the classification reads, not in the
+// characters it sees. `keep()` skipped whitespace without ending the word it
+// had been building, so `const subject = text` followed by
+// `return /\//.test(subject)` left the previous word as `textreturn`, which is
+// in no keyword list, so that `/` was lexed as a DIVISION and the `//`-deletion
+// hole above re-opened one line later. This codebase is semicolon-free, so that
+// is the ordinary shape of two statements, not a contrived one. Measured on the
+// committed predecessor: purityViolations() of that function returned [], while
+// the same function with `String(text)` on the line above — a `)` before the
+// `return`, which ends the word — returned ["document.","document"]. End to
+// end, appending it to viewer/atlas39/core/view-state.mjs left that suite green
+// at exit 0, 18/18 with a DOM read and a clock on disk. A word now starts fresh
+// after any non-identifier character, whitespace included.
+//
 // This helper's own capability is pinned by test in
 // test/atlas40-gesture.test.mjs ("the purity guard cannot be switched off by a
 // string or a regular expression literal, and sees imports and randomness"),
-// over the exact two mutations that defeated its predecessors.
+// over the exact three mutations that defeated its predecessors.
 
 /** Thrown instead of guessing. A scan that cannot classify a `/` deletes nothing. */
 export class PurityScanError extends Error {
@@ -1484,32 +1553,51 @@ const lineOf = (source, index) => source.slice(0, index).split('\n').length
  * - A `/` in any other position is a regex literal when a regex could start
  *   there, decided from the last significant character — an operand end
  *   (identifier, `)`, `]`, `}`, a closing quote) means division, anything else
- *   means regex, and an identifier is looked up in REGEX_AFTER_KEYWORDS.
+ *   means regex, and an identifier is looked up in REGEX_AFTER_KEYWORDS as the
+ *   WORD it ends, where a word starts fresh after any non-identifier character
+ *   including whitespace and a newline.
  * - A regex literal that does not close on its own line is refused with a
  *   PurityScanError. Nothing is deleted on a guess.
  *
- * The one residual: a regex literal written directly after `)` or `}` — the
+ * What is known to remain, stated as a list of measured shapes and not as a
+ * count: a regex literal written directly after `)`, `}` or `]` — the
  * `if (x) /re/.test(y)` and statement-position shapes — is read as a division,
  * because telling those apart needs the parenthesis's own keyword. The body is
  * then emitted verbatim, so nothing is hidden by it unless that body contains a
- * literal `//` or `/*`. No guarded module contains either shape; this is written
- * down so the next hole in this file is found by reading rather than by
- * measuring it.
+ * literal `//` or `/*`. No guarded module contains either shape.
+ *
+ * This paragraph used to open "The one residual", and that word `one` was
+ * false while it stood: the token-boundary hole described in the header — a
+ * keyword that follows an identifier across whitespace — was open at the same
+ * time, and `)` was in fact the SAFE position, because `)` is what ended the
+ * word and let `return` be recognised. The list above is therefore what has
+ * been measured, not a claim that nothing else is left; the next hole in this
+ * file is still likelier to be found by measuring than by reading.
  */
 export function stripComments(source) {
   let out = ''
   let i = 0
   // The last significant character emitted, and the identifier it ended, are
-  // all that separates a division from a regular expression.
+  // all that separates a division from a regular expression. `lastRaw` is the
+  // last character emitted INCLUDING whitespace, and it is what closes a word:
+  // without it `const subject = text` + a newline + `return` builds the word
+  // `textreturn`, which is in no keyword list, so `return /re/` lexes as a
+  // division and the regex body is read as code.
   let prev = ''
   let prevWord = ''
+  let lastRaw = ''
 
   const keep = (text) => {
     out += text
     for (const ch of text) {
-      if (/\s/.test(ch)) continue
-      prev = ch
-      prevWord = IDENTIFIER_CHAR.test(ch) ? prevWord + ch : ''
+      if (IDENTIFIER_CHAR.test(ch)) {
+        prevWord = IDENTIFIER_CHAR.test(lastRaw) ? prevWord + ch : ch
+        prev = ch
+      } else if (!/\s/.test(ch)) {
+        prev = ch
+        prevWord = ''
+      }
+      lastRaw = ch
     }
   }
 
@@ -1532,12 +1620,15 @@ export function stripComments(source) {
     }
     if (ch === '/' && next === '/') {
       while (i < source.length && source[i] !== '\n') i += 1
+      // A deleted comment still ended the token before it.
+      lastRaw = ' '
       continue
     }
     if (ch === '/' && next === '*') {
       i += 2
       while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1
       i += 2
+      lastRaw = ' '
       continue
     }
     if (ch === '/' && regexCanStart()) {
@@ -1596,6 +1687,41 @@ export function purityViolations(source) {
 }
 ```
 
+**Corrected 2026-08-20 (fourth review of Task 3).** The block above is the repaired guard, `shasum -a 256 test/helpers/purity.mjs` = `0b0f00e2787cca25cce6732c931d30b5a7c205b3a1b1cc81ea789e5607b5c174`. The scanner could still be walked past, and the paragraph that was supposed to warn the next reader named the wrong position.
+
+**The hole.** `keep()` skipped whitespace with `continue`, so it never ended the word it was building. `const subject = text` followed on the next line by `return /\//.test(subject)` therefore left the previous word as `textreturn`, which is in no keyword list, so the `/` lexed as a DIVISION and the `//`-deletion hole the helper exists to close re-opened. This codebase is semicolon-free, so that is the ordinary shape of two statements. Measured on the committed helper `de71d1accbdf8109cdfad7dcf5de9a3a3ed079483b1ca4b6d6da72fb8b7c2bf3`:
+
+```
+violations(identifier-before-regex): []
+violations(paren-before-regex):      ["Date.","document.","document","Date"]
+stripComments(identifier-before-regex):
+  export function hasSlash(text) {
+    const subject = text
+    return /\
+  }
+```
+
+End to end, appending that function to `viewer/atlas39/core/view-state.mjs` left `node --test test/atlas40-view-state.test.mjs` at exit **0**, 18/18 — a DOM read AND a clock past a guard named `the module carries no clock, randomness or DOM`. Four modules sit behind this guard.
+
+**The repair.** A word now starts fresh after any non-identifier character, whitespace and newlines included: `keep()` tracks `lastRaw`, the last character emitted *including* whitespace, and a deleted comment sets it to a space because a comment ends the token before it too. After the repair the same probe reports `["Date.","document.","document","Date"]` in BOTH positions, and `return /x/.test(s)` after a string literal is still lexed as a regex (`"const s = \"x\"\nreturn /x/.test(s)"` round-trips unchanged), as does `const half = subject / 2` remain a division — the repair adds recognised keywords, it does not turn identifiers into them.
+
+**It changes no existing scan.** `stripComments` output over all FOUR guarded modules is byte-identical before and after, `/usr/bin/cmp` exit 0 on every one and `shasum -a 256` of the stripped text equal in both directions:
+
+| module | stripComments sha256, before = after |
+| --- | --- |
+| `viewer/atlas39/core/gesture.mjs` | `e1149e3bb25a217eb2320a9b550f28353cd02c2fff17b1001803897686295df0` |
+| `viewer/atlas39/core/view-state.mjs` | `f4ecd36a45ebb20d985329e7e118ea7ee205c9a84d9a4a6ea4f9c204090748ae` |
+| `viewer/atlas39/core/saved-view.mjs` | `8fd54653374a5e456fdc5dd051f10ea7aefb3d741051e58fff80b83a403e6fc6` |
+| `viewer/atlas39/core/legend.mjs` | `e5c25bafc5983378c98bb9c0ad2b125fdf59e0eb19ec1c2be8fa55533cfe6039` |
+
+(The third review recorded this byte-identity over **two** modules and cited `823525c6…` for `view-state.mjs`. That hash was measured against the module as it stood then and is left as its record; the four hashes above are this round's, each measured before and after the lexer change against the same file bytes — the modules as they stood at `37b26fc`.)
+
+Re-measured a second time at the end of this round, against the module bytes this round SHIPS (two of the four gained comments from the Task 3 and Task 5 repairs), by importing the `37b26fc` lexer and the repaired lexer side by side and stripping the same source with both: identical on all four, `mismatches: 0` — `e1149e3b…` gesture, `28e780dc…` view-state, `8fd54653…` saved-view, `0d5848a3…` legend, old and new alike. The two hashes that moved are the two modules that changed, not the two lexers disagreeing.
+
+**The overclaiming paragraph.** The doc comment opened "The one residual: a regex literal written directly after `)` or `}`". The word `one` was false while it stood — the hole above was open at the same time — and `)` is in fact the SAFE position, because `)` is what ends a word and lets `return` be recognised, which is exactly why the `paren-before-regex` probe was caught and the `identifier-before-regex` probe was not. The paragraph now lists what has been measured to remain and says so as a list rather than as a count.
+
+**The guard on the guard gave that position no coverage.** `REGEX_MARKER_MUTANT` in Task 2's suite spells the literal after `=`, the one position that already worked. A second constant `REGEX_AFTER_IDENTIFIER_MUTANT` is added next to it — see the fourth-review note in Task 2 — and it fails against the unrepaired lexer and passes against the repaired one.
+
 **Corrected 2026-08-19 (third review of Task 3).** This Step block is new, and it repairs a convention break rather than a code defect. `test/helpers/purity.mjs` was added to the §2 Create inventory by the second review of Task 3 but carried no verbatim block anywhere in this plan, which every other created file has. Measured before this correction by counting exact whole-file occurrences inside the plan: 1 for `viewer/atlas39/core/view-state.mjs`, 1 for `test/atlas40-view-state.test.mjs`, 1 for `viewer/atlas39/core/gesture.mjs`, 1 for `test/atlas40-gesture.test.mjs`, and **0** for `test/helpers/purity.mjs`. Because both suites now import the guard instead of spelling it, the plan — the audited scope contract Task 10's scope proof is measured against — no longer contained the guard's implementation anywhere. It does now, and the block above is the file verbatim.
 
 The file also changed in this round, and the hole is the same class for the third time: the scanner knew string and template literals but not **regular expression** literals, so it consumed the `\/` of `/\//` as an ordinary escaped backslash and then read the closing `/` plus the following `/` as the start of a line comment, deleting the rest of the line before the denylists ever saw it. Measured directly on the predecessor, verbatim:
@@ -1628,7 +1754,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildViewModel } from '../viewer/atlas39/core/view-model.mjs'
+import { buildViewModel, selectFocus } from '../viewer/atlas39/core/view-model.mjs'
+// Imported only for the one test that pins what the retained full-graph
+// adjacency costs: a focus reported off view empties the roving tabindex.
+import { computeLayout } from '../viewer/atlas39/core/layout.mjs'
+import { buildScene } from '../viewer/atlas39/core/scene.mjs'
 import {
   VIEW_MODES,
   DEFAULT_VIEW,
@@ -1928,6 +2058,52 @@ test('isInView answers for the drawn set only, and never for an unknown id', () 
   assert.equal(isInView(undefined, DELIVERY), false)
 })
 
+test('the neighbourhood model keeps the full adjacency, so selectFocus reports a focus this view does not draw', () => {
+  // D1 names selectFocus as a consumer of exactly this shape, and the
+  // neighbourhood projection is `{ ...viewModel, nodes, edges }` — the
+  // FULL-graph adjacency survives into a model whose nodes are restricted. So
+  // selectFocus, which decides hasFocus from `adjacency.has(id)`, answers TRUE
+  // for a node this view does not draw. Measured on the accepted snapshot:
+  // hasFocus true, isInView false, and the scene built from that focus state
+  // has tabbable count 0 with every node `dim` — no entry in the roving
+  // tabindex at all.
+  //
+  // This is a coupling, not a bug in either function on its own: the adjacency
+  // is deliberately whole-graph, because degree and neighboursOf are properties
+  // of the graph rather than of the window onto it. It is pinned here so the
+  // runtime repair — a shell that consults isInView before it focuses — is a
+  // requirement a later implementer inherits rather than one they have to
+  // rediscover from a black stage.
+  const applied = applyView(vm, { mode: 'neighbourhood', anchorId: SPRINT })
+  assert.equal(isInView(applied, ARCH), false, 'the fixture stopped excluding the off-view node')
+  assert.equal(
+    selectFocus(applied.model, ARCH).hasFocus,
+    true,
+    'selectFocus no longer reports a focus off view — if the adjacency is now restricted, the shell guard below may be dead code, so re-derive it rather than deleting this test'
+  )
+  // The consequence, stated as a number rather than as a warning.
+  assert.equal(
+    buildScene(
+      applied.model,
+      computeLayout(applied.model, { width: 800, height: 600 }),
+      selectFocus(applied.model, ARCH)
+    ).nodes.filter((node) => node.tabbable).length,
+    0,
+    'a focus on a node off view no longer empties the tab order'
+  )
+  // And the predicate that closes it: guarded by isInView, the focus falls back
+  // to the neutral overview state, which puts the first node back in the tab
+  // order.
+  const guarded = isInView(applied, ARCH) ? selectFocus(applied.model, ARCH) : selectFocus(applied.model, null)
+  assert.equal(guarded.hasFocus, false, 'isInView did not stop the off-view focus')
+  assert.equal(
+    buildScene(applied.model, computeLayout(applied.model, { width: 800, height: 600 }), guarded)
+      .nodes.filter((node) => node.tabbable).length,
+    1,
+    'the isInView guard did not restore the roving tabindex entry'
+  )
+})
+
 test('the caption counts what is drawn and what exists, and nothing else', () => {
   const applied = applyView(vm, { mode: 'neighbourhood', anchorId: SPRINT })
   assert.equal(viewCaption(applied.scope), 'Direct neighbourhood — 2 of 5 nodes, 1 of 4 relations.')
@@ -2007,6 +2183,22 @@ test('the module carries no clock, randomness or DOM', () => {
   assert.deepEqual(purityViolations(source), [], 'the purity rules disagree with each other')
 })
 ```
+
+**Corrected 2026-08-20 (fourth review of Task 3).** The neighbourhood projection makes `selectFocus` lie, and nothing recorded it. Both blocks above are the repaired files: the suite at `7d645ade7531c69834ee4b9935262852622b242890327df67f6202d2625042a2`, the module at `fe7356d87d0713a496568ee12c9780b853cfa694a119288812ab368a64383427` (comment only; no statement changed). The expected count moves from **18** to **19**, because the repair is a new test — the property matches no title already in the file.
+
+The projection is `{ ...viewModel, nodes, edges }`, so the FULL-graph `adjacency` survives into a model whose `nodes` are restricted. D1 names `selectFocus` as a consumer of exactly this shape, and `selectFocus` (`viewer/atlas39/core/view-model.mjs:234-240`) decides `hasFocus` from `viewModel.adjacency.has(nodeId)`. Measured on the accepted snapshot, anchor `…:22478849`:
+
+```
+nodes in view: ["ATLAS:confluence:14778372:15171611","ATLAS:confluence:14778372:22478849"]
+selectFocus(applied.model, ARCH).hasFocus: true
+isInView(applied, ARCH): false
+tabbable count: 0
+states: ["dim","dim"]
+```
+
+`buildScene` (`viewer/atlas39/core/scene.mjs:277`, `tabbable: focusState.hasFocus ? focusState.focusId === node.node_id : index === 0`) therefore produces a scene with **tabbable count 0** and every node `dim`: the roving tabindex has no entry at all and the stage is unreachable from the keyboard. That is precisely the failure D3 exists to prevent.
+
+The runtime repair belongs to **Task 6**, and `isInView` is the predicate for it — that assignment is unchanged. What was missing is that Task 6 is a different implementer and nothing in the module or the suite said that keeping the adjacency is what makes `selectFocus` lie; they would have had to rediscover it from a black stage. So the module now carries the one load-bearing comment naming `selectFocus` and the 0-tabbable consequence, and the suite carries the coupling as a test rather than a hope: `selectFocus(applied.model, offViewId).hasFocus === true` asserted against `isInView(applied, offViewId) === false`, the tabbable count of the unguarded scene asserted as **0**, and the guarded form — `isInView(...) ? selectFocus(...) : selectFocus(model, null)` — asserted to put the count back to **1**. The module's imports do not change; the suite imports `selectFocus`, `computeLayout` and `buildScene` for this one test.
 
 **Corrected 2026-08-19 (third review of Task 3).** Still **18** tests: three assertions were added to existing tests, and **the module below changed too** — in two comment blocks and nothing else. `/usr/bin/diff` between the previous module and this one is 21 added lines, every one of them inside a comment; no statement changed. The three mutations below were measured against the module at `985d8b228f1b1002eb7d148fae91cfd5b15238b41d9e42be6a1c4455eda9ddb7`, restored and re-verified with `shasum -a 256` after every row, never with an empty `diff`. The second review's table further down was measured at `ea6a063bd17f21b98d5fce41cd0d60ef01bf4fbc67b27f70c62b6dd6bad347d0` and was **not** re-run this round; it is recorded as measured then, against the module those rows name.
 
@@ -2194,6 +2386,27 @@ export function applyView(viewModel, view) {
   // screen; hiding it would draw a graph the snapshot does not contain either.
   const edges = viewModel.edges.filter((edge) => inView.has(edge.from) && inView.has(edge.to))
 
+  // The spread carries the FULL-graph `adjacency` into a model whose `nodes`
+  // are restricted, and that is deliberate — `neighboursOf` and the degree it
+  // already computed are properties of the whole graph, not of this window onto
+  // it. The cost is exact and must be paid by every caller: `selectFocus`
+  // (view-model.mjs:234) decides `hasFocus` from `viewModel.adjacency.has(id)`,
+  // so on THIS model it answers `hasFocus: true` for a node the view does not
+  // draw. Measured on the accepted snapshot with anchor 22478849 and the node
+  // 15073290 that the view excludes: `selectFocus(applied.model, 15073290)` is
+  // `{hasFocus: true}` while `isInView(applied, 15073290)` is `false`, and
+  // feeding that focus state to `buildScene` (scene.mjs:277,
+  // `tabbable: focusState.hasFocus ? focusState.focusId === node.node_id : ...`)
+  // produces a scene with **tabbable count 0** and every node `dim` — the
+  // roving tabindex loses its only entry and the stage cannot be reached from
+  // the keyboard at all, which is the failure D3 exists to prevent.
+  //
+  // `isInView` below is the predicate that closes it: a shell must not hand
+  // `selectFocus` an id this view does not draw. The coupling is pinned in
+  // test/atlas40-view-state.test.mjs, "the neighbourhood model keeps the full
+  // adjacency, so selectFocus reports a focus this view does not draw", so a
+  // later change that drops either side is a red suite rather than an
+  // unreachable stage.
   return {
     ok: true,
     view: resolved,
@@ -2243,7 +2456,7 @@ export function viewCaption(scope, anchorLabel = null) {
 ```
 node --test test/atlas40-view-state.test.mjs
 ```
-Expected: PASS, 18/18.
+Expected: PASS, 19/19. (18/18 until the fourth review of Task 3 added the `selectFocus` coupling test — **Corrected 2026-08-20**.)
 
 **Step 5: Commit**
 
@@ -2766,6 +2979,26 @@ test('COUNTEREXAMPLE: a stale node id is refused and is never mapped onto anothe
   assert.equal(focusResult.ok, false)
   assert.equal(focusResult.code, E_SAVED_VIEW_STALE_NODE)
 
+  // WHICH node is missing, not just that one is. The refusal's `what` label was
+  // unpinned: measured on this module, swapping the loop's two rows to
+  // `[['focus', parsed.view.anchorId], ['anchor', parsed.focusId]]` left this
+  // suite at exit 0, 18/18, and a saved view whose FOCUS page had been deleted
+  // then answered "the saved anchor node is not in this graph". Task 6 renders
+  // `reason` verbatim into `#saved-view-state` and the live region, so the
+  // mislabel sends the user to look for the wrong page — the same class of
+  // false story as reporting the wrong refusal code, which this file already
+  // pins twice.
+  assert.match(
+    anchorResult.reason,
+    /saved anchor node/,
+    `a stale ANCHOR was reported under the wrong label: ${anchorResult.reason}`
+  )
+  assert.match(
+    focusResult.reason,
+    /saved focus node/,
+    `a stale FOCUS was reported under the wrong label: ${focusResult.reason}`
+  )
+
   // The decisive property: a refusal must carry NO usable node of this graph.
   // If it did, the shell could restore "something close" and look successful.
   //
@@ -2822,6 +3055,19 @@ test('restoreSavedView answers a refusal when it is handed anything but a valida
     'a string',
     {},
     { snapshot: sample().snapshot }, // an identity, but no view
+    // The six clauses of the widened guard need six isolating rows, and the
+    // rows above isolate only four: `parsed`, `viewport` (below), `transform`
+    // and the record's own `viewport`. The two record fields the earlier rows
+    // covered only INCIDENTALLY each get one here, because each was measured
+    // individually fail-OPEN on the shipped module — deleted alone,
+    // `node --test test/atlas40-saved-view.test.mjs` exited 0 at 18/18 both
+    // times. Under the first mutant this row raises `TypeError: Cannot read
+    // properties of undefined (reading 'project_id')` at the identity loop;
+    // under the second the next row raises `... (reading 'anchorId')` at the
+    // stale-node loop. Both are the D5 violation: a bad saved view tearing the
+    // stage down instead of being refused as a value.
+    { view: complete.view, focusId: null, transform: complete.transform, viewport: complete.viewport },
+    { snapshot: complete.snapshot, focusId: null, transform: complete.transform, viewport: complete.viewport },
     // All three of these get PAST the identity and stale-node checks, which is
     // why they threw where the earlier rows refused. Each of the two remaining
     // record fields gets its own row, because a single row covering both leaves
@@ -3287,6 +3533,22 @@ Bookkeeping: the only fixed count this plan states for this suite is the `Expect
 
 Bookkeeping: the only fixed count this plan states for this suite is the `Expected: PASS` line above, corrected here from 17 to 18. The slice-wide gates at Task 8 stay bounds and need no correction. Measured after this round in this worktree: `node --test test/atlas40-saved-view.test.mjs` exits **0**, `tests 18 / pass 18 / fail 0`; `npm run check` exits **0**, `tests 468 / pass 468 / fail 0`, `VALIDATION PASSED`, **131** validator checks (the validator additions belong to Task 7, which has not run yet).
 
+**Corrected 2026-08-20 (sixth review of Task 4).** Two guards and one label in the module were still unpinned. Only the test block above changed — `shasum -a 256 test/atlas40-saved-view.test.mjs` = `40d6d562bb91d7499abdaa0501fe48cf05f93def6ff693ca4d32155abc96e6ac` — and `shasum -a 256 viewer/atlas39/core/saved-view.mjs` is `c9ba1e87fd45c16831a6b71e7d92dca697d16ff54584a77714ffaf4dffefbde4` before and after, unchanged since the fifth review. Still **18** tests; the repair is two rows and two assertions inside tests that already existed, so the `Expected: PASS` line above stays at 18/18.
+
+The widened restore guard has **six** clauses (`viewer/atlas39/core/saved-view.mjs:234-241`) and the `wrong` row list isolated only four. Each of the two remaining clauses was measured individually fail-**open**, deleted alone against the shipped module and the shipped suite:
+
+| Mutation | Before this round | After this round |
+| --- | --- | --- |
+| delete `!isObject(parsed.snapshot) \|\|` (`:236`) | exit **0**, `tests 18 / pass 18 / fail 0` | exit **1**, `pass 17 / fail 1`, `TypeError: Cannot read properties of undefined (reading 'project_id')` |
+| delete `!isObject(parsed.view) \|\|` (`:237`) | exit **0**, `tests 18 / pass 18 / fail 0` | exit **1**, `pass 17 / fail 1`, `TypeError: Cannot read properties of undefined (reading 'anchorId')` |
+| swap the `what` labels at `:260` to `[['focus', parsed.view.anchorId], ['anchor', parsed.focusId]]` | exit **0**, `tests 18 / pass 18 / fail 0` | exit **1**, `pass 17 / fail 1`, `a stale ANCHOR was reported under the wrong label: the saved focus node is not in this graph, and no other node is substituted for it` |
+
+The first two are the D5 violation this task has now measured five times over: a bad saved view tearing the stage down instead of being refused as a value. Closure is two rows in `wrong`, one per clause, each carrying every OTHER field so the clause under test is the only one that can fire.
+
+The third is a different failure and needed naming. The refusal's `what` label is user-facing: Task 6 renders `reason` verbatim into `#saved-view-state` and the live region, so a saved view whose FOCUS page was deleted would tell the user "the saved **anchor** node is not in this graph" and send them to look for the wrong page — the same class of false story as reporting the wrong refusal code, which this file already pins twice. Closure is one `assert.match` per case, `/saved anchor node/` and `/saved focus node/`.
+
+Every mutant was applied by an exact single-occurrence string replacement that refuses when the needle count is not 1, and restored by copying back a pristine copy whose `shasum -a 256` was printed and compared to `c9ba1e87…` after every restore — never `git checkout --`, and never an empty `diff`.
+
 **Step 5: Commit**
 
 ```bash
@@ -3521,6 +3783,34 @@ test('an absent depth is never displayed, and unrooted nodes sort last', () => {
   const real = buildDepthLegend(vm)
   assert.equal(new Set(real.entries.map((e) => e.token)).size, real.entries.length)
 
+  // The grouping key is the depth VALUE, and that was the only claim in this
+  // module argued in a comment instead of measured: `const key = node.depth`
+  // mutated to `const key = String(node.depth)` scored exit 0, 13/13, and so
+  // did `JSON.stringify(node.depth)`. The reason recorded for leaving it open —
+  // that pinning it would need a synthetic node whose shape the model does not
+  // permit — is contradicted by this same suite one function up, where `origin:
+  // 'derived'` (:76, :127) and `origin: 'v2|explicit'` (:247) are used for
+  // exactly that purpose against a loader that refuses any origin but
+  // 'explicit' (view-model.mjs:87). A key that is injective only for the values
+  // the loader happens to produce is not an injective key; it is an untested
+  // one.
+  //
+  // The row COUNT is the assertion, not the sorted depths: a string depth makes
+  // `a.depth - b.depth` NaN, so the order of such rows is not a property worth
+  // pinning. Measured: 4 rows on the shipped module, 2 on the
+  // `String(node.depth)` mutant, which now exits 1 at 12/13 on `actual: 2,
+  // expected: 4`. What it does NOT close, stated rather than left to be
+  // rediscovered: `JSON.stringify(node.depth)` still exits 0 at 13/13, because
+  // over these four values it is injective too (`1` / `"1"` / `null` /
+  // `"null"`). It merges a different pair — `NaN` with `null` — which is not
+  // pinned here, because a NaN depth has no caption or token of its own and
+  // pinning it would assert a shape this module has never had to answer for.
+  assert.equal(
+    buildDepthLegend(synthetic([], [mk(1, 0), mk('1', 1), mk(null, 2), mk('null', 3)])).entries.length,
+    4,
+    'the depth key converted to text and merged values that are not equal'
+  )
+
   // A graph with no nodes states that it has no hierarchy rather than showing a
   // row. `empty` is part of the contract the shell reads, and nothing else in
   // this file asked for it: `empty: entries.length === 0` mutated to
@@ -3679,6 +3969,22 @@ test('the encoding token the legend names is the token the stage really strokes 
 })
 ```
 
+**Corrected 2026-08-20 (fourth review of Task 5).** The depth grouping key's injectivity was argued in a comment and pinned by nothing, and the reason this plan recorded for leaving it that way was false. Still **13** tests — the repair is one assertion added to `an absent depth is never displayed, and unrooted nodes sort last` — and both blocks above are the repaired files: the suite at `4e9991e9ffd72b2cf4b658bf5b0a7d1890e5f2476f1299f06d89722f8c8d12d0`, the module at `e96d5a24b46cb815cfdca775444617f7e15dc43fa30bc1ddcee7c7399f882504` (comment only; no statement changed).
+
+Re-measured on the shipped module `2a11b70f57fe3bbb2591d692af50e3461d7db02e7865617f159269e7200838c9`: `const key = node.depth` → `const key = String(node.depth)` exits **0** at `tests 13 / pass 13 / fail 0`, and so does `JSON.stringify(node.depth)`. So the first row of the third review's mutation table below — *"nothing — it must stay green | exit 0, 13/13"* — recorded a surviving mutant as an intended outcome.
+
+**The justification for that row is contradicted by this same suite.** The paragraph under that table reads "the only way to pin it would be a synthetic node whose shape the model does not permit". Synthetic shapes the model does not permit are exactly what this file already uses one function up, and for exactly this purpose: `origin: 'derived'` at `test/atlas40-legend.test.mjs:76` and `:127`, and `origin: 'v2|explicit'` at `:247`, against a loader that refuses any origin but `'explicit'` (`viewer/atlas39/core/view-model.mjs:87`). A key that is injective only over the values the loader happens to produce is an untested key, not an injective one.
+
+Closure is one assertion, over four synthetic nodes with depths `1`, `'1'`, `null`, `'null'`, asserting the row COUNT — not the sorted depths, because a string depth makes `a.depth - b.depth` NaN and the resulting order is not a property worth pinning. Measured after the repair:
+
+| Mutation | Must go red | Measured |
+| --- | --- | --- |
+| *(none — the shipped module)* | — | exit **0**, 13/13 |
+| `const key = node.depth` → `const key = String(node.depth)` | `an absent depth is never displayed, and unrooted nodes sort last` | exit **1**, 12/13, `actual: 2, expected: 4` |
+| `const key = node.depth` → `const key = JSON.stringify(node.depth)` | **nothing — it stays green** | exit **0**, 13/13 |
+
+The third row is recorded rather than closed, and with its reason stated instead of asserted: `JSON.stringify` is injective over those four values too, so this assertion cannot tell it from the shipped key. It merges a different pair, `NaN` with `null`, and that is left unpinned because a NaN depth has no caption or token of its own — pinning it would assert a shape this module has never had to answer for. That is a narrower claim than the row it replaces, and it is the whole claim. The module's comment now points at the test instead of arguing for itself. Every mutation was restored and re-verified with `shasum -a 256` equal to `2a11b70f…` before the next measurement, never with an empty `diff`.
+
 **Corrected 2026-08-19 (third review of Task 5).** Still **13** tests, and **the suite did not change**: `cmp` between the block above and `test/atlas40-legend.test.mjs` reports no difference, both at `78201206a2bbd828dfcf9f6d752c91fdb7ac9f02a5a535e24804f06d16982524`. **The module changed** — one statement and two comment blocks — and the module block below is the shipped file verbatim at `2a11b70f57fe3bbb2591d692af50e3461d7db02e7865617f159269e7200838c9`, verified with `cmp`, never with an empty `diff`. Four defects, each measured against the module the previous round shipped, `d6100b077e95615b151333670f7211390e0d3908c7085e4139014aee0f616a4a`:
 
 1. **The JSDoc written last round to name the `total` ambiguity claimed a consumer that does not exist, and the reason given for declining the rename rested on the same false premise.** The comment read "a shell caption reads them side by side" and item 4 below gave "Task 6's spec below already reads this contract" as the reason not to rename. Measured: `grep -rnE 'legend\.total|edgeLegend\.total' --exclude-dir=.git --exclude-dir=node_modules --exclude='*.md' .` returns exactly four hits, all assertions in `test/atlas40-legend.test.mjs` (`:43`, `:92`, `:138`, `:257`). Task 6's `paintLegend` reads `.entries` and `.empty` and passes the object to `edgeLegendNote`; it never reads `.total`. Task 7's contract assertions and Task 8's runbook do not mention it either. Overclaiming a reader is the defect class this module's own header says it exists to refuse — "never claim more than the code can show" — one function down from the note that refuses it. The comment now states "no reader today", and because `total` is itself an unread returned fact the open-decision inventory at the `EDGE_ENCODING_TOKEN` declaration is corrected from **three** items to four: the same YAGNI argument that rejected a `sharedToken` field applies to a field already in the return, so it is named in the decision rather than exempt from it. The field is kept, not deleted, because deleting it would take the four assertions with it; which branch the PO takes is the open decision, not this round's to settle.
@@ -3688,11 +3994,11 @@ test('the encoding token the legend names is the token the stage really strokes 
 
 | Mutation | Must go red | Measured |
 | --- | --- | --- |
-| `const key = node.depth` → `const key = String(node.depth)` (the removed conversion) | **nothing — it must stay green** | exit 0, 13/13 |
+| `const key = node.depth` → `const key = String(node.depth)` (the removed conversion) | ~~**nothing — it must stay green**~~ → **`an absent depth is never displayed, and unrooted nodes sort last`** — *Corrected 2026-08-20 (fourth review of Task 5)* | exit 0, 13/13 as measured then; exit **1**, 12/13 after the repair above |
 | `token: depthTokenName(node.depth)` → `token: '--depth-0'` (re-measured on the new key) | `the hierarchy legend shows the depths that really occur…` **and** `an absent depth is never displayed…` | exit 1, 11/13 |
 | `total: model.edges.length` → `total: 0` | four assertions across three tests | exit 1, 10/13 |
 
-The first row is recorded rather than closed by a test, and the reason is the same one the previous round recorded for its own equivalent row: a string `depth` cannot reach `buildDepthLegend` through the shell, because `buildViewModel` computes `depth` itself, so the only way to pin it would be a synthetic node whose shape the model does not permit. The last row is the honest counterweight to the first defect above: `total` has no production reader, but it is pinned by four assertions, so "delete the field" is a real cost and belongs to the PO decision rather than to this round.
+The first row is recorded rather than closed by a test, and the reason is the same one the previous round recorded for its own equivalent row: a string `depth` cannot reach `buildDepthLegend` through the shell, because `buildViewModel` computes `depth` itself, so the only way to pin it would be a synthetic node whose shape the model does not permit. **Corrected 2026-08-20 (fourth review of Task 5).** That reason is false, and this file refutes it: synthetic shapes the model does not permit are what `test/atlas40-legend.test.mjs:76`, `:127` and `:247` already use to pin the EDGE key against origins `viewer/atlas39/core/view-model.mjs:87` refuses. The row is closed by an assertion now — see the fourth-review note above the third review's block, which also states the one mutant that assertion still does not isolate. The last row is the honest counterweight to the first defect above: `total` has no production reader, but it is pinned by four assertions, so "delete the field" is a real cost and belongs to the PO decision rather than to this round.
 
 **Corrected 2026-08-19 (second review of Task 5).** Still **13** tests (13 before, 13 after) carrying **7** more assertions — 49 to 56, measured with `grep -c 'assert\.'` — across two widened tests and one that was renamed and rewritten (`…across the separator…` became `…across the key boundary…`). **The module changed too**, and its only non-comment change is the two grouping keys: `/usr/bin/diff` between the previous module and this one, filtered to the lines that are not comments, prints exactly two removals and two additions — the NUL-joined edge key against `JSON.stringify([edge.relation_type, edge.origin])`, and the depth ternary against `String(node.depth)`. Everything else that moved in it is comment. Both blocks in this task are the shipped files verbatim: the suite at `78201206a2bbd828dfcf9f6d752c91fdb7ac9f02a5a535e24804f06d16982524` and the module at `d6100b077e95615b151333670f7211390e0d3908c7085e4139014aee0f616a4a`. The five findings below were each measured on the module the previous round shipped, `82a42c70d2d79a9aea201c2b1c564d1408647ddad7f57680441520aa41b1173c`, and every mutation was restored and re-verified with `shasum -a 256`, never with an empty `diff`.
 
@@ -3898,7 +4204,15 @@ export function buildDepthLegend(model) {
   for (const node of model.nodes) {
     // The depth itself, not its text. `String(node.depth)` grouped `1` with
     // `'1'` and `null` with `'null'` — one fabricated row each, measured — while
-    // Map's SameValueZero keeps every value apart for free.
+    // Map's SameValueZero keeps every value apart for free. That used to be an
+    // argument in this comment and nothing else, and an argument is not a
+    // guard: the conversion could be put back and the suite stayed green at
+    // exit 0, 13/13. It is a test now — test/atlas40-legend.test.mjs, in "an
+    // absent depth is never displayed, and unrooted nodes sort last", over four
+    // synthetic nodes with depths `1`, `'1'`, `null` and `'null'`, asserting 4
+    // rows. Synthetic on purpose: the loader computes `depth` itself, and the
+    // edge key one function up is pinned the same way against origins
+    // view-model.mjs:87 refuses.
     const key = node.depth
     const entry = counts.get(key)
     if (entry) entry.count += 1

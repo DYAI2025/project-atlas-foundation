@@ -495,6 +495,26 @@ test('COUNTEREXAMPLE: a stale node id is refused and is never mapped onto anothe
   assert.equal(focusResult.ok, false)
   assert.equal(focusResult.code, E_SAVED_VIEW_STALE_NODE)
 
+  // WHICH node is missing, not just that one is. The refusal's `what` label was
+  // unpinned: measured on this module, swapping the loop's two rows to
+  // `[['focus', parsed.view.anchorId], ['anchor', parsed.focusId]]` left this
+  // suite at exit 0, 18/18, and a saved view whose FOCUS page had been deleted
+  // then answered "the saved anchor node is not in this graph". Task 6 renders
+  // `reason` verbatim into `#saved-view-state` and the live region, so the
+  // mislabel sends the user to look for the wrong page — the same class of
+  // false story as reporting the wrong refusal code, which this file already
+  // pins twice.
+  assert.match(
+    anchorResult.reason,
+    /saved anchor node/,
+    `a stale ANCHOR was reported under the wrong label: ${anchorResult.reason}`
+  )
+  assert.match(
+    focusResult.reason,
+    /saved focus node/,
+    `a stale FOCUS was reported under the wrong label: ${focusResult.reason}`
+  )
+
   // The decisive property: a refusal must carry NO usable node of this graph.
   // If it did, the shell could restore "something close" and look successful.
   //
@@ -551,6 +571,19 @@ test('restoreSavedView answers a refusal when it is handed anything but a valida
     'a string',
     {},
     { snapshot: sample().snapshot }, // an identity, but no view
+    // The six clauses of the widened guard need six isolating rows, and the
+    // rows above isolate only four: `parsed`, `viewport` (below), `transform`
+    // and the record's own `viewport`. The two record fields the earlier rows
+    // covered only INCIDENTALLY each get one here, because each was measured
+    // individually fail-OPEN on the shipped module — deleted alone,
+    // `node --test test/atlas40-saved-view.test.mjs` exited 0 at 18/18 both
+    // times. Under the first mutant this row raises `TypeError: Cannot read
+    // properties of undefined (reading 'project_id')` at the identity loop;
+    // under the second the next row raises `... (reading 'anchorId')` at the
+    // stale-node loop. Both are the D5 violation: a bad saved view tearing the
+    // stage down instead of being refused as a value.
+    { view: complete.view, focusId: null, transform: complete.transform, viewport: complete.viewport },
+    { snapshot: complete.snapshot, focusId: null, transform: complete.transform, viewport: complete.viewport },
     // All three of these get PAST the identity and stale-node checks, which is
     // why they threw where the earlier rows refused. Each of the two remaining
     // record fields gets its own row, because a single row covering both leaves

@@ -9,7 +9,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildViewModel } from '../viewer/atlas39/core/view-model.mjs'
+import { buildViewModel, selectFocus } from '../viewer/atlas39/core/view-model.mjs'
+// Imported only for the one test that pins what the retained full-graph
+// adjacency costs: a focus reported off view empties the roving tabindex.
+import { computeLayout } from '../viewer/atlas39/core/layout.mjs'
+import { buildScene } from '../viewer/atlas39/core/scene.mjs'
 import {
   VIEW_MODES,
   DEFAULT_VIEW,
@@ -307,6 +311,52 @@ test('isInView answers for the drawn set only, and never for an unknown id', () 
   const refused = applyView(vm, { mode: 'neighbourhood', anchorId: `${DELIVERY}X` })
   assert.equal(isInView(refused, DELIVERY), false)
   assert.equal(isInView(undefined, DELIVERY), false)
+})
+
+test('the neighbourhood model keeps the full adjacency, so selectFocus reports a focus this view does not draw', () => {
+  // D1 names selectFocus as a consumer of exactly this shape, and the
+  // neighbourhood projection is `{ ...viewModel, nodes, edges }` — the
+  // FULL-graph adjacency survives into a model whose nodes are restricted. So
+  // selectFocus, which decides hasFocus from `adjacency.has(id)`, answers TRUE
+  // for a node this view does not draw. Measured on the accepted snapshot:
+  // hasFocus true, isInView false, and the scene built from that focus state
+  // has tabbable count 0 with every node `dim` — no entry in the roving
+  // tabindex at all.
+  //
+  // This is a coupling, not a bug in either function on its own: the adjacency
+  // is deliberately whole-graph, because degree and neighboursOf are properties
+  // of the graph rather than of the window onto it. It is pinned here so the
+  // runtime repair — a shell that consults isInView before it focuses — is a
+  // requirement a later implementer inherits rather than one they have to
+  // rediscover from a black stage.
+  const applied = applyView(vm, { mode: 'neighbourhood', anchorId: SPRINT })
+  assert.equal(isInView(applied, ARCH), false, 'the fixture stopped excluding the off-view node')
+  assert.equal(
+    selectFocus(applied.model, ARCH).hasFocus,
+    true,
+    'selectFocus no longer reports a focus off view — if the adjacency is now restricted, the shell guard below may be dead code, so re-derive it rather than deleting this test'
+  )
+  // The consequence, stated as a number rather than as a warning.
+  assert.equal(
+    buildScene(
+      applied.model,
+      computeLayout(applied.model, { width: 800, height: 600 }),
+      selectFocus(applied.model, ARCH)
+    ).nodes.filter((node) => node.tabbable).length,
+    0,
+    'a focus on a node off view no longer empties the tab order'
+  )
+  // And the predicate that closes it: guarded by isInView, the focus falls back
+  // to the neutral overview state, which puts the first node back in the tab
+  // order.
+  const guarded = isInView(applied, ARCH) ? selectFocus(applied.model, ARCH) : selectFocus(applied.model, null)
+  assert.equal(guarded.hasFocus, false, 'isInView did not stop the off-view focus')
+  assert.equal(
+    buildScene(applied.model, computeLayout(applied.model, { width: 800, height: 600 }), guarded)
+      .nodes.filter((node) => node.tabbable).length,
+    1,
+    'the isInView guard did not restore the roving tabindex entry'
+  )
 })
 
 test('the caption counts what is drawn and what exists, and nothing else', () => {
