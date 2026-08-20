@@ -5979,10 +5979,25 @@ test('a search that leaves the view says so, and the focus is centred against th
   // worse than the ordering defect this was written for: setFocus would stop
   // repainting altogether — no focus ring, no view projection, no navigator
   // update — with the whole contract green.
+  //
+  // The presence is matched on a WORD BOUNDARY, not as a substring, which is
+  // the idiom already used at :203, in the test
+  // 'a pan gesture repaints the stage only, never the navigator'.
+  // `'rerender()'.includes('render()')` is true, so the substring form is
+  // satisfied by any identifier that merely ENDS in render. Measured on that
+  // mutant — setFocus's call replaced by a call to a new no-op
+  // `function rerender() {}` — the two shell suites scored
+  // `tests 55 / pass 55 / fail 0` with setFocus never repainting at all.
+  //
+  // The ORDERING comparison locates the call the same way, for one reason only:
+  // two spellings of one token in adjacent lines is something the next reader
+  // has to re-derive. It closes no hole the presence assertion above leaves
+  // open — that one runs first, so a `rerender()`-only setFocus is already RED
+  // before this line is reached.
   const setFocusCode = stripComments(setFocus)
-  assert.ok(setFocusCode.includes('render()'), 'setFocus no longer repaints before centring')
+  assert.ok(/\brender\(\)/.test(setFocusCode), 'setFocus no longer repaints before centring')
   assert.ok(
-    setFocusCode.indexOf('render()') < setFocusCode.indexOf('state.layout.placements.find'),
+    setFocusCode.search(/\brender\(\)/) < setFocusCode.indexOf('state.layout.placements.find'),
     'the centring block still reads the layout of the view that was left'
   )
   assert.match(setFocus, /applyTransform\(centerOn\(state\.transform, placement\.x, placement\.y, state\.world\)\)/)
@@ -6060,13 +6075,35 @@ test('the legend is derived at render time and is no longer three fixed rows of 
   // ladder that collapses at 2: derived="Level 2 and deeper share one colour.",
   // constant="Level 3 and deeper share one colour." See the fifth Task 6
   // correction of 2026-08-20.
-  assert.match(app, /const sharedFrom = depthLegend\.entries\.find\(\(e\) => depthTokenCounts\.get\(e\.token\) > 1\) \?\? null/)
-  assert.match(app, /sharedFrom === null \? '' : `\$\{depthCaption\(sharedFrom\.depth\)\} and deeper share one colour\.`/)
+  //
+  // Read off the COMMENT-FREE source, exactly like the negative below and for
+  // the same house-style reason, because a POSITIVE that reads raw text is
+  // satisfied by a comment that quotes the declaration it is about — and this
+  // branch writes comments that do precisely that. Measured on the mutant: the
+  // whole `sharedFrom` derivation deleted from paintLegend, quoted verbatim in
+  // a `//` comment in its place and `dom.legendDepthNote.textContent = ''` left
+  // behind, so D7's hierarchy-limitation sentence is never rendered under any
+  // graph — against raw `app` the two lines below scored
+  // `tests 55 / pass 55 / fail 0`, and these two assertions are the only gate
+  // this shell has for that sentence.
+  const appCode = stripComments(app)
+  assert.match(appCode, /const sharedFrom = depthLegend\.entries\.find\(\(e\) => depthTokenCounts\.get\(e\.token\) > 1\) \?\? null/)
+  assert.match(appCode, /sharedFrom === null \? '' : `\$\{depthCaption\(sharedFrom\.depth\)\} and deeper share one colour\.`/)
   // In ANY quoting. Pinning the single-quoted spelling alone let the same
   // constant come back as a double-quoted string or a backtick template, which
   // is the identical defect written differently.
+  // Over the COMMENT-FREE source, for the reason test/helpers/purity.mjs
+  // exists at all: this branch's house style is long comments that quote the
+  // exact wording they forbid, and app.mjs:633 already carries
+  // `'Level 3 and deeper'` in one — one clause short of tripping this. Applied
+  // to the raw text the guard fires on prose: measured with only the comment
+  // `// The constant this replaced read "Level 3 and deeper share one colour."
+  // and` inserted above app.mjs:640, code untouched and correct, this test
+  // scored `tests 55 / pass 54 / fail 1`. It loses no power — measured on the
+  // real code mutant, `const HIERARCHY_NOTE = "Level 3 and deeper share one
+  // colour."` beside the derived template, stripComments(app) is still true.
   assert.equal(
-    /['"`]Level 3 and deeper share one colour\.['"`]/.test(app),
+    /['"`]Level 3 and deeper share one colour\.['"`]/.test(appCode),
     false,
     'the level is hardcoded again'
   )
@@ -6104,38 +6141,136 @@ test('legend text reaches the DOM only through textContent', () => {
   assert.equal(/No relations in this view\./.test(app), false)
 })
 
+/**
+ * Every rule in `css` that really targets `className`, as comment-free rule
+ * text. Not one literal spelling of a selector: anchored on `.a39-legend {` the
+ * countercheck below saw exactly one rule and was blind to every other form the
+ * same declaration can take — measured with the 960px block's last rule
+ * re-spelled `.a39-legend, .a39-header .a39-chips {`, keeping `display: none;`,
+ * the legend is hidden below 960px and the two shell suites scored
+ * `tests 55 / pass 55 / fail 0`.
+ *
+ * So the rules are selected the way a browser selects them. CSS comments go
+ * first, because a declaration QUOTED in prose is not a declaration and the
+ * `.a39-legend` rules carry `position: absolute` and `display: none` inside
+ * their own comments. That stripper is a regex and cannot tell `/*` inside a CSS
+ * string from a comment delimiter; measured over the whole of shell.css, the
+ * only two lines where a quote is followed by either sequence are :249 and :487,
+ * and both are prose INSIDE a comment, so no string value carries one today.
+ *
+ * Then the selector list is split on `,`, and a selector counts only when its
+ * SUBJECT — the last compound, after the final combinator — carries `className`
+ * as a whole class, which is what keeps `.a39-legend-note` and
+ * `.a39-legend .a39-legend-note` (whose subject is the note) out of the
+ * `a39-legend` set and puts them both in the `a39-legend-note` one.
+ *
+ * `[^}]*` for the body, never `[\s\S]*?`: the lazy form crosses a rule's closing
+ * brace, so a declaration would still be read after it moved into a later rule.
+ * Here each rule is a separate string, so a declaration that moves moves WITH
+ * its rule. Nesting is not a special case for the same reason — `[^{}]` on both
+ * sides matches innermost blocks only, so a rule inside an `@media` block is
+ * selected exactly like a top-level one.
+ */
+const rulesWithSubject = (css, className) => {
+  const subject = new RegExp(`\\.${className}(?![\\w-])`)
+  return [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((rule) => rule[1].split(',').some((one) => subject.test(one.trim().split(/[\s>+~]+/).pop())))
+    .map((rule) => `${rule[1].trim()} {${rule[2]}}`)
+}
+
 test('the legend survives the responsive countercheck instead of disappearing', () => {
   // A legend that vanishes below 960px cannot satisfy AC7 at the smaller
   // accepted viewport, so it is laid out compactly rather than hidden.
   const small = /@media \(max-width: 960px\)[\s\S]*?\n\}\n/.exec(shellCss)?.[0]
   assert.ok(small, 'the 960px breakpoint is missing')
-  assert.equal(/\.a39-legend \{[^}]*display:\s*none/.test(small), false, 'the legend is hidden at 960px')
-  // And it stays POSITIONED. `.a39-stage-host` is `position: absolute; inset: 0`
-  // with the opaque canvas inside it, and `z-index` applies to positioned
-  // elements only, so an in-flow legend would paint underneath the canvas —
-  // hidden again, by a second mechanism. See the Task 6 correction of
-  // 2026-08-20.
-  assert.equal(/\.a39-legend \{[^}]*position:\s*static/.test(small), false, 'an in-flow legend paints under the canvas')
-  // `[^}]*`, not `[\s\S]*?`: the lazy form crosses the rule's closing brace, so
-  // it would also pass if the declaration moved into a LATER rule of the same
-  // @media block, which would leave the legend unpositioned exactly as the
-  // negatives above forbid. Nothing else in the 960px block (shell.css:689-744)
-  // declares either of these today, so this is latent fragility rather than a live
-  // hole — closed with the same precise form the negatives on the two lines
-  // above already use.
-  assert.match(small, /\.a39-legend \{[^}]*bottom: var\(--s4\)/)
-  assert.match(small, /\.a39-legend \{[^}]*flex-direction: row/)
+
+  // The two negatives read the WHOLE stylesheet, not the 960px block. Scoped to
+  // that block they were defeated by one media query over: measured with
+  // `.a39-legend { display: none; }` appended inside `@media (max-width: 1200px)`
+  // at shell.css:680-682 and nothing else changed, the base
+  // `.a39-legend { display: flex }` at shell.css:454 loses on source order at
+  // equal (0,1,0) specificity and the 960px block declares no `display` at all,
+  // so the legend is hidden at BOTH breakpoints — the exact AC7 regression these
+  // lines exist to prevent — and the two shell suites scored
+  // `tests 55 / pass 55 / fail 0`.
+  //
+  // Neither invariant needs the cascade reasoned about, because neither
+  // declaration can be made harmless by one: `display: none` cannot be
+  // overridden back into visibility by any rule that does not itself declare
+  // `display`, and `position: static` cannot be overridden back into a
+  // positioned box by any rule that does not itself declare `position`. A later
+  // rule that DOES re-declare one would turn these RED — a false alarm, which is
+  // the safe direction, and not the silent hole a scoped read is.
+  //
+  // The `position` half is whole-file truthful because the box it would fall
+  // behind is there at every width: shell.css carries exactly two rules whose
+  // subject is `.a39-stage-host` — :324-330, which is `position: absolute;
+  // inset: 0`, and :332-334, which declares `cursor` alone — and neither sits in
+  // a media query, so the stage host is positioned and full-bleed at every
+  // width, with `paintStage` sizing the opaque canvas to the whole viewport
+  // (app.mjs:482-483). `z-index` applies to positioned elements only, so an
+  // in-flow legend paints underneath that canvas — hidden again, by a second
+  // mechanism. See the Task 6 correction of 2026-08-20.
+  const allLegendRules = rulesWithSubject(shellCss, 'a39-legend')
+  assert.ok(allLegendRules.length > 0, 'nothing in shell.css styles the legend at all')
+  for (const rule of allLegendRules) {
+    assert.equal(/display:\s*none/.test(rule), false, `the legend is hidden: ${rule}`)
+    assert.equal(/position:\s*static/.test(rule), false, `an in-flow legend paints under the canvas: ${rule}`)
+  }
+
+  // The positives are read off the same derivation, restricted to the 960px
+  // block because that is the width they are a claim about. Over the raw block
+  // text they were satisfied by a COMMENT: this branch's house style is long
+  // comments that quote the exact declaration they are about, and both of these
+  // declarations sit in a rule that already carries such a comment. Measured on
+  // the mutants — `flex-direction: row;` deleted from the 960px `.a39-legend`
+  // rule and quoted in a comment inside that same rule
+  // (`grep -c 'flex-direction: row;' viewer/atlas39/shell.css` = 0, so the
+  // legend keeps `flex-direction: column` from :459 and is a tall vertical stack
+  // spanning left+right rather than the compact strip), and `max-width: 100%;`
+  // deleted from `.a39-legend .a39-legend-note` and quoted the same way
+  // (`grep -c 'max-width: 100%;'` = 0, so per CSS Flexbox §9.2 the note goes
+  // back to sharing a row) — both scored `tests 55 / pass 55 / fail 0`.
+  //
+  // `some` over the block's rules rather than one named rule: a declaration on
+  // any rule whose subject is the legend applies to the legend at this width,
+  // which is the claim being made, and it is the browser's own reading.
+  const legendRules = rulesWithSubject(small, 'a39-legend')
+  assert.ok(legendRules.length > 0, 'the 960px block no longer styles the legend at all')
+  assert.ok(
+    legendRules.some((rule) => /bottom: var\(--s4\)/.test(rule)),
+    'the legend is no longer anchored to the bottom of the stage below 960px'
+  )
+  assert.ok(
+    legendRules.some((rule) => /flex-direction: row/.test(rule)),
+    'the legend is no longer laid out as a compact strip below 960px'
+  )
   // The note's row break only exists if the 46ch max-width clamp is lifted: per
   // CSS Flexbox §9.2 the hypothetical main size is the flex base size clamped by
   // the used max main size, so `flex-basis: 100%` alone left the note sharing a
   // row. See the Step 2 correction of 2026-08-20 (third review of Task 6).
-  assert.match(small, /\.a39-legend \.a39-legend-note \{[^}]*max-width: 100%/)
+  const legendNoteRules = rulesWithSubject(small, 'a39-legend-note')
+  assert.ok(legendNoteRules.length > 0, 'the 960px block no longer styles the legend note at all')
+  assert.ok(
+    legendNoteRules.some((rule) => /max-width: 100%/.test(rule)),
+    'the 46ch clamp is not lifted, so the note shares a row instead of taking one'
+  )
 })
 
 test('a failed stage offers no view, no saved view and no legend', () => {
   const showFailure = /function showFailure\([\s\S]*?\n\}/.exec(app)?.[0]
   assert.ok(showFailure)
   assert.match(showFailure, /dom\.viewOverview, dom\.viewNeighbourhood, dom\.saveViewBtn, dom\.restoreViewBtn, dom\.clearSavedViewBtn/)
+  // …and the LIST is not the action. Pinning the array literal alone said
+  // nothing about what the loop under it does: measured with app.mjs:166
+  // changed from `if (control) control.disabled = true` to `= false`, the two
+  // shell suites scored `tests 55 / pass 55 / fail 0` and the whole suite
+  // `tests 497 / pass 497 / fail 0`, while a torn-down stage still offered Save
+  // view, Restore view, Clear saved view, Zoom and Reset. The slice-1 assertion
+  // in 'a failure tears the renderer down instead of leaving a stale frame
+  // behind' extracts the same showFailure and pins its own slice of the same
+  // array the same way, so this one line closes that mutant for both.
+  assert.match(showFailure, /if \(control\) control\.disabled = true/)
   // All FIVE legend/view lines, not the first one. The test's name claims no
   // view and no legend survives the failure; pinning `#legend-edges` alone made
   // it claim more than it checked. Measured on the deletion of
@@ -6346,6 +6481,73 @@ their pristine values). The shipped tree scores `ℹ tests 55 / ℹ pass 55 / �
     reintroduced as a double-quoted `const` beside the derived template — which leaves the
     paired positive assertion green: old negative `false` (no match, test passes), new
     negative `true`, suite `tests 55 / pass 54 / fail 1` on *the level is hardcoded again*.
+
+**Corrected 2026-08-20 (fourth review of Task 7).** The block above was **resynchronised** with
+the committed `test/atlas40-shell.test.mjs`, and four more assertions in it were repaired. The
+resynchronisation is itself a correction: the previous round changed the test file without
+updating this block, so the scope contract went on prescribing assertions that round had
+already replaced. Measured before this edit — the fenced block extracted to a file and
+compared with lines 260-635 of `test/atlas40-shell.test.mjs` at that commit:
+`shasum -a 256` `8dd6be563282d5ca4d56a86fe277aeb514961250feb18965df7882f596049817` against
+`3a59d8f50f50e33963c1409b72cb219f6321130fa10869f317b9de7d30de8658`, `/usr/bin/diff` exit 1,
+91 lines of difference. After this edit the block is byte-identical to lines 268-720 of the
+committed file again.
+
+The four repairs, each measured against the mutant it exists for, applied to a git-tracked
+file and restored afterwards with `shasum -a 256` (`app.mjs` =
+`d7759c63d0058cf5b567843e8ef3cb206b1c786b09dd5eddf3ae27d047c7e203`, `shell.css` =
+`ad598b34530926e79b41ef6e73da3160f836857041b56d3c83133450cdfc4ad2`, both back to their
+pristine values), measured on `node --test test/atlas40-shell.test.mjs
+test/atlas39-shell.test.mjs`:
+
+24. The two negatives in *the legend survives the responsive countercheck instead of
+    disappearing* now read the **whole** stylesheet rather than the `@media (max-width: 960px)`
+    block. Scoped to that block they were defeated by one media query over: `.a39-legend {
+    display: none; }` appended inside `@media (max-width: 1200px)` at `shell.css:680-682` hides
+    the legend at **both** breakpoints — the base `.a39-legend { display: flex }` at `:454`
+    loses on source order at equal (0,1,0) specificity, and the 960px block declares no
+    `display` at all — and scored `ℹ tests 55 / ℹ pass 55 / ℹ fail 0`. It scores
+    `ℹ tests 55 / ℹ pass 54 / ℹ fail 1` now. Neither invariant needs the cascade reasoned
+    about: `display: none` cannot be overridden back into visibility, and `position: static`
+    back into a positioned box, by any rule that does not itself declare that property, so the
+    whole-file form is truthful as stated. A later rule that re-declares one would turn these
+    RED — a false alarm, which is the safe direction, not a silent hole.
+25. The two positives at the same breakpoint (`bottom: var(--s4)`, `flex-direction: row`) and
+    the note positive (`max-width: 100%`) are read off the same comment-free rule derivation
+    instead of the raw block text. Against the raw text a **comment** satisfied them, which is
+    this branch's house style rather than a contrived shape: `flex-direction: row;` deleted
+    from the 960px `.a39-legend` rule and quoted in a comment inside that same rule
+    (`grep -c 'flex-direction: row;' viewer/atlas39/shell.css` = `0`, so the legend keeps
+    `flex-direction: column` from `:459`) scored `ℹ tests 55 / ℹ pass 55 / ℹ fail 0`, as did
+    `max-width: 100%;` deleted from `.a39-legend .a39-legend-note` and quoted the same way
+    (`grep -c 'max-width: 100%;'` = `0`, so per CSS Flexbox §9.2 the note goes back to sharing
+    a row). Each scores `ℹ tests 55 / ℹ pass 54 / ℹ fail 1` now. The derivation is hoisted to a
+    module-level `rulesWithSubject(css, className)`, so the whole-file negatives, the
+    breakpoint positives and the note positive all select rules the way a browser does.
+26. The two `sharedFrom` positives in *the legend is derived at render time…* run over
+    `stripComments(app)`, like the negative three lines below them that correction 23 widened.
+    Against the raw text the whole derivation could be deleted from `paintLegend` and quoted
+    verbatim in a `//` comment with `dom.legendDepthNote.textContent = ''` left in its place —
+    D7's hierarchy-limitation sentence then never renders under any graph, and these two
+    assertions are the only gate this branch has for it (correction 16). Measured:
+    `ℹ tests 55 / ℹ pass 55 / ℹ fail 0` before, `ℹ tests 55 / ℹ pass 54 / ℹ fail 1` now.
+27. `assert.match(showFailure, /if \(control\) control\.disabled = true/)` added to the slice-1
+    test *a failure tears the renderer down instead of leaving a stale frame behind*, whose
+    comment ("Every interactive control is disabled: a failed stage must not offer zoom")
+    claimed the loop while the body pinned only the array literal. Correction 21's sibling
+    assertion in *a failed stage offers no view…* already turns the `= false` mutant red
+    suite-wide, so nothing was unpinned; what this closes is a test whose own claim depended on
+    a sibling test continuing to exist. Measured with `app.mjs:166` changed to `= false`:
+    `ℹ tests 55 / ℹ pass 54 / ℹ fail 1` before (the sibling alone), `ℹ tests 55 / ℹ pass 53 /
+    ℹ fail 2` now.
+
+Two comment repairs went with them, neither changing what is asserted: the word-boundary idiom
+is cited as `:203` in *a pan gesture repaints the stage only, never the navigator* rather than
+as "two tests up" — it is eleven tests up, `grep -n '^test('` showing ten intervening
+declarations — and the ordering comparison of correction 20 uses
+`setFocusCode.search(/\brender\(\)/)` so that the two adjacent lines locating the same call use
+one idiom rather than two. That comparison closed no hole either way: the presence assertion
+above it runs first.
 
 **Step 3b: rename the zoom control group (added 2026-08-20, fifth review of Task 6)**
 
