@@ -103,7 +103,28 @@ const REQUIRED_FILES = [
   'test/atlas40-scene-guard.test.mjs',
   'test/atlas40-transform.test.mjs',
   'test/atlas40-shell.test.mjs',
-  'docs/atlas-39-workspace-shell.md'
+  'docs/atlas-39-workspace-shell.md',
+
+  // ATLAS-40 slice 2: the deterministic view model, the saved-view contract, the
+  // derived legend and the pointer state machine. Existence only — the behaviour
+  // is owned by the atlas40-* suites and is not duplicated here.
+  'viewer/atlas39/core/view-state.mjs',
+  'viewer/atlas39/core/saved-view.mjs',
+  'viewer/atlas39/core/legend.mjs',
+  'viewer/atlas39/core/gesture.mjs',
+  'test/atlas40-view-state.test.mjs',
+  'test/atlas40-saved-view.test.mjs',
+  'test/atlas40-legend.test.mjs',
+  'test/atlas40-gesture.test.mjs',
+  // Slice-2 repair: the graph fingerprint the saved-view identity binds.
+  'viewer/atlas39/core/graph-fingerprint.mjs',
+  'test/atlas40-graph-fingerprint.test.mjs',
+  // Not a suite, and required anyway. `npm test` globs test/**/*.test.mjs, so
+  // this file is only ever imported — but five suites import it
+  // (atlas40-view-state, atlas40-saved-view, atlas40-legend, atlas40-gesture,
+  // atlas40-shell), so one missing file takes five suites down at once, and the
+  // slice-2 file inventory names it as a created artifact like the eight above.
+  'test/helpers/purity.mjs'
 ]
 
 for (const f of REQUIRED_FILES) {
@@ -625,6 +646,240 @@ check(
 check(
   'README points at the ATLAS-39 run command and runbook',
   (await readFile('README.md', 'utf8').catch(() => '')).includes('npm run atlas39:serve')
+)
+
+// 18) ATLAS-40 SLICE 2: views, saved views and the derived legend. Every check
+//     below is STRUCTURAL. Each one reads app.mjs, index.html or the runbook as
+//     text and asserts that the wiring the documentation describes is present, so
+//     the code and the prose cannot drift apart silently. None of them is a
+//     behavioural proof, and a check name here may not describe one: the
+//     behaviour is pinned by the atlas40-* suites, which are the artifacts a
+//     reader of this file can actually run.
+//
+//     Corrected 2026-08-20 (review of Task 8). This comment was written as "the
+//     behaviour is owned by the atlas40-* suites and by the headed acceptance
+//     run". Both halves were wrong here. The headed acceptance run is not a
+//     repository artifact — measured, `git ls-files | grep -i
+//     'accept\|playwright\|headed'` exits 1 with no output — so it cannot be
+//     cited as the place a reader finds the proof. And the suites did not own the
+//     first check's claim either until this review added the assertions that make
+//     them; see the note on that check.
+//
+// Corrected 2026-08-20 (review of Task 8). This check was named 'the workspace
+// shell draws a view projection rather than the raw graph', which its condition
+// cannot establish: an import and a declaration say nothing about what the
+// function does. Measured, two mutations that keep both — `state.displayed = {
+// ...applied, model: state.viewModel }` and `applyView(state.viewModel,
+// DEFAULT_VIEW)` — draw the raw graph in every view mode with this check green
+// (`VALIDATION PASSED / 146`, `142: ✓ …`) and the suites at their control score.
+// The name now states the structural fact the condition really carries, and the
+// behaviour it used to claim is asserted on the code of resolveDisplayed() in
+// test/atlas40-shell.test.mjs, where both mutations are now red.
+check(
+  'the workspace shell imports the view-state projection and declares resolveDisplayed()',
+  atlas40App.includes("from './core/view-state.mjs'") && atlas40App.includes('function resolveDisplayed()'),
+  atlas40Error || 'app.mjs does not resolve a view before painting the stage'
+)
+check(
+  'the workspace shell has a versioned saved-view contract behind it',
+  atlas40App.includes("from './core/saved-view.mjs'") &&
+    atlas40App.includes('atlas40.saved-view.v${SAVED_VIEW_VERSION}'),
+  atlas40Error || 'app.mjs does not key its saved view by the contract version'
+)
+// The runbook states the contract version in prose. A second copy that can
+// disagree with the module is worse than no copy, so they are pinned together.
+//
+// Corrected 2026-08-20 (review of Task 8). This check read ONE of the runbook's
+// four copies of the number — `` `saved_view_version`: `N` `` — and called that
+// parity, which is the failure the comment above names. Measured with
+// `export const SAVED_VIEW_VERSION = 2` in core/saved-view.mjs and only that one
+// prose line updated to `2`: exit 0, `VALIDATION PASSED`, 147 checks, with
+// `✓ the runbook documents the saved-view version the module actually
+// implements` printed over a runbook that still told the reader the key is
+// `atlas40.saved-view.v1` and that anything but version 1 is refused — both now
+// false. Every place the runbook writes the number is derived from the module
+// here, so a bump that misses one of them is red.
+// The version bump alone does not prove the repair is still wired in: a later
+// change could drop the fingerprint out of the identity and leave the number at
+// 2, and every version-parity check above would stay green while the saved-view
+// identity quietly went back to six cardinal fields that a moved page does not
+// change. So the binding itself is checked, not just the number next to it.
+const savedViewSource = await readFile('viewer/atlas39/core/saved-view.mjs', 'utf8').catch(() => '')
+check(
+  'the saved-view identity binds the graph fingerprint, not only the cardinal fields',
+  savedViewSource.includes("from './graph-fingerprint.mjs'") &&
+    savedViewSource.includes("'graph_fingerprint'") &&
+    savedViewSource.includes('graph_fingerprint: graphFingerprint(viewModel)'),
+  'viewer/atlas39/core/saved-view.mjs no longer binds graph_fingerprint into the snapshot identity'
+)
+
+const savedViewModuleVersion =
+  (await readFile('viewer/atlas39/core/saved-view.mjs', 'utf8').catch(() => ''))
+    .match(/export const SAVED_VIEW_VERSION = (\d+)/)?.[1] ?? null
+const savedViewDocCopies =
+  savedViewModuleVersion === null
+    ? []
+    : [
+        `\`atlas40.saved-view.v${savedViewModuleVersion}\``,
+        `"saved_view_version": ${savedViewModuleVersion},`,
+        `The contract version is \`saved_view_version\`: \`${savedViewModuleVersion}\`.`,
+        `not version ${savedViewModuleVersion} — checked before any field is interpreted`
+      ]
+const savedViewDocMisses = savedViewDocCopies.filter((copy) => !atlas40Doc.includes(copy))
+check(
+  'the runbook documents the saved-view version the module actually implements',
+  savedViewModuleVersion !== null && savedViewDocMisses.length === 0,
+  savedViewModuleVersion === null
+    ? 'viewer/atlas39/core/saved-view.mjs does not export SAVED_VIEW_VERSION'
+    : `the runbook does not carry version ${savedViewModuleVersion} everywhere it states it: ${savedViewDocMisses
+        .map((copy) => JSON.stringify(copy))
+        .join(' / ')}`
+)
+// Corrected 2026-08-20 (review of Task 8). The markup half of this check was the
+// single literal `>Level 1<` — the exact row index.html used to hardcode. A
+// re-hardcoded row spelled `>Depth 1<`, or carried in an attribute, would have
+// walked straight past it. The property that has no spellings is EMPTINESS: both
+// legend groups ship empty, so every row a user ever sees came out of
+// core/legend.mjs. That is what is asserted now.
+const atlas40Html = await readFile('viewer/atlas39/index.html', 'utf8').catch(() => '')
+const legendGroups = [...atlas40Html.matchAll(/id="(legend-edges|legend-depth)"[^>]*>([\s\S]*?)<\/div>/g)]
+check(
+  'the ATLAS-40 legend is derived from the graph, not hardcoded in the markup',
+  atlas40App.includes("from './core/legend.mjs'") &&
+    legendGroups.length === 2 &&
+    legendGroups.every((group) => group[2].trim() === ''),
+  atlas40Error ||
+    `index.html does not ship both legend groups empty: ${
+      legendGroups.map((group) => `${group[1]}=${JSON.stringify(group[2])}`).join(' ') || 'no legend group found'
+    }`
+)
+// Corrected 2026-08-20 (Task 8). The plan's condition was
+// `atlas40Doc.includes('Slice 2')`. Measured against the runbook text the plan
+// itself supplies in Task 8 Step 3: the capitalised string `Slice 2` occurs
+// there zero times, so that condition would have been red on the very document
+// it was written for. The two headings ARE the structural claim this check is
+// named for, so both are asserted directly instead of via an incidental
+// capitalisation. Section 17's slice-1 check is untouched.
+//
+// Corrected 2026-08-20 (review of Task 8). The two headings were the whole
+// condition, so the boundary's other two required statements could be deleted
+// with the validator green: the AC6 deferral and the sentence that keeps the
+// ticket open. Both are literals of the section this check is already named
+// for — "its still-deferred scope" — so they are folded in here rather than
+// spent on an eighth check.
+const slice2Section = (heading) => (atlas40Doc.split(heading)[1] ?? '').split(/\n##\s/)[0]
+const slice2Delivered = slice2Section(/##\s+Delivered by slice 2/i)
+const slice2Boundary = slice2Section(/##\s+Not delivered by slice 2/i)
+const AC6_DEFERRAL = '- **AC6 Minimap** — explicitly deferred to the next slice'
+const TICKET_STILL_OPEN = 'The ticket stays **In Arbeit**.'
+const slice2BoundaryMisses = [
+  /##\s*Delivered by slice 2/i.test(atlas40Doc) ? '' : 'no `## Delivered by slice 2` heading',
+  /##\s*Not delivered by slice 2/i.test(atlas40Doc) ? '' : 'no `## Not delivered by slice 2` heading',
+  slice2Boundary.includes(AC6_DEFERRAL) ? '' : `the AC6 deferral line is gone: ${JSON.stringify(AC6_DEFERRAL)}`,
+  slice2Boundary.includes(TICKET_STILL_OPEN)
+    ? ''
+    : `the ticket-status sentence is gone: ${JSON.stringify(TICKET_STILL_OPEN)}`
+].filter(Boolean)
+check(
+  'the ATLAS-40 runbook records slice 2 and its still-deferred scope',
+  slice2BoundaryMisses.length === 0,
+  atlas40Error ||
+    `docs/atlas-40-webgl-renderer.md does not state the slice-2 boundary in full: ${slice2BoundaryMisses.join('; ')}`
+)
+// Corrected 2026-08-20 (Task 8), twice over. The plan matched
+// /no frame rate or search latency has been measured/ against the WHOLE runbook.
+// (1) It cannot match: the sentence is bold and line-wrapped in both boundary
+// sections, so `no` and `frame` are separated by a newline plus indent — measured
+// false against the slice-1 runbook at 93071345 and false against the plan's own
+// slice-2 text. The regex is therefore whitespace-tolerant here.
+// (2) Made tolerant and left whole-document, it would match the slice-1 sentence
+// alone — measured true against the slice-1-only runbook, i.e. green with the
+// slice-2 statement deleted, which is a check protecting nothing. It is scoped to
+// the slice-2 boundary section (`slice2Boundary`, extracted alongside
+// `slice2Delivered` above), which is strictly inside the whole document.
+//
+// Corrected 2026-08-20 (review of Task 8). This check was named 'the ATLAS-40
+// slice-2 boundary still makes no performance claim' while its condition only
+// asserts that the DISCLAIMER is present. Measured: appending
+// `- Measured on the accepted snapshot, pan/zoom holds a p95 of 62 FPS and search
+// returns in a p95 of 40 ms, so DEC-07 is comfortably met today` to this very
+// section, disclaimer untouched, left the validator at `VALIDATION PASSED / 146`
+// with `147: ✓ the ATLAS-40 slice-2 boundary still makes no performance claim`
+// printed over the fabrication. The name now says what the condition proves, and
+// the claim the old name made is a second, negative check below.
+check(
+  'the ATLAS-40 slice-2 boundary still states that DEC-07 is unmeasured',
+  /no\s+frame\s+rate\s+or\s+search\s+latency\s+has\s+been\s+measured/i.test(slice2Boundary),
+  'the slice-2 boundary lost its explicit statement that DEC-07 is unmeasured'
+)
+// D10: "No performance claim is made anywhere in this slice." The disclaimer
+// above is the positive half of that; this is the negative half, and it is the
+// one that catches a figure being ADDED rather than the sentence being removed.
+// The single admitted exception is DEC-07's own target sentence, which names
+// figures as targets and explicitly not as measurements. It is exempted by its
+// pinned wording rather than by a looser pattern, so rewording it turns this
+// check red instead of quietly widening the exemption.
+//
+// Corrected 2026-08-20 (review of Task 8), twice.
+//
+// (1) SCOPE. The scan covered `## Not delivered by slice 2` only, so the section
+//     this task actually authored — `## Delivered by slice 2` — could carry a
+//     fabricated measurement with D10 green. Measured, inserted into the
+//     delivered section: `Panning the accepted snapshot holds a steady 60 FPS
+//     and search returns in a p95 of 40 ms, so DEC-07 is already met.` → exit 0,
+//     `VALIDATION PASSED`, 147 checks, with both D10 lines printed over it. The
+//     fabrication used the exact `FPS` and `p95`/`ms` shapes this pattern was
+//     built to catch; only the section differed. Both slice-2 sections are
+//     scanned now.
+//
+// (2) NAME. `makes no performance claim of its own` is a universal no regex can
+//     prove, and the gap was measurable: `search returns in 40 milliseconds and
+//     pan / holds sixty frames a second`, appended inside the boundary section,
+//     passed. The name now states the three shapes the condition looks for.
+//
+// Corrected 2026-08-20 (headed acceptance). Correction (2) directly above did
+// not do what it says, and the sentence claiming it was itself the defect: the
+// name it produced — `carry no p95, FPS or millisecond figure` — still promised
+// a CONCEPT ("a millisecond figure") over a condition that matched three
+// notations, and it silently dropped a fourth (`frames per second`) that the
+// pattern did look for. The cited evasion still passed at that HEAD. Measured
+// on the regex in isolation:
+//
+//   "40 ms" true    "40ms" true    "p95" true    "60 FPS" true
+//   "frames per second" true
+//   "40 milliseconds" FALSE    "sixty frames a second" FALSE
+//   "holds a steady 60 frames a second" FALSE
+//
+// End to end, one line inserted into `## Delivered by slice 2` with the
+// disclaimer untouched — `Measured on the accepted snapshot, search returns in
+// 40 milliseconds and pan holds sixty frames a second, so DEC-07 is comfortably
+// met today.` — scored exit 0, `VALIDATION PASSED`, 147 checks, with this
+// check's own ✓ printed over a fabricated measurement.
+//
+// Two things change, because renaming alone was what failed last time. The
+// PATTERN now also spells the word forms that were measured to walk past it
+// (`millisecond`, a bare `ms`, and `frames per second` / `frames a second`), so
+// both cited fabrications are red. And the NAME is an enumeration of notations
+// rather than a claim about meaning: this check is a SPELLING guard, and D10's
+// universal — "No performance claim is made anywhere in this slice" — is not
+// something it proves or is named as proving. A figure phrased in words this
+// list does not carry ("returns before the eye can follow") still needs a
+// reader; what this closes is the shape a fabricated measurement actually takes.
+const DEC07_TARGETS =
+  /DEC-07\s+names\s+pan\/zoom\s+p95\s*≥\s*30\s+FPS\s+and\s+search\s+p95\s*≤\s*800\s*ms\s+as\s+targets/i
+const slice2Prose = `${slice2Delivered}\n${slice2Boundary}`
+const slice2ProseOutsideTargets = slice2Prose.replace(DEC07_TARGETS, ' ')
+const MEASURED_SOUNDING =
+  /\bp\d{2}\b|\bfps\b|\d\s*ms\b|\bms\b|\bmilliseconds?\b|\bframes\s+(?:per|an?)\s+seconds?\b|\bframes\s*\/\s*seconds?\b/i
+check(
+  'the ATLAS-40 slice-2 sections spell none of p95, FPS, ms, millisecond, ' +
+    "frames-per-second or frames-a-second outside DEC-07's target sentence",
+  DEC07_TARGETS.test(slice2Boundary) && !MEASURED_SOUNDING.test(slice2ProseOutsideTargets),
+  DEC07_TARGETS.test(slice2Boundary)
+    ? `a slice-2 section carries a measured-sounding figure outside the DEC-07 target sentence: ${
+        slice2ProseOutsideTargets.match(MEASURED_SOUNDING)?.[0] ?? ''
+      }`
+    : 'the DEC-07 target sentence is no longer in its pinned wording, so its exemption cannot be applied'
 )
 
 if (failures.length > 0) {

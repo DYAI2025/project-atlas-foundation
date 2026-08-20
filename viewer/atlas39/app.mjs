@@ -33,6 +33,17 @@ import { sceneViolation } from './core/scene-guard.mjs'
 import { createWebglStage, E_WEBGL_UNAVAILABLE, E_WEBGL_CONTEXT_LOST } from './core/render-webgl.mjs'
 import { matchNodes, searchAnnouncement } from './core/search.mjs'
 import { clampTransform, resetTransform, zoomAt, panBy, centerOn, isDefaultView } from './core/transform.mjs'
+import { DEFAULT_VIEW, applyView, isInView, viewCaption } from './core/view-state.mjs'
+import {
+  SAVED_VIEW_VERSION,
+  captureSavedView,
+  serializeSavedView,
+  parseSavedView,
+  restoreSavedView,
+  E_SAVED_VIEW_STORAGE
+} from './core/saved-view.mjs'
+import { buildEdgeLegend, edgeLegendNote, buildDepthLegend, depthCaption } from './core/legend.mjs'
+import { createDragGesture } from './core/gesture.mjs'
 
 const el = (id) => document.getElementById(id)
 
@@ -57,7 +68,18 @@ const dom = {
   statScheme: el('stat-scheme'),
   statRenderer: el('stat-renderer'),
   statProvenance: el('stat-provenance'),
-  statGenerated: el('stat-generated')
+  statGenerated: el('stat-generated'),
+  viewOverview: el('view-overview'),
+  viewNeighbourhood: el('view-neighbourhood'),
+  viewReadout: el('view-readout'),
+  saveViewBtn: el('save-view'),
+  restoreViewBtn: el('restore-view'),
+  clearSavedViewBtn: el('clear-saved-view'),
+  savedViewState: el('saved-view-state'),
+  legendEdges: el('legend-edges'),
+  legendNote: el('legend-note'),
+  legendDepth: el('legend-depth'),
+  legendDepthNote: el('legend-depth-note')
 }
 
 const state = {
@@ -72,7 +94,17 @@ const state = {
   canvas: null,
   overlay: null,
   palette: null,
-  failed: false
+  failed: false,
+  // Which projection of the loaded graph is on the stage, and the applied
+  // result of it. `displayed` is derived — resolveDisplayed() is the only
+  // writer — so nothing else may set it and nothing may read `view` to decide
+  // what is drawn.
+  view: { ...DEFAULT_VIEW },
+  displayed: null,
+  // localStorage only once it has been proved writable; null when the browser
+  // refused. The saved-view controls read this, not `window.localStorage`.
+  store: null,
+  savedViewPresent: false
 }
 
 /** Live DOM handles for the overlay buttons, keyed by node id. */
@@ -88,7 +120,46 @@ const ZOOM_STEP = 1.25
 const WHEEL_SENSITIVITY = 0.0015
 const PAN_STEP = 60
 
+/**
+ * The live region. It obeys the SAME rule every visible surface obeys: it never
+ * describes a stage that is no longer drawn.
+ *
+ * That rule reached the visible surfaces first and stopped at this one. Every
+ * state-changing handler announces AFTER render(), and render() can tear the
+ * stage down in the middle of the handler — paintStage()'s try/catch around
+ * `state.stage.draw` calls showFailure('Renderer failed', …) and returns false.
+ * An unconditional write here then replaced showFailure's own announcement with
+ * the handler's success sentence, so the ONE channel an assistive-technology
+ * user has ended up claiming the opposite of what every sighted surface said.
+ * Measured headed on the accepted snapshot, with a GL context that starts fine
+ * and throws from drawArrays later:
+ *
+ *   restore  data-stage=failed, #saved-view-state="", #view-readout="—",
+ *            legend emptied — live region: "Saved view restored. Direct
+ *            neighbourhood of “…” — 2 of 5 nodes, 1 of 4 relations."
+ *   setView  data-stage=failed, #view-readout="—" — live region: "Direct
+ *            neighbourhood of “…” — 2 of 5 nodes, 1 of 4 relations."
+ *   setFocus data-stage=failed, #view-readout="—" — live region: "… focused.
+ *            Level 2. 1 direct relation."
+ *
+ * A restore shown as successful when the system refused it is precisely what
+ * rule 2 in this file's header forbids. The guard lives here rather than at the
+ * five call sites because a sixth call site would have to remember it, and this
+ * is the only line that writes the region.
+ */
 function announce(message) {
+  // A refused stage has already had its say through announceFailure below, and
+  // nothing a handler was about to claim about the graph is true any more.
+  if (state.failed) return
+  dom.live.textContent = message
+}
+
+/**
+ * The failure channel. Unconditional by design: showFailure sets state.failed
+ * before it speaks, so routing it through announce() would silence the very
+ * sentence that is true. It is also what makes a SECOND failure audible.
+ */
+function announceFailure(message) {
   dom.live.textContent = message
 }
 
@@ -127,11 +198,32 @@ function showFailure(headline, detail, code) {
     className: 'a39-placeholder',
     textContent: 'No snapshot loaded.'
   }))
-  for (const control of [dom.clearFocus, dom.filter, dom.zoomIn, dom.zoomOut, dom.resetView]) {
+  for (const control of [
+    dom.clearFocus, dom.filter, dom.zoomIn, dom.zoomOut, dom.resetView,
+    dom.viewOverview, dom.viewNeighbourhood, dom.saveViewBtn, dom.restoreViewBtn, dom.clearSavedViewBtn
+  ]) {
     if (control) control.disabled = true
   }
+  // A legend explains what is drawn. Nothing is drawn, so it must not keep
+  // explaining the graph that was there a moment ago.
+  dom.legendEdges?.replaceChildren()
+  dom.legendDepth?.replaceChildren()
+  if (dom.legendNote) dom.legendNote.textContent = 'No graph is drawn, so there is nothing to explain.'
+  if (dom.legendDepthNote) dom.legendDepthNote.textContent = ''
+  if (dom.viewReadout) dom.viewReadout.textContent = '—'
+  // #saved-view-state is #view-readout's sibling in the same group and the
+  // fourth line of this block. showFailure is not only a boot path: onContextLost
+  // calls it long after a successful save or restore, and the line then still
+  // read `Restored.` or `Saved: Direct neighbourhood of “…” — 4 of 5 nodes, 3 of
+  // 4 relations.` beside a disabled Save button, with body[data-saved-view]
+  // still standing — a claim about a stage that is no longer drawn. Every
+  // saved-view control above is disabled, so there is nothing left for the line
+  // to qualify; it says nothing rather than something stale, exactly as
+  // #legend-depth-note does one line up.
+  if (dom.savedViewState) dom.savedViewState.textContent = ''
+  delete dom.body.dataset.savedView
   dom.body.dataset.stage = 'failed'
-  announce(`${headline} ${detail}`)
+  announceFailure(`${headline} ${detail}`)
 }
 
 /* ---------- status bar ---------- */
@@ -149,11 +241,6 @@ function paintStatus() {
 }
 
 /* ---------- navigator ---------- */
-
-function levelCaption(depth) {
-  if (depth === null) return 'No hierarchy path'
-  return depth === 0 ? 'Root' : `Level ${depth}`
-}
 
 function paintNavigator() {
   const vm = state.viewModel
@@ -175,7 +262,7 @@ function paintNavigator() {
       lastDepth = node.depth
       const group = document.createElement('li')
       group.className = 'a39-group a39-label'
-      group.textContent = levelCaption(node.depth)
+      group.textContent = depthCaption(node.depth)
       dom.nodelist.append(group)
     }
     const item = document.createElement('li')
@@ -227,7 +314,7 @@ function paintInspector() {
   const facts = document.createElement('dl')
   facts.className = 'a39-facts'
   fact(facts, 'Confluence page id', node.source_ref)
-  fact(facts, 'Hierarchy', levelCaption(node.depth))
+  fact(facts, 'Hierarchy', depthCaption(node.depth))
 
   if (node.provenance) {
     fact(facts, 'Revision', `v${node.provenance.version}`)
@@ -401,14 +488,21 @@ function paintZoomReadout() {
 }
 
 function paintStage() {
-  const vm = state.viewModel
+  // The DISPLAYED model, not the whole graph: a view restricts which nodes and
+  // edges reach the layout and the scene, and nothing else about them.
+  const model = state.displayed.model
   const viewport = stageViewport()
-  const layout = computeLayout(vm, viewport)
+  const layout = computeLayout(model, viewport)
   state.layout = layout
   state.world = { width: layout.width, height: layout.height }
   state.transform = clampTransform(state.transform, state.world)
 
-  const scene = buildScene(vm, layout, selectFocus(vm, state.focusId))
+  // selectFocus is given the SAME model buildScene is given. Handing it the
+  // full view model instead would report a focus on a node this view does not
+  // draw, and buildScene would then mark every node `dim` with nothing in the
+  // tab order — a stage no keyboard user could reach. leavesView() below is
+  // what keeps state.focusId inside state.view so this call cannot do that.
+  const scene = buildScene(model, layout, selectFocus(model, state.focusId))
   const projected = projectScene(scene, state.transform)
 
   const violation = sceneViolation(projected)
@@ -451,14 +545,330 @@ function paintStage() {
   return true
 }
 
+/* ---------- views, saved view and legend ---------- */
+
+const SAVED_VIEW_KEY = `atlas40.saved-view.v${SAVED_VIEW_VERSION}`
+/** Only tokens this build defines may reach a style property. */
+const DEPTH_TOKEN = /^--depth-(?:0|1|2|n|none)$/
+
+/**
+ * localStorage that has been proved writable. Merely reading `window.
+ * localStorage` is not enough — several engines expose the object and throw on
+ * write, and a save that silently does nothing is exactly the failure mode this
+ * slice exists to remove.
+ */
+function openStore() {
+  try {
+    const store = window.localStorage
+    const probe = `${SAVED_VIEW_KEY}.probe`
+    store.setItem(probe, '1')
+    store.removeItem(probe)
+    return store
+  } catch {
+    return null
+  }
+}
+
+function anchorLabel() {
+  const id = state.view.anchorId
+  if (id === null) return null
+  return state.viewModel.nodes.find((n) => n.node_id === id)?.label ?? null
+}
+
+/**
+ * True when `view` would not draw `nodeId` — the one predicate that keeps a
+ * focus and the view it is shown in consistent, and therefore the one thing
+ * standing between this shell and the scene `paintStage` describes: a focus
+ * outside the displayed model makes `selectFocus` report `hasFocus: true`
+ * (applyView keeps the FULL-graph adjacency by design, view-state.mjs), which
+ * makes `buildScene` mark every node `dim` with nothing in the tab order, which
+ * `core/scene-guard.mjs` then refuses as E_STAGE_SCENE_REFUSED — tearing the
+ * stage down over a UI state, which is exactly what a saved view must never do.
+ *
+ * Both writers of `state.focusId` go through it: setFocus and onRestoreView.
+ * An unresolvable view answers `true`, because isInView() answers false for a
+ * refusal — so an anchor this graph does not contain widens to Overview rather
+ * than silently keeping a focus nothing draws.
+ */
+function leavesView(view, nodeId) {
+  if (nodeId === null || view.mode === 'overview') return false
+  return !isInView(applyView(state.viewModel, view), nodeId)
+}
+
+function resolveDisplayed() {
+  const applied = applyView(state.viewModel, state.view)
+  if (applied.ok) {
+    state.displayed = applied
+    return
+  }
+  // Unreachable while every assignment to state.view goes through a validated
+  // path — which is exactly why it must be visible if it ever happens, rather
+  // than a quiet return to overview that looks like the user's own choice.
+  state.view = { ...DEFAULT_VIEW }
+  state.displayed = applyView(state.viewModel, state.view)
+  announce(`That view could not be shown: ${applied.reason}. Showing the whole graph instead.`)
+}
+
+function paintLegend() {
+  const model = state.displayed.model
+
+  const edgeLegend = buildEdgeLegend(model)
+  const edgeRows = document.createDocumentFragment()
+  for (const entry of edgeLegend.entries) {
+    const row = document.createElement('div')
+    row.className = 'a39-legend-row'
+    const swatch = document.createElement('span')
+    swatch.className = 'a39-edge-swatch'
+    const text = document.createElement('span')
+    // relation_type and origin are echoed exactly as the snapshot spells them,
+    // through textContent — so a relation type can never become markup.
+    text.textContent = `${entry.relationType} · ${entry.origin} (${entry.count})`
+    row.append(swatch, text)
+    edgeRows.append(row)
+  }
+  dom.legendEdges.replaceChildren(edgeRows)
+  // An empty edge legend is said ONCE. This used to append a row reading "No
+  // relations in this view." as well, so the same fact arrived twice in two
+  // different wordings, which reads as two separate facts. The sentence that
+  // survives is the module's, because core/legend.mjs owns and pins it
+  // (test/atlas40-legend.test.mjs), and the note is the element that already
+  // exists to say what the rows cannot.
+  dom.legendNote.textContent = edgeLegendNote(edgeLegend)
+
+  const depthLegend = buildDepthLegend(model)
+  const depthRows = document.createDocumentFragment()
+  for (const entry of depthLegend.entries) {
+    const row = document.createElement('div')
+    row.className = 'a39-legend-row'
+    const text = document.createElement('span')
+    text.textContent = `${depthCaption(entry.depth)} (${entry.count})`
+    // The swatch is painted from the same token the renderer strokes the disc
+    // with. The allowlist keeps that assignment mechanically safe — and a token
+    // outside it gets NO swatch at all rather than the base `.a39-swatch`
+    // border, which is `var(--depth-n)` (shell.css, the `.a39-swatch` rule):
+    // drawing it would assert the depth-n colour for a row that is not depth-n.
+    // Unreachable today, because depthTokenName returns only the five admitted
+    // tokens and test/atlas40-scene.test.mjs pins that table — which is exactly
+    // why it must fail closed instead of degrading if the ladder ever changes.
+    if (DEPTH_TOKEN.test(entry.token)) {
+      const swatch = document.createElement('span')
+      swatch.className = 'a39-swatch'
+      swatch.style.borderColor = `var(${entry.token})`
+      row.append(swatch, text)
+    } else {
+      row.append(text)
+    }
+    depthRows.append(row)
+  }
+  dom.legendDepth.replaceChildren(depthRows)
+  // What the Hierarchy group does NOT distinguish, said by the shell because D7
+  // assigns the sentence here: depthTokenName collapses every depth from 3
+  // onward onto `--depth-n`, so on a deeper graph differently-labelled rows
+  // carry an identical swatch. Derived from the rows themselves rather than from
+  // a flag, so it can only appear when it is true — on the accepted three-level
+  // snapshot every row has its own token and this stays empty.
+  //
+  // The LEVEL is derived too, not written into the sentence. A constant reading
+  // 'Level 3 and deeper' was right only because depthTokenName happens to
+  // collapse at 3 today; a ladder that collapsed at 2 would have fired this note
+  // and named the wrong level — slice 1's fixed rows, moved out of the rows and
+  // into the sentence, which is the exact shape Task 5 removed from
+  // edgeLegendNote one module over. The first row whose token another row also
+  // carries is where the collapse starts, and entries arrive depth-ascending
+  // (core/legend.mjs, buildDepthLegend's sort).
+  const depthTokenCounts = new Map()
+  for (const entry of depthLegend.entries) {
+    depthTokenCounts.set(entry.token, (depthTokenCounts.get(entry.token) ?? 0) + 1)
+  }
+  const sharedFrom = depthLegend.entries.find((e) => depthTokenCounts.get(e.token) > 1) ?? null
+  dom.legendDepthNote.textContent =
+    sharedFrom === null ? '' : `${depthCaption(sharedFrom.depth)} and deeper share one colour.`
+}
+
+function paintViewControls() {
+  const scope = state.displayed.scope
+  dom.viewOverview.setAttribute('aria-pressed', String(scope.mode === 'overview'))
+  dom.viewNeighbourhood.setAttribute('aria-pressed', String(scope.mode === 'neighbourhood'))
+  // Unavailable only when there is no node to anchor on at all. Disabling it on
+  // `state.focusId === null` alone left the button `aria-pressed="true"` AND
+  // `disabled` — measured after click-node → "Neighbourhood" → "Clear focus" —
+  // i.e. the control that reports the mode on the stage was the one control the
+  // user could not operate. The Overview button stays clickable while pressed
+  // and re-asserts its mode; this one now behaves the same way, anchoring on the
+  // focus or, when the focus was cleared under a neighbourhood, on the anchor
+  // already drawn.
+  dom.viewNeighbourhood.disabled = state.focusId === null && state.view.anchorId === null
+  dom.viewReadout.textContent = viewCaption(scope, anchorLabel())
+  dom.saveViewBtn.disabled = state.store === null
+  dom.restoreViewBtn.disabled = state.store === null || !state.savedViewPresent
+  dom.clearSavedViewBtn.disabled = state.store === null || !state.savedViewPresent
+}
+
+function setView(next) {
+  const applied = applyView(state.viewModel, next)
+  if (!applied.ok) {
+    announce(`That view could not be shown: ${applied.reason}.`)
+    return
+  }
+  // The third writer of state.view, and until now the one that did not consult
+  // leavesView — so the invariant that predicate documents ("a focus and the
+  // view it is shown in stay consistent") held on the focus side only, by the
+  // accident of who calls this. Neither shipped caller can reach it:
+  // #view-overview widens to a view that draws everything, and
+  // #view-neighbourhood anchors on `state.focusId ?? state.view.anchorId`, so
+  // the focus is either the anchor itself or null. A third caller would leave
+  // state.focusId outside state.displayed.model, which is the "0 nodes are in
+  // the tab order, expected exactly 1" path in core/scene-guard.mjs that tears
+  // the stage down with E_STAGE_SCENE_REFUSED — what D5 forbids. Widening back
+  // to Overview is not the symmetric answer here, because the view is the thing
+  // the user just asked for; the unseeable selection is what goes, and it is
+  // announced rather than dropped in silence.
+  const droppedFocus = leavesView(applied.view, state.focusId)
+  if (droppedFocus) state.focusId = null
+  state.view = applied.view
+  render()
+  announce(
+    (droppedFocus ? 'The focused page is not drawn by this view, so the focus was cleared. ' : '') +
+      viewCaption(state.displayed.scope, anchorLabel())
+  )
+}
+
+/**
+ * A saved view that does not apply is NOT a stage failure: the loaded graph is
+ * still real and still drawn. It is refused loudly and locally instead. Nothing
+ * has been assigned by the time this runs, so a refusal cannot leave a
+ * half-restored view behind.
+ */
+function refuseSavedView(code, reason) {
+  dom.body.dataset.savedView = 'refused'
+  dom.savedViewState.textContent = `${reason} (${code})`
+  announce(`Saved view refused. ${reason}. ${code}. Nothing on the stage was changed.`)
+}
+
+function onSaveView() {
+  if (state.store === null) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, 'This browser did not allow the workspace to store a saved view')
+    return
+  }
+  const record = captureSavedView({
+    viewModel: state.viewModel,
+    view: state.view,
+    focusId: state.focusId,
+    transform: state.transform,
+    viewport: stageViewport()
+  })
+  try {
+    state.store.setItem(SAVED_VIEW_KEY, serializeSavedView(record))
+  } catch (error) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, `The saved view could not be stored: ${error.message}`)
+    return
+  }
+  state.savedViewPresent = true
+  dom.body.dataset.savedView = 'saved'
+  const caption = viewCaption(state.displayed.scope, anchorLabel())
+  dom.savedViewState.textContent = `Saved: ${caption}`
+  paintViewControls()
+  announce(`View saved. ${caption}`)
+}
+
+function onRestoreView() {
+  if (state.store === null) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, 'This browser did not allow the workspace to read a saved view')
+    return
+  }
+  let stored = null
+  try {
+    stored = state.store.getItem(SAVED_VIEW_KEY)
+  } catch (error) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, `The saved view could not be read: ${error.message}`)
+    return
+  }
+  const parsed = parseSavedView(stored)
+  if (!parsed.ok) {
+    refuseSavedView(parsed.code, parsed.reason)
+    return
+  }
+  const bound = restoreSavedView(state.viewModel, parsed.value, stageViewport())
+  if (!bound.ok) {
+    refuseSavedView(bound.code, bound.reason)
+    return
+  }
+  // The saved-view contract checks that anchor and focus are BOTH nodes of this
+  // graph; it does not check that the focus is one the saved view draws, and it
+  // cannot, because that is a fact about the projection rather than about the
+  // record. Stored text is untrusted — validating it is why parseSavedView
+  // exists — so the same guard setFocus uses runs here too.
+  const leftView = leavesView(bound.view, bound.focusId)
+
+  state.view = leftView ? { ...DEFAULT_VIEW } : bound.view
+  state.focusId = bound.focusId
+  state.restoreStageFocus = false
+  state.transform = clampTransform(bound.transform, state.world)
+  dom.body.dataset.savedView = 'restored'
+  // The VISIBLE line said a flat 'Restored.' on both sides of the branch above,
+  // so when the saved view was discarded the sighted user read a restoration
+  // that did not happen — 'Restored.' beside an Overview readout, with the
+  // stored record naming a neighbourhood. Measured headed on the accepted
+  // snapshot, record {mode:'neighbourhood', anchor_id:…:22478849,
+  // focus_id:…:14778372}: #saved-view-state "Restored.",
+  // body[data-saved-view]=restored, #view-readout "Overview — 5 of 5 nodes,
+  // 4 of 4 relations.", while the live region alone carried "…The saved focus
+  // is not drawn by the saved view, so the whole graph is shown instead."
+  //
+  // That is the mirror image of the setFocus defect this slice already
+  // corrected, where only the assistive-technology user got the wrong sentence;
+  // here only the sighted user did. Both channels now name the same outcome.
+  // The re-fit case is deliberately NOT added here: D6 assigns that sentence to
+  // the announcement, and the visible line is not making a claim about it.
+  dom.savedViewState.textContent = leftView
+    ? 'Restored without the saved view: its focus is not drawn by it.'
+    : 'Restored.'
+  render()
+  announce(
+    `Saved view restored. ${viewCaption(state.displayed.scope, anchorLabel())}` +
+      (leftView
+        ? ' The saved focus is not drawn by the saved view, so the whole graph is shown instead.'
+        : '') +
+      (bound.viewportChanged
+        ? ' The stage is a different size than when this view was saved, so the zoom and position were re-fitted.'
+        : '')
+  )
+}
+
+function onClearSavedView() {
+  if (state.store === null) {
+    // The same condition onSaveView and onRestoreView refuse loudly. The button
+    // is disabled while the store is null, so this is unreachable today — but a
+    // silent return here would be the one saved-view path that answers a user
+    // action with nothing, and a false hint that silence is acceptable in this
+    // family of handlers.
+    refuseSavedView(E_SAVED_VIEW_STORAGE, 'This browser did not allow the workspace to clear a saved view')
+    return
+  }
+  try {
+    state.store.removeItem(SAVED_VIEW_KEY)
+  } catch (error) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, `The saved view could not be cleared: ${error.message}`)
+    return
+  }
+  state.savedViewPresent = false
+  dom.body.dataset.savedView = 'none'
+  dom.savedViewState.textContent = 'No saved view.'
+  paintViewControls()
+  announce('Saved view cleared.')
+}
+
 function render() {
   if (state.failed) return
+  resolveDisplayed()
   // A refused stage has already painted the failure state over every region;
   // repainting the navigator and inspector on top of it would re-introduce
   // exactly the "there is a graph here" impression the refusal exists to deny.
   if (!paintStage()) return
   paintNavigator()
   paintInspector()
+  paintLegend()
+  paintViewControls()
   dom.clearFocus.disabled = state.focusId === null
 }
 
@@ -478,27 +888,66 @@ function isOffStage(placement) {
 function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false } = {}) {
   const vm = state.viewModel
   const known = vm.nodes.some((n) => n.node_id === nodeId)
+  // Focusing a node the current view does not draw would leave the user with a
+  // selection they cannot see — the same defect as losing the graph — and it
+  // would hand paintStage a focus outside its model, which is the 0-tabbable
+  // scene described there. The view returns to the whole graph, and says so.
+  const leftView = known && leavesView(state.view, nodeId)
+  if (leftView) state.view = { ...DEFAULT_VIEW }
   state.focusId = known ? nodeId : null
   state.restoreStageFocus = known && moveStageFocus
 
+  render()
+
   // Focusing a node that the current pan has pushed off screen is the same
   // defect as losing the graph, so a focus that came from the navigator or from
-  // a search brings the node back into view — but only when it actually needs it.
-  if (known && center && state.layout) {
+  // a search brings the node back into view — but only when it actually needs
+  // it.
+  //
+  // This runs AFTER render(), against the layout render() just produced. Slice 1
+  // could read state.layout first because the layout always held every node;
+  // paintStage now lays out the DISPLAYED model, so the previous view's layout
+  // does not contain a node that arrived from outside it — measured on the
+  // accepted snapshot at 1092x693 with anchor ATLAS:confluence:14778372:14778372:
+  // 4 of 5 nodes placed, and `placements.find(p => p.node_id === SPRINT)` is
+  // `undefined`, so the centring was skipped in exactly the case it exists for.
+  // At scale 2.5 that node projects to {x: 3.5, y: 35.25} in a 1092x693 stage —
+  // off stage by isOffStage's own 48px margin, focused and unreachable.
+  if (known && center && !state.failed && state.layout) {
     const placement = state.layout.placements.find((p) => p.node_id === nodeId)
     if (placement && isOffStage(placement)) {
-      state.transform = centerOn(state.transform, placement.x, placement.y, state.world)
+      applyTransform(centerOn(state.transform, placement.x, placement.y, state.world))
     }
   }
 
-  render()
-  if (quiet) return
+  // D3's "the view returns to the whole graph AND SAYS SO" is a fact the caller
+  // may have to announce itself: announce() overwrites the live region
+  // (app.mjs, `dom.live.textContent = message`), so a sentence emitted here on
+  // the quiet path would be replaced by the caller's own one line later and
+  // never reach the user. It is returned instead of being spelled a second time
+  // at the call site, so the two cannot drift apart.
+  const scopeSentence = leftView ? 'Left the focused view. ' : ''
+  if (quiet) return scopeSentence
   if (!known) {
-    announce('Focus cleared. Showing the whole graph.')
-    return
+    // Slice 1 could say "Showing the whole graph" here because one view existed.
+    // Slice 2 made `state.view` independent of `state.focusId`, and clearing the
+    // focus deliberately does NOT widen the view — so that sentence became a
+    // sometimes-lie: measured after click-node → "Neighbourhood" → "Clear
+    // focus" on the accepted snapshot, `state.view` stays
+    // `{mode:'neighbourhood', anchorId:'ATLAS:confluence:14778372:14778372'}`,
+    // 4 of 5 nodes are drawn, and #view-readout says so while the live region
+    // claimed the whole graph. Only the assistive-technology user got the wrong
+    // one. The readout's own sentence is announced instead, so the two cannot
+    // disagree.
+    announce(`Focus cleared. ${viewCaption(state.displayed.scope, anchorLabel())}`)
+    return scopeSentence
   }
   const node = vm.nodes.find((n) => n.node_id === nodeId)
-  announce(`${node.label} focused. ${levelCaption(node.depth)}. ${node.degree} direct ${node.degree === 1 ? 'relation' : 'relations'}.`)
+  announce(
+    `${scopeSentence}${node.label} focused. ` +
+    `${depthCaption(node.depth)}. ${node.degree} direct ${node.degree === 1 ? 'relation' : 'relations'}.`
+  )
+  return scopeSentence
 }
 
 /* ---------- zoom and pan ---------- */
@@ -527,8 +976,10 @@ function stagePoint(event) {
 /* ---------- events ---------- */
 
 function stepFocus(delta) {
-  const vm = state.viewModel
-  const order = vm.nodes.map((n) => n.node_id)
+  // The order that is DRAWN. Walking the full graph here would step onto a node
+  // the current view hides and kick the view back to Overview on every second
+  // arrow press.
+  const order = state.displayed.model.nodes.map((n) => n.node_id)
   const current = order.indexOf(state.focusId)
   const next = current === -1
     ? (delta > 0 ? 0 : order.length - 1)
@@ -567,13 +1018,20 @@ function onStageKeydown(event) {
       }
       stepFocus(-1)
       return
+    // Home/End are keyboard traversal too, so they walk the same order the
+    // arrows do — the DISPLAYED one. Walking the full graph here stepped
+    // straight out of the view: measured on the accepted snapshot in the
+    // neighbourhood of ATLAS:confluence:14778372:14778372, `End` targeted
+    // "Sprint 2 – Visible Real Semantic Atlas – Sprint Plan", `isInView` false,
+    // so one key press widened the view back to Overview. Announced, so nothing
+    // was misleading — but it made the two halves of the same gesture disagree.
     case 'Home':
       event.preventDefault()
-      setFocus(state.viewModel.nodes[0].node_id, { center: true })
+      setFocus(state.displayed.model.nodes[0].node_id, { center: true })
       return
     case 'End':
       event.preventDefault()
-      setFocus(state.viewModel.nodes.at(-1).node_id, { center: true })
+      setFocus(state.displayed.model.nodes.at(-1).node_id, { center: true })
       return
     case '+':
     case '=':
@@ -603,10 +1061,17 @@ function runSearch() {
   const result = matchNodes(state.viewModel, state.filter)
   dom.body.dataset.search = !result.active ? 'idle' : result.matches.length === 0 ? 'nomatch' : 'match'
   dom.filter.setAttribute('aria-invalid', result.active && result.matches.length === 0 ? 'true' : 'false')
+  // Search runs over the WHOLE graph (D3), so a match can land outside the
+  // current view and widen it back to Overview. That scope change has to be
+  // announced here: setFocus is quiet on this path because this function makes
+  // the announcement, and announce() overwrites the live region — a sentence
+  // from setFocus would be replaced by the search sentence one line later and
+  // the live-region user would lose the whole scope silently.
+  let scopeSentence = ''
   if (result.firstMatchId) {
-    setFocus(result.firstMatchId, { moveStageFocus: false, quiet: true, center: true })
+    scopeSentence = setFocus(result.firstMatchId, { moveStageFocus: false, quiet: true, center: true })
   }
-  announce(searchAnnouncement(result))
+  announce(`${scopeSentence}${searchAnnouncement(result)}`)
 }
 
 function syncSearchState() {
@@ -638,45 +1103,52 @@ function wirePointer() {
   // starts on one. The click that focuses a node is protected by a movement
   // threshold instead: below it the gesture is a click, above it it is a pan and
   // the click is swallowed.
-  const DRAG_THRESHOLD = 4
-  let gesture = null
-  let suppressClick = false
+  //
+  // The state machine itself lives in core/gesture.mjs, where a `node --test`
+  // suite can drive it. Kept here it could only ever be asserted as source text,
+  // which is what let a stale click suppression survive a pointercancel.
+  const gesture = createDragGesture()
 
   // Capture phase, so this runs before the node button's own click handler.
+  //
+  // The DOM event is forwarded as-is here too: `consumeClick` reads `detail` to
+  // tell a click a pointer produced (click count >= 1) from one nothing
+  // produced (0, because HTML's "fire a synthetic pointer event" — the
+  // algorithm behind `element.click()` and behind a keyboard activation — never
+  // initialises it). Only the former can be the tail of a pan, so only the
+  // former may spend the suppression.
+  //
+  // On this stage the reachable non-pointer route is a click dispatched by
+  // script or by assistive technology, not the keyboard: onStageKeydown
+  // preventDefaults Enter and Space over a node, so the button's activation
+  // behaviour — and with it any click — never runs. Measured headed 2026-08-20.
   dom.stageHost.addEventListener('click', (event) => {
-    if (!suppressClick) return
-    suppressClick = false
+    if (!gesture.consumeClick(event)) return
     event.stopPropagation()
     event.preventDefault()
   }, true)
 
+  // The DOM event is forwarded as-is: the module reads `buttons` to refuse a
+  // step with no button held, and a synthetic record without it would be
+  // refused rather than trusted.
   dom.stageHost.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return
-    if (event.target.closest?.('.a39-stage-controls')) return
-    suppressClick = false
-    gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, panning: false }
+    gesture.start(event)
   })
 
   dom.stageHost.addEventListener('pointermove', (event) => {
-    if (!gesture || event.pointerId !== gesture.id) return
-    const dx = event.clientX - gesture.x
-    const dy = event.clientY - gesture.y
-    if (!gesture.panning) {
-      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return
-      gesture.panning = true
-      suppressClick = true
+    const step = gesture.move(event)
+    if (!step.panning) return
+    if (step.began) {
       dom.stageHost.setPointerCapture?.(event.pointerId)
       dom.body.dataset.panning = 'true'
     }
-    gesture.x = event.clientX
-    gesture.y = event.clientY
-    applyTransform(panBy(state.transform, dx, dy, state.world))
+    applyTransform(panBy(state.transform, step.dx, step.dy, state.world))
   })
 
   const endPan = (event) => {
-    if (!gesture || event.pointerId !== gesture.id) return
-    if (gesture.panning) dom.stageHost.releasePointerCapture?.(gesture.id)
-    gesture = null
+    const done = gesture.end(event)
+    if (!done.ended) return
+    if (done.wasPanning) dom.stageHost.releasePointerCapture?.(done.pointerId)
     delete dom.body.dataset.panning
   }
   dom.stageHost.addEventListener('pointerup', endPan)
@@ -699,6 +1171,22 @@ function wireEvents() {
   dom.resetView.addEventListener('click', () => {
     applyTransform(resetTransform(state.world), 'View reset to the default zoom and position.')
   })
+
+  dom.viewOverview.addEventListener('click', () => setView({ ...DEFAULT_VIEW }))
+  dom.viewNeighbourhood.addEventListener('click', () => {
+    // The focus is the anchor. When the focus was cleared while a neighbourhood
+    // is on the stage — or a restored saved view carries `focus_id: null`
+    // (saved-view.mjs admits it) — the anchor already drawn is re-asserted,
+    // which is exactly what the Overview button does in its own mode. So an
+    // enabled control always has something to do and always announces the
+    // result; it is never an enabled button that silently does nothing.
+    const anchorId = state.focusId ?? state.view.anchorId
+    if (anchorId === null) return
+    setView({ mode: 'neighbourhood', anchorId })
+  })
+  dom.saveViewBtn.addEventListener('click', onSaveView)
+  dom.restoreViewBtn.addEventListener('click', onRestoreView)
+  dom.clearSavedViewBtn.addEventListener('click', onClearSavedView)
 
   dom.filter.addEventListener('input', syncSearchState)
   // The native clear affordance of <input type="search"> fires `search`, not
@@ -801,6 +1289,47 @@ async function boot() {
 
   state.transform = resetTransform(state.world)
   paintStatus()
+
+  // Whether a saved view can be stored at all is a property of the browser, not
+  // of the graph, so it is settled once here and reported as it is. A workspace
+  // that offered "Save view" and then did nothing would be the quiet failure
+  // this slice exists to remove.
+  state.store = openStore()
+  // openStore() proves the store is WRITABLE, which is not the same as
+  // readable: an engine that accepts the probe write and refuses getItem gets a
+  // store back and then throws on this read. That throw sits between
+  // openStore() and wireEvents()/render() inside a boot() that is called bare,
+  // so it would take the whole workspace down silently — no graph, no
+  // showFailure panel, data-stage neither `ready` nor `failed`, which is the
+  // quiet dead workspace the comment above says this slice exists to remove.
+  // onRestoreView refuses the identical `state.store.getItem(SAVED_VIEW_KEY)`
+  // call with E_SAVED_VIEW_STORAGE rather than letting it escape; so does this.
+  let storeRefusedRead = false
+  if (state.store !== null) {
+    try {
+      state.savedViewPresent = typeof state.store.getItem(SAVED_VIEW_KEY) === 'string'
+    } catch {
+      storeRefusedRead = true
+    }
+  }
+  // A store the browser refused OUTRIGHT is `refused` for the same reason a
+  // refused read is: `none` means "confirmed absent", which is what
+  // onClearSavedView writes after really clearing the slot, and neither refusal
+  // can back that claim. It is also the harder of the two — no view can be
+  // saved at all — and `body[data-saved-view="refused"] .a39-saved-view-state`
+  // (shell.css) is the one rule that marks a refusal visually, so leaving this
+  // branch out rendered the worse case in the same muted colour as the benign
+  // "No saved view." onSaveView refuses the identical `state.store === null`
+  // through refuseSavedView, which writes `refused`; one file must not report
+  // one fact two ways.
+  dom.body.dataset.savedView =
+    state.store === null || storeRefusedRead ? 'refused' : state.savedViewPresent ? 'saved' : 'none'
+  dom.savedViewState.textContent = state.store === null
+    ? 'This browser did not allow the workspace to store a saved view.'
+    : storeRefusedRead
+      ? 'This browser did not allow the workspace to read a saved view.'
+      : state.savedViewPresent ? 'A saved view is stored.' : 'No saved view.'
+
   wireEvents()
   render()
   if (state.failed) return

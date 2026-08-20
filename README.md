@@ -202,7 +202,7 @@ Start here if you want to go deeper:
 - [`docs/repository-audit-and-value-brief.md`](docs/repository-audit-and-value-brief.md) — evidence-based assessment, customer value and current gaps
 - [`docs/atlas-65-local-e2e.md`](docs/atlas-65-local-e2e.md) — real-source pilot runbook and failure codes
 - [`docs/atlas-39-workspace-shell.md`](docs/atlas-39-workspace-shell.md) — workspace structure, interaction model and accessibility
-- [`docs/atlas-40-webgl-renderer.md`](docs/atlas-40-webgl-renderer.md) — WebGL rendering boundary and navigation behavior
+- [`docs/atlas-40-webgl-renderer.md`](docs/atlas-40-webgl-renderer.md) — WebGL rendering boundary, navigation behavior, deterministic views, the versioned saved-view contract and the derived edge legend
 - [`architecture/architecture.json`](architecture/architecture.json) — canonical as-built / target architecture model
 - [`architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md`](architecture/adr/ADR-0001-canonical-store-and-gbrain-projection.md) — canonical-vs-derived architecture decision
 - [`docs/repository-assessment.md`](docs/repository-assessment.md) — upstream and legacy repository assessment

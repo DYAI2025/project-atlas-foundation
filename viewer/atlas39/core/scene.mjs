@@ -156,13 +156,82 @@ export function resolvePalette(readVar) {
   return palette
 }
 
-/** The disc stroke for a node, by hierarchy depth. Mirrors stage.css exactly. */
+/**
+ * The name of the design token that a node disc at this depth is stroked with.
+ * Exported so the legend can name a token instead of carrying its own list of
+ * depth colours.
+ *
+ * HONEST SCOPE — this is NOT (yet) the single place the depth->colour decision
+ * is written in this repository. Two hand-maintained copies of the same ladder
+ * remain, and neither is derived from this function:
+ *
+ *   - `core/render-webgl.mjs` `nodeAppearance()` — the code that actually
+ *     strokes the disc on the GPU — inlines the ladder as a chain of ternaries.
+ *     That file is on the Slice-2 must-not-change list, so this commit may not
+ *     delete the duplicate.
+ *   - `stage.css:70-93` — the golden-SVG path — spells it a third time as
+ *     `.a39-node[data-depth="0|1|2|none"]` rules over a `--depth-n` default.
+ *
+ * All three agree today. The WebGL copy is now pinned *against this function*
+ * for every depth class: `test/atlas40-render-webgl.test.mjs` ("the depth
+ * ladder the GPU is fed is the one `depthColor` computes") reads the stroke
+ * colour back out of the uploaded vertex buffer and compares it to
+ * `depthColor(palette, depth)`, so those two cannot diverge without a red test.
+ * The CSS copy is weaker: `stage.css` is inlined verbatim into the committed
+ * golden SVGs (`scripts/atlas39/render-golden.mjs:44-47`), so editing it moves
+ * the golden bytes and trips that gate — which detects the edit, but never
+ * compares it to this ladder. "Cannot drift by construction" would be an
+ * overclaim; "cannot drift without a red test" is what is true of the renderer,
+ * and "cannot change unnoticed" is what is true of the CSS.
+ */
+export function depthTokenName(depth) {
+  if (depth === null) return '--depth-none'
+  if (depth === 0) return '--depth-0'
+  if (depth === 1) return '--depth-1'
+  if (depth === 2) return '--depth-2'
+  return '--depth-n'
+}
+
+/**
+ * Which key of a resolved palette each depth token was read into. This is a
+ * hand-written inverse of the `depth*` entries of `resolvePalette`'s `wanted`
+ * map above — a fourth copy of the same five pairs, in the same file. Deriving
+ * both from one shared table would delete the duplicate; that is deferred to
+ * the task where the legend becomes the first production consumer of
+ * `depthColor`, and until then the pairs are pinned by
+ * `test/atlas40-scene.test.mjs` re-reading `tokens.css` by the token name.
+ */
+const DEPTH_PALETTE_KEY = Object.freeze({
+  '--depth-0': 'depth0',
+  '--depth-1': 'depth1',
+  '--depth-2': 'depth2',
+  '--depth-n': 'depthN',
+  '--depth-none': 'depthNone'
+})
+
+/**
+ * The colour a node disc at this depth is stroked with, resolved from the
+ * palette. It has no production caller yet — the WebGL renderer computes the
+ * same colour from its own inlined ladder (see `depthTokenName` above), and the
+ * SVG/golden path takes it from `stage.css`. Until one of those consumes this
+ * function it is the *reference* ladder that the others are tested against, not
+ * the ladder they execute.
+ *
+ * Fails closed, like `resolvePalette`: a lookup that lands on no colour throws
+ * `PaletteError` instead of returning `undefined`. Not reachable through this
+ * module's own two tables today — it guards the next hand-edit of either of
+ * them, and a caller that passes a palette this ladder cannot be resolved
+ * against. A design system that lost a token must not paint a default pixel and
+ * carry on.
+ */
 export function depthColor(palette, depth) {
-  if (depth === null) return palette.depthNone
-  if (depth === 0) return palette.depth0
-  if (depth === 1) return palette.depth1
-  if (depth === 2) return palette.depth2
-  return palette.depthN
+  const token = depthTokenName(depth)
+  const key = DEPTH_PALETTE_KEY[token]
+  const colour = key === undefined ? undefined : palette?.[key]
+  if (!colour) {
+    throw new PaletteError(`${E_PALETTE_INVALID}: no palette colour for depth token ${token}`)
+  }
+  return colour
 }
 
 /* ---------- world scene ---------- */

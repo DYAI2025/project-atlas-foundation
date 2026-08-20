@@ -25,6 +25,7 @@ import {
   resolvePalette,
   labelBudget,
   depthColor,
+  depthTokenName,
   PaletteError
 } from '../viewer/atlas39/core/scene.mjs'
 import { sceneViolation } from '../viewer/atlas39/core/scene-guard.mjs'
@@ -50,6 +51,13 @@ const sceneAt = (focusId, transform = resetTransform(WORLD)) =>
   projectScene(buildScene(viewModel, layout, selectFocus(viewModel, focusId)), transform)
 
 const REAL_PAGE_IDS = ['14680066', '14778372', '15073290', '15171611', '22478849']
+
+// The palette fixture: the REAL tokens.css, read the way the browser resolves a
+// custom property. Module scope on purpose — every palette test in this file
+// resolves from this one reader, because a second hand-written colour list
+// could drift from the design system and still pass.
+const tokensCss = readFileSync(join(repoRoot, 'viewer/atlas39/tokens.css'), 'utf8')
+const readToken = (name) => new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(tokensCss)?.[1] ?? ''
 
 test('the scene is built from the accepted real ATLAS snapshot', () => {
   const digest = createHash('sha256').update(readFileSync(join(EVIDENCE_DIR, 'graph-snapshot.json'))).digest('hex')
@@ -210,9 +218,7 @@ test('colours are parsed from the design tokens and nowhere else', () => {
 })
 
 test('the palette resolves from tokens.css and fails closed when a token is missing', () => {
-  const tokens = readFileSync(join(repoRoot, 'viewer/atlas39/tokens.css'), 'utf8')
-  const read = (name) => new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(tokens)?.[1] ?? ''
-  const palette = resolvePalette(read)
+  const palette = resolvePalette(readToken)
   for (const [name, colour] of Object.entries(palette)) {
     assert.equal(colour.length, 4, `${name} is not an rgba quadruple`)
     assert.ok(colour.every((c) => Number.isFinite(c) && c >= 0 && c <= 1), `${name} is out of range`)
@@ -225,12 +231,75 @@ test('the palette resolves from tokens.css and fails closed when a token is miss
   // Counterexample: a design system that lost a token must not paint a default
   // pixel and carry on.
   assert.throws(
-    () => resolvePalette((name) => (name === '--accent' ? '' : read(name))),
+    () => resolvePalette((name) => (name === '--accent' ? '' : readToken(name))),
     (error) => error instanceof PaletteError && error.code === 'E_PALETTE_INVALID' && /--accent/.test(error.message)
+  )
+
+  // The same rule one table further down. `depthColor` resolves the token name
+  // through `DEPTH_PALETTE_KEY` and then through the palette, so it has its own
+  // way to land on nothing. A miss must be a refusal that names the token, not
+  // an `undefined` that whatever consumes it next paints as a colour.
+  assert.throws(
+    () => depthColor({ ...palette, depth1: undefined }, 1),
+    (error) => error instanceof PaletteError && error.code === 'E_PALETTE_INVALID' && /--depth-1/.test(error.message)
   )
 })
 
 test('a valid scene from real data is never refused', () => {
   assert.equal(sceneViolation(sceneAt(null)), null)
   assert.equal(sceneViolation(sceneAt(FOCUS_NODE_ID)), null)
+})
+
+test('every depth maps to exactly one design token, and that token is the colour drawn', () => {
+  const palette = resolvePalette(readToken)
+  const byToken = {
+    '--depth-0': palette.depth0,
+    '--depth-1': palette.depth1,
+    '--depth-2': palette.depth2,
+    '--depth-n': palette.depthN,
+    '--depth-none': palette.depthNone
+  }
+  // Two links of the chain move together unless they are pinned from outside
+  // it, so each gets its own independent statement below:
+  //
+  //   1. depth -> token name. `depthColor(...) === byToken[depthTokenName(...)]`
+  //      stays true when a depth is moved onto a different token, because both
+  //      sides move together. `expected` is the hand-written statement of which
+  //      token each depth is entitled to.
+  //   2. token name -> colour. `byToken['--depth-1']` is `palette.depth1`, and
+  //      which CSS token that palette key holds is decided by the `wanted` map
+  //      in `resolvePalette` — so both sides of assertion 1 read that same
+  //      entry too. Re-reading tokens.css by the token name `depthTokenName`
+  //      returned is the statement that cannot move with it.
+  const expected = {
+    null: '--depth-none',
+    0: '--depth-0',
+    1: '--depth-1',
+    2: '--depth-2',
+    3: '--depth-n',
+    9: '--depth-n',
+    40: '--depth-n'
+  }
+  // Two of the four statements below are documentation, not independent
+  // checks, and are kept only as documentation: `token in byToken` is subsumed
+  // by the `expected` table on the next line, which pins the exact token, and
+  // `depthColor(...) === byToken[token]` is subsumed by the tokens.css re-read
+  // that follows it, because `byToken[token]` and `parseCssColor(readToken(
+  // token))` are the same value whenever `resolvePalette`'s `wanted` map is
+  // intact. Measured in a throwaway copy: with both of those lines deleted and
+  // `DEPTH_PALETTE_KEY['--depth-1']` mutated to `'depth2'`, this file still
+  // fails on "depth 1 is not painted the colour its own token names". They stay
+  // because they state the depth -> token -> colour chain in the order a reader
+  // needs it; they do not add coverage.
+  for (const depth of [null, 0, 1, 2, 3, 9, 40]) {
+    const token = depthTokenName(depth)
+    assert.ok(token in byToken, `depth ${depth} produced unknown token ${token}`)
+    assert.equal(token, expected[String(depth)], `depth ${depth} was assigned ${token}`)
+    assert.deepEqual(depthColor(palette, depth), byToken[token], `depth ${depth}`)
+    assert.deepEqual(
+      depthColor(palette, depth),
+      parseCssColor(readToken(token)),
+      `depth ${depth} is not painted the colour its own token names`
+    )
+  }
 })

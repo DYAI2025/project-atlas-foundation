@@ -23,7 +23,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildViewModel, selectFocus } from '../viewer/atlas39/core/view-model.mjs'
 import { computeLayout } from '../viewer/atlas39/core/layout.mjs'
-import { buildScene, projectScene, resolvePalette, EDGE_SEGMENTS } from '../viewer/atlas39/core/scene.mjs'
+import { buildScene, projectScene, resolvePalette, depthColor, EDGE_SEGMENTS } from '../viewer/atlas39/core/scene.mjs'
 import { resetTransform } from '../viewer/atlas39/core/transform.mjs'
 import {
   createWebglStage,
@@ -265,6 +265,91 @@ test('the halo uploaded to the GPU is the same circle the overlay is sized with'
     }
   }
   assert.ok(radii.has(focused.hitR), `no stroked shape at the focused node has radius ${focused.hitR}`)
+})
+
+/* ---------- the depth ladder the GPU is fed ---------- */
+
+test('the depth ladder the GPU is fed is the one depthColor computes', () => {
+  // WHY THIS EXISTS. `core/scene.mjs` owns `depthTokenName`/`depthColor`, but
+  // `nodeAppearance()` in the renderer carries its own inlined copy of the same
+  // depth -> colour chain, and `core/render-webgl.mjs` is on the Slice-2
+  // must-not-change list, so the duplicate cannot be deleted here. The two
+  // ladders agree today by hand. This test makes that agreement measured: it
+  // reads the stroke colour back out of the vertex buffer that was actually
+  // uploaded, and compares it to `depthColor(palette, depth)`. Change either
+  // ladder without the other and this goes red.
+  //
+  // The accepted snapshot contains depths [0, 1, 1, 1, 2], so it has no node in
+  // two of the five classes: `--depth-n` and `--depth-none`. Those two are
+  // reached only by the PROBE scenes below — the real projected scene with every
+  // node's `depth` overridden — which re-cover 0/1/2 as well rather than only
+  // the missing classes. Nothing but `depth` is synthetic, and the real-data
+  // assertion is made first, on the untouched scene.
+  const SHAPE_STRIDE = 11 // corner(2) center(2) radius thickness dash colour(4)
+  const SHAPE_QUAD = 6 * SHAPE_STRIDE // one shape is a quad of six vertices
+
+  // The buffer is a Float32Array, so every comparison is made in float32. This
+  // narrows precision, it does not weaken the check: two different tokens are
+  // still two different float32 triples.
+  const f32 = (rgba) => Array.from(new Float32Array(rgba))
+
+  /**
+   * Every stroked shape uploaded for a given node: same centre, same disc
+   * radius, non-zero thickness. Fills have thickness 0, the halo has a larger
+   * radius, and the depth rings sit at neither this centre nor this radius.
+   * Stepping a whole quad at a time so one shape counts once, not six times.
+   */
+  const strokeColoursFor = (shapes, node) => {
+    const found = []
+    for (let i = 0; i < shapes.length; i += SHAPE_QUAD) {
+      const sameCircle =
+        shapes[i + 2] === Math.fround(node.x) &&
+        shapes[i + 3] === Math.fround(node.y) &&
+        shapes[i + 4] === Math.fround(node.r)
+      if (sameCircle && shapes[i + 5] > 0) {
+        found.push([shapes[i + 7], shapes[i + 8], shapes[i + 9], shapes[i + 10]])
+      }
+    }
+    return found
+  }
+
+  const drawWithDepths = (depth) => {
+    const gl = fakeGl()
+    const stage = createWebglStage(fakeCanvas(() => gl))
+    stage.resize(VIEWPORT.width, VIEWPORT.height, 1) // dpr 1: buffer units are scene units
+    const base = sceneFor(null) // no focus -> no halo, no dimming, alpha stays 1
+    const scene = depth === undefined
+      ? base
+      : { ...base, nodes: base.nodes.map((node) => ({ ...node, depth })) }
+    stage.draw(scene, palette)
+    return { scene, shapes: gl.record.uploads.at(-1) }
+  }
+
+  // 1) The real snapshot, untouched. Its depths are 0, 1 and 2 — which is why
+  //    depth 1 in particular is covered by real data and not only by a probe.
+  const real = drawWithDepths(undefined)
+  assert.deepEqual(real.scene.nodes.map((n) => n.depth), [0, 1, 1, 1, 2])
+  for (const node of real.scene.nodes) {
+    const strokes = strokeColoursFor(real.shapes, node)
+    assert.equal(strokes.length, 1, `expected exactly one stroke record for ${node.nodeId}`)
+    assert.deepEqual(
+      strokes[0],
+      f32(depthColor(palette, node.depth)),
+      `the GPU stroked depth ${node.depth} with a colour depthColor() does not compute`
+    )
+  }
+
+  // 2) Every depth class, including the ones the accepted snapshot has no node
+  //    for. `null` and 3/9/40 are the branches nothing else in the suite reaches.
+  for (const depth of [null, 0, 1, 2, 3, 9, 40]) {
+    const probe = drawWithDepths(depth)
+    const wanted = f32(depthColor(palette, depth))
+    for (const node of probe.scene.nodes) {
+      const strokes = strokeColoursFor(probe.shapes, node)
+      assert.equal(strokes.length, 1, `expected exactly one stroke record for ${node.nodeId} at depth ${depth}`)
+      assert.deepEqual(strokes[0], wanted, `depth ${depth} reached the GPU as the wrong colour`)
+    }
+  }
 })
 
 test('the shader sources are constant and carry no interpolated data', () => {

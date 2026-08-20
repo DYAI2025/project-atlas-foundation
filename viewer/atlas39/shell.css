@@ -441,16 +441,95 @@ body[data-panning="true"] .a39-stage-host {
   color: var(--text-muted);
 }
 
-.a39-stage-controls {
+/* ---------- one bar, one flex line ----------
+ * Slice 1 anchored the zoom group on its own with `position: absolute; top:
+ * var(--s4); right: var(--s4)`. Slice 2 anchored the view group the same way
+ * against the opposite edge and let it grow to `calc(100% - 2 * var(--s4))`,
+ * and the two boxes then shared one band with nothing deciding who gets which
+ * pixels. Measured headed at three viewports on 2026-08-20, with the longest
+ * readout this build can produce on screen:
+ *
+ *   1440x900  every one of zoom-out, zoom-level, zoom-in, reset-view and
+ *             clear-focus reported elementFromPoint(centre) = #view-readout
+ *   1280x800  the same five reported the view GROUP box itself
+ *   900x700   four reported #view-readout, clear-focus reported #save-view
+ *
+ * Five accepted slice-1 controls, none of them clickable by mouse. Raising the
+ * zoom group's z-index would only trade which five are unreachable, and
+ * clipping the readout would answer a layout question by deleting the sentence
+ * the view is supposed to state. So the two groups are given DISJOINT SPACE,
+ * and the disjointness is computed rather than asserted: both are children of
+ * one absolutely positioned bar, laid out as one non-wrapping flex line. Boxes
+ * on a flex line never overlap, at any width, for any content — so no width, no
+ * height and no content length is assumed anywhere in these rules.
+ *
+ * The bar spans the stage with the same var(--s4) inset the zoom group used
+ * alone, and the zoom group is pushed to the end of the line by an auto margin,
+ * so it keeps exactly the position slice 1 accepted for it. The view group
+ * absorbs every width change instead: it may shrink (`min-width: 0`) and wraps
+ * its own items onto further rows, growing downward inside its own column,
+ * which is space the zoom group does not occupy.
+ *
+ * The bar is `pointer-events: none` and the groups restore `auto`. The bar is a
+ * sibling of #stage-host that covers the top of the stage, so without that it
+ * would swallow every pan and every node click that starts up there. */
+.a39-stage-controlbar {
   position: absolute;
   top: var(--s4);
+  left: var(--s4);
   right: var(--s4);
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--s3);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.a39-stage-controls {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  z-index: 5;
+  pointer-events: auto;
 }
 
+/* The zoom group never shrinks and never wraps: it is the slice-1 group, and
+ * the line has to give way around it, not through it. The auto margin is what
+ * holds it against the right edge once the view group is content-sized. */
+.a39-zoom-controls {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
+
+/* The legend is `pointer-events: none` for the same reason the control bar
+ * above is, and it was missed when that reasoning was written: it is a
+ * `position: absolute; z-index: 5` SIBLING of #stage-host, so it paints and
+ * hit-tests OVER the node overlay, and it holds no interactive content at all
+ * (h2, div, span, p — see index.html and paintLegend) that could need a
+ * pointer.
+ *
+ * Slice 1 could leave it at the default `auto`: it was three fixed rows in one
+ * corner, and below 960px it was `display: none`. Slice 2 changed both halves —
+ * the panel became a derived two-heading block, and the 960px rule turned it
+ * into a strip spanning `left: var(--s4)` to `right: var(--s4)`. Measured
+ * headed on the accepted snapshot, default Overview, default zoom, no user
+ * interaction at all, `document.elementFromPoint` at each node button's own
+ * centre:
+ *
+ *   1440x900  legend 315x214 px, 0 of 5 node buttons unreachable
+ *    960x700  legend 928x149 px, 2 of 5 report section.a39-legend
+ *    900x700  legend 868x149 px, 2 of 5 report section.a39-legend
+ *    800x700  legend 768x149 px, 2 of 5 report section.a39-legend
+ *    360x640  legend 328x165 px, 5 of 5 report the legend or its own children
+ *
+ * A click on such a node did not focus it and a pan could not be started there
+ * — the identical failure mode as the control-bar defect one element over, on
+ * first load rather than after an interaction. `display: none` is not the
+ * answer (AC7 needs the legend visible at the countercheck viewport, and
+ * test/atlas40-shell.test.mjs forbids it); giving up a pointer the panel never
+ * had a use for is. The cost is that legend text cannot be selected with the
+ * mouse; it stays fully available to the keyboard and to assistive technology,
+ * which is the trade the stage's own hit targets are worth. */
 .a39-legend {
   position: absolute;
   left: var(--s4);
@@ -464,6 +543,7 @@ body[data-panning="true"] .a39-stage-host {
   border-radius: var(--r2);
   backdrop-filter: blur(6px);
   z-index: 5;
+  pointer-events: none;
 }
 
 .a39-legend-row {
@@ -481,18 +561,6 @@ body[data-panning="true"] .a39-stage-host {
   border: 1.5px solid var(--depth-n);
   background: var(--surface-3);
   flex: none;
-}
-
-.a39-swatch[data-depth="0"] {
-  border-color: var(--depth-0);
-}
-
-.a39-swatch[data-depth="1"] {
-  border-color: var(--depth-1);
-}
-
-.a39-swatch[data-depth="2"] {
-  border-color: var(--depth-2);
 }
 
 /* Failure state: a refused snapshot must be loudly visible, never an empty
@@ -716,7 +784,38 @@ body[data-panning="true"] .a39-stage-host {
   }
 
   .a39-legend {
-    display: none;
+    /* Laid out compactly instead of hidden: a legend that disappears at the
+     * countercheck viewport cannot satisfy AC7 there.
+     *
+     * It stays POSITIONED rather than returning to normal flow. Two measured
+     * repository facts decide that: the `.a39-stage-host` rule above is
+     * `position: absolute; inset: 0`, and `paintStage` sizes the canvas inside
+     * it to the whole stage viewport — while the legend's only `z-index` is the
+     * one in its base rule, which per CSS 2.1 section 9.9.1 applies to
+     * positioned elements only. An in-flow legend would therefore paint in
+     * CSS 2.1 Appendix E step 4/7 and the positioned, opaque canvas over it in
+     * step 8: invisible again, by a different mechanism. Spanning the stage
+     * width and wrapping its rows is what makes it compact instead. */
+    left: var(--s4);
+    right: var(--s4);
+    bottom: var(--s4);
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+  }
+
+  /* The notes take a row of their own in the wrapped strip. `flex-basis: 100%`
+   * alone does not do that: per CSS Flexbox section 9.2 an item's hypothetical
+   * main size is its flex base size clamped by the used max main size, and the
+   * later `.a39-legend-note` rule caps that at 46ch at EVERY width — so the
+   * note kept its 46ch hypothetical size and went on sharing a row. The clamp
+   * is lifted here, and the selector is `.a39-legend .a39-legend-note` (0,2,0)
+   * because a `max-width` declared at (0,1,0) earlier in the file loses to that
+   * later rule of equal specificity. */
+  .a39-legend .a39-legend-note {
+    flex-basis: 100%;
+    max-width: 100%;
   }
 
   .a39-header .a39-chips {
@@ -733,4 +832,67 @@ body[data-panning="true"] .a39-stage-host {
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Slice 2: the view + saved-view controls. They lead the stage control bar, so
+ * they sit at the left of the line with the zoom group at its right, and they
+ * share .a39-stage-controls so the stage keydown handler treats them as
+ * controls, not as graph.
+ *
+ * This group is the one that gives way. #view-readout carries no width limit of
+ * its own and holds a sentence as long as `Direct neighbourhood of “14 –
+ * Delivery Model, Program Increment and Sprint Plan” — 3 of 5 nodes, 2 of 4
+ * relations.`, so the group has to be allowed to shrink below its content width
+ * (`min-width: 0`, which a flex item does not do by default) and to wrap its
+ * items onto further rows. It grows DOWNWARD inside its own flex column; the
+ * zoom group's column is not part of that space, which is what makes the
+ * earlier overlap unreachable rather than merely unlikely. */
+.a39-view-controls {
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.a39-view-readout,
+.a39-saved-view-state {
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.a39-saved-view-state {
+  max-width: 34ch;
+}
+
+body[data-saved-view="refused"] .a39-saved-view-state {
+  color: var(--accent);
+}
+
+.a39-legend-title {
+  margin: 0;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.a39-legend-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.a39-legend-note {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+/* An edge is drawn as a stroke, so the legend shows a stroke. */
+.a39-edge-swatch {
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line-strong);
+  flex: none;
 }
