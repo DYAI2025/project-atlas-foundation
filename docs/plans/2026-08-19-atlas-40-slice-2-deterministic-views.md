@@ -5744,6 +5744,36 @@ const AUTHORED = [
 ]
 ```
 
+**Corrected 2026-08-20 (review of Task 7).** Extending the list closes the instance but not the
+mechanism, and the mechanism is measured to have already failed once inside this branch. With
+the pre-slice-2 `AUTHORED` restored from HEAD and one line —
+`await fetch('https://example.invalid/fixtures/sample-graph.json')` — inserted at the top of
+the shipped `viewer/atlas39/core/legend.mjs`, `node --test test/atlas39-shell.test.mjs`
+reported `ℹ tests 21 / ℹ pass 21 / ℹ fail 0`: a remote resource **and** a fixture path in a
+module the browser loads, with both guarantees green. Against the extended list the same mutant
+scores `ℹ tests 22 / ℹ pass 20 / ℹ fail 2`, on *no viewer asset reaches the network or embeds a
+remote resource* and *the shell has no fixture or demo fallback anywhere in its own sources*.
+
+Step 1 therefore also adds one test directly under the list, asserting that `AUTHORED` **is**
+the set of files git would carry under `viewer/atlas39/` — `git ls-files -z --cached --others
+--exclude-standard viewer/atlas39/`, the same listing `test/architecture-diagrams.test.mjs:194-197`
+already builds its fixture repository from. A later slice then cannot reopen the hole by
+forgetting a line. Measured: dropping `'core/gesture.mjs'` from the list →
+`tests 22 / pass 21 / fail 1`; adding an unlisted `viewer/atlas39/core/zzz-unlisted.mjs` →
+`tests 22 / pass 21 / fail 1`.
+
+`readdirSync` was written first and rejected on measurement, because it counts local detritus
+that is neither authored nor shipped: a gitignored `viewer/atlas39/.DS_Store` — which
+`git status` on that path does not report at all — scored `tests 22 / pass 21 / fail 1`, and a
+guard that cries wolf is a guard that gets weakened. Under the git listing the same file scores
+`tests 22 / pass 22 / fail 0` while mutants A and B stay red.
+
+`test/helpers/purity.mjs` is deliberately **not** in `AUTHORED`, and scoping the listing to
+`viewer/atlas39/` keeps that true by construction rather than by anyone's judgement: it is a
+test helper, never served to a browser, and none of the three guarantees is claimed about it.
+§2 already lists `test/atlas39-shell.test.mjs` under **Modify**, so this adds no file to the
+scope contract.
+
 **Step 2: Replace the two pointer assertions that moved**
 
 In `test/atlas40-shell.test.mjs`, rewrite the test at `:154-168`:
@@ -6241,9 +6271,17 @@ Expected: PASS. Any failure here is a real disagreement between the wiring and t
 **Step 5: Commit**
 
 ```bash
-git add test/atlas39-shell.test.mjs test/atlas40-shell.test.mjs
+git add test/atlas39-shell.test.mjs test/atlas40-shell.test.mjs viewer/atlas39/index.html
 git commit -m "ATLAS-40: pin the slice-2 shell contract and move the pointer assertions to the module that owns them"
 ```
+
+**Corrected 2026-08-20 (review of Task 7).** `viewer/atlas39/index.html` was missing from this
+`git add`, while Step 3b requires editing it and the **Files** block at the head of this task
+already lists it. Committing as first written would have split the rename in the worst
+direction: the assertion `aria-label="Zoom and focus controls"` would land in the commit while
+the markup it reads stayed behind in the working tree — so `npm run check` would pass in the
+tree and fail on a clean checkout of that very commit, which is the failure mode CI catches a
+push too late.
 
 ---
 
