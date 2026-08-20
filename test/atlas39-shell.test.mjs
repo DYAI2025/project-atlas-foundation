@@ -32,7 +32,9 @@ const AUTHORED = [
   // ATLAS-40 slice 2. Listed for the same reason as the slice-1 renderer
   // modules: a source the no-fallback and no-remote-resource rules stopped
   // covering would be a hole in the reason a reader can trust this workspace.
-  'core/view-state.mjs', 'core/saved-view.mjs', 'core/legend.mjs', 'core/gesture.mjs'
+  'core/view-state.mjs', 'core/saved-view.mjs', 'core/legend.mjs', 'core/gesture.mjs',
+  // Slice-2 repair: the graph fingerprint the saved-view identity binds.
+  'core/graph-fingerprint.mjs'
 ]
 
 // …and the list is the whole directory, not a list someone remembered to grow.

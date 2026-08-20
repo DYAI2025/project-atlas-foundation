@@ -40,6 +40,7 @@ const snapshot = JSON.parse(readFileSync(join(EVIDENCE, 'graph-snapshot.json'), 
 const provenance = JSON.parse(readFileSync(join(EVIDENCE, 'provenance.json'), 'utf8'))
 const vm = buildViewModel(snapshot, provenance)
 
+const ROOT = 'ATLAS:confluence:14778372:14778372'
 const DELIVERY = 'ATLAS:confluence:14778372:15171611'
 const SPRINT = 'ATLAS:confluence:14778372:22478849'
 const VIEWPORT = { width: 1092, height: 693 }
@@ -54,8 +55,8 @@ const sample = () =>
   })
 
 test('the contract version is pinned and carried in every saved view', () => {
-  assert.equal(SAVED_VIEW_VERSION, 1)
-  assert.equal(sample().saved_view_version, 1)
+  assert.equal(SAVED_VIEW_VERSION, 2)
+  assert.equal(sample().saved_view_version, 2)
 })
 
 test('a saved view carries UI state and identity only — never the graph', () => {
@@ -69,7 +70,7 @@ test('a saved view carries UI state and identity only — never the graph', () =
   assert.equal(text.includes('provenance'), false)
 })
 
-test('the six identity fields carry the values the loaded graph really has', () => {
+test('the seven identity fields carry the values the loaded graph really has', () => {
   // Capture and compare BOTH go through snapshotIdentity(), so the mapping from
   // the view model onto D4's six fields is symmetric, and no roundtrip, drift or
   // refusal test can see it. Measured: swapping the two sources inside
@@ -89,7 +90,13 @@ test('the six identity fields carry the values the loaded graph really has', () 
     contract_version: '1.0.0',
     id_scheme: 'projection-local/v1',
     node_count: 5,
-    edge_count: 4
+    edge_count: 4,
+    // Pinned as a literal for the same reason as the six above: reading it back
+    // out of the view model the implementation reads it from is exactly what
+    // made the field-swap invisible. This is the fingerprint of the accepted
+    // ATLAS snapshot, and it changes only when that snapshot's nodes, edge
+    // endpoints, relation types or origins change.
+    graph_fingerprint: 'fnv1a128/1:4a04facb97b5b1340f2bf40a280a8b3c'
   })
 
   // Literals close the field-to-field swap, but on their own they re-open the
@@ -115,7 +122,11 @@ test('the six identity fields carry the values the loaded graph really has', () 
     // Both saved ids exist here, so a restore that got past the identity check
     // would answer ok:true rather than E_SAVED_VIEW_STALE_NODE — the failure
     // below has to be the one actually being pinned.
-    adjacency: new Map([[DELIVERY, new Set([SPRINT])], [SPRINT, new Set([DELIVERY])]])
+    adjacency: new Map([[DELIVERY, new Set([SPRINT])], [SPRINT, new Set([DELIVERY])]]),
+    // The fingerprint reads real content, so the witness graph has to carry
+    // some: two nodes and the one edge its counts above already claim.
+    nodes: [{ node_id: DELIVERY }, { node_id: SPRINT }],
+    edges: [{ from: DELIVERY, to: SPRINT, relation_type: 'parent_of', origin: 'explicit' }]
   }
   assert.deepEqual(
     captureSavedView({
@@ -131,7 +142,8 @@ test('the six identity fields carry the values the loaded graph really has', () 
       contract_version: '2.0.0',
       id_scheme: 'canonical/v1',
       node_count: 2,
-      edge_count: 1
+      edge_count: 1,
+      graph_fingerprint: 'fnv1a128/1:f80e4e13c769b771cbe5da1c8fd24c61'
     }
   )
 
@@ -161,6 +173,9 @@ test('serialising is byte-stable, so the same view always stores the same bytes'
   scrambled.focus_id = s.focus_id
   scrambled.view = { anchor_id: s.view.anchor_id, mode: s.view.mode }
   scrambled.snapshot = {
+    // Scrambled position on purpose: the replacer, not the assembly order, is
+    // what decides where the fingerprint lands in the stored bytes.
+    graph_fingerprint: s.snapshot.graph_fingerprint,
     edge_count: s.snapshot.edge_count,
     node_count: s.snapshot.node_count,
     id_scheme: s.snapshot.id_scheme,
@@ -298,7 +313,7 @@ test('nothing stored, empty storage or non-JSON is a refusal, not a crash', () =
 })
 
 test('an unsupported version is refused before any field is interpreted', () => {
-  for (const version of [0, 2, 99, '1', null, undefined]) {
+  for (const version of [0, 1, 3, 99, '2', null, undefined]) {
     const raw = { ...sample(), saved_view_version: version }
     const result = parseSavedView(JSON.stringify(raw))
     assert.equal(result.ok, false, `version ${JSON.stringify(version)} was accepted`)
@@ -320,7 +335,7 @@ test('an unsupported version is refused before any field is interpreted', () => 
   const brokenTwice = [
     { saved_view_version: 99 },
     { ...sample(), saved_view_version: 99, snapshot: undefined },
-    { ...sample(), saved_view_version: 2, view: { mode: 'cluster', anchor_id: DELIVERY } },
+    { ...sample(), saved_view_version: 3, view: { mode: 'cluster', anchor_id: DELIVERY } },
     { ...sample(), saved_view_version: 0, transform: { scale: 0, tx: 'left', ty: 0 } }
   ]
   for (const raw of brokenTwice) {
@@ -441,6 +456,11 @@ test('a malformed shape is refused field by field', () => {
 })
 
 test('a saved view from a different graph is refused, per identity field', () => {
+  // The six CARDINAL fields are reported with their two values. The seventh,
+  // graph_fingerprint, is asserted separately below, because it is the one
+  // field whose values are meaningless to a reader and is deliberately
+  // reported differently. Pinning that exception here is what stops it from
+  // being read as an oversight.
   const parsed = parseSavedView(serializeSavedView(sample())).value
   const fields = {
     project_id: 'OTHER',
@@ -480,6 +500,29 @@ test('a saved view from a different graph is refused, per identity field', () =>
       `this graph's value is missing from the reason: ${result.reason}`
     )
   }
+
+  // The seventh field. It refuses the same way and names itself the same way,
+  // but it must NOT print its two values: they are 43-character hashes that
+  // tell a reader nothing, and a refusal a user cannot read is a refusal that
+  // gets ignored. Asserting the absence is what keeps a later 'make it
+  // consistent with the other six' change from dumping them.
+  const drifted = {
+    ...parsed,
+    snapshot: { ...parsed.snapshot, graph_fingerprint: 'fnv1a128/1:00000000000000000000000000000000' }
+  }
+  const result = restoreSavedView(vm, drifted, VIEWPORT)
+  assert.equal(result.ok, false, 'a fingerprint drift was accepted')
+  assert.equal(result.code, E_SAVED_VIEW_SNAPSHOT)
+  assert.deepEqual(
+    IDENTITY_FIELDS.filter((field) => result.reason.includes(field)),
+    ['graph_fingerprint'],
+    `the reason named the wrong set of identity fields: ${result.reason}`
+  )
+  assert.equal(
+    result.reason.includes('fnv1a128'),
+    false,
+    `the refusal printed a raw fingerprint: ${result.reason}`
+  )
 })
 
 test('COUNTEREXAMPLE: a stale node id is refused and is never mapped onto another node', () => {
@@ -650,9 +693,12 @@ test('restoreSavedView answers a refusal when it is handed anything but a valida
 // guard: that exact statement must appear exactly once, and the WHOLE shared
 // guard — `import` and MODULE_SPECIFIER included — then runs over everything
 // else. A second import, static or dynamic, is still caught.
-const ALLOWED_IMPORT = "import { normalizeView, E_VIEW_MODE } from './view-state.mjs'"
+const ALLOWED_IMPORTS = [
+  "import { normalizeView, E_VIEW_MODE } from './view-state.mjs'",
+  "import { graphFingerprint } from './graph-fingerprint.mjs'"
+]
 
-test('the module carries no storage, clock, randomness or DOM, and imports only the view state', () => {
+test('the module carries no storage, clock, randomness or DOM, and imports only the view state and the fingerprint', () => {
   const source = readFileSync(join(repoRoot, 'viewer/atlas39/core/saved-view.mjs'), 'utf8')
   const code = stripComments(source)
   // The strip is load-bearing, so it is proved not to have eaten the code it was
@@ -663,12 +709,15 @@ test('the module carries no storage, clock, randomness or DOM, and imports only 
   assert.match(code, /export function validateSavedView/, 'the comment strip removed validateSavedView')
   assert.match(code, /export function restoreSavedView/, 'the comment strip removed restoreSavedView')
 
-  assert.equal(
-    code.split(ALLOWED_IMPORT).length - 1,
-    1,
-    'saved-view.mjs no longer imports exactly the view state, exactly once'
-  )
-  const body = code.replace(ALLOWED_IMPORT, '')
+  for (const allowed of ALLOWED_IMPORTS) {
+    assert.equal(
+      code.split(allowed).length - 1,
+      1,
+      'saved-view.mjs no longer carries exactly once: ' + allowed
+    )
+  }
+  let body = code
+  for (const allowed of ALLOWED_IMPORTS) body = body.replace(allowed, '')
   for (const forbidden of FORBIDDEN_TOKENS) {
     assert.equal(body.includes(forbidden), false, `saved-view.mjs references ${forbidden}`)
   }
@@ -681,4 +730,86 @@ test('the module carries no storage, clock, randomness or DOM, and imports only 
   }
   assert.doesNotMatch(body, MODULE_SPECIFIER, 'saved-view.mjs imports from a second module specifier')
   assert.deepEqual(purityViolations(body), [], 'the purity rules disagree with each other')
+})
+
+test('COUNTEREXAMPLE: a graph that keeps all six cardinal fields but moves a page is refused', () => {
+  // THE HOLE THIS CLOSES. Until the fingerprint, the saved-view identity was
+  // six cardinal facts plus a check that the saved ids still resolve. Every one
+  // of those can hold across a re-scan that MOVED a page: same project, same
+  // source, same contract, same scheme, same node and edge counts, and both
+  // saved ids still alive — and a different graph. The workspace would then
+  // recompute a different direct neighbourhood and announce a successful
+  // restore, which is the silent retargeting this whole module exists to
+  // prevent, one level below where it was being checked.
+  //
+  // Graph B re-parents SPRINT from DELIVERY to GOVERNANCE. The edge's
+  // `edge_id` is deliberately left untouched, so the ONLY changed fact in the
+  // whole snapshot is that one edge's `from`.
+  const GOVERNANCE = 'ATLAS:confluence:14778372:14680066'
+  const rawB = JSON.parse(JSON.stringify(snapshot))
+  const moved = rawB.edges.find((edge) => edge.to === SPRINT)
+  assert.equal(moved.from, DELIVERY, 'the fixture no longer has SPRINT under DELIVERY')
+  moved.from = GOVERNANCE
+  const b = buildViewModel(rawB, provenance)
+
+  const saved = captureSavedView({
+    viewModel: vm,
+    view: { mode: 'neighbourhood', anchorId: DELIVERY },
+    focusId: SPRINT,
+    transform: { scale: 1.75, tx: -412, ty: -88 },
+    viewport: VIEWPORT
+  })
+  const parsed = parseSavedView(serializeSavedView(saved)).value
+  const identityOfB = captureSavedView({
+    viewModel: b,
+    view: { mode: 'overview', anchorId: null },
+    focusId: null,
+    transform: { scale: 1, tx: 0, ty: 0 },
+    viewport: VIEWPORT
+  }).snapshot
+
+  // 1. Every field the OLD contract compared is identical, so the old contract
+  //    had nothing left to refuse on. This is the assertion that makes the
+  //    test load-bearing rather than a restatement of the new behaviour.
+  const cardinal = IDENTITY_FIELDS.filter((field) => field !== 'graph_fingerprint')
+  assert.equal(cardinal.length, 6)
+  for (const field of cardinal) {
+    assert.equal(
+      parsed.snapshot[field],
+      identityOfB[field],
+      `${field} differs, so this counterexample is not testing what it claims`
+    )
+  }
+  // 2. and both saved ids still resolve in B, so the stale-node check is silent too.
+  assert.equal(b.adjacency.has(DELIVERY), true)
+  assert.equal(b.adjacency.has(SPRINT), true)
+
+  // 3. and yet the view the user saved resolves to something else in B.
+  assert.deepEqual([...vm.adjacency.get(DELIVERY)].sort(), [ROOT, SPRINT].sort())
+  assert.deepEqual([...b.adjacency.get(DELIVERY)].sort(), [ROOT])
+
+  // 4. so it is refused, and the refusal carries no restorable state at all:
+  //    a shell that read `view`/`focusId`/`transform` off a refusal would
+  //    apply the saved view anyway.
+  const refused = restoreSavedView(b, parsed, VIEWPORT)
+  assert.equal(refused.ok, false, 'a moved page restored as if nothing had changed')
+  assert.equal(refused.code, E_SAVED_VIEW_SNAPSHOT)
+  assert.deepEqual(Object.keys(refused).sort(), ['code', 'ok', 'reason'])
+  for (const leaked of ['view', 'focusId', 'transform']) {
+    assert.equal(leaked in refused, false, `the refusal exposed ${leaked}`)
+  }
+  assert.equal(refused.reason.includes(DELIVERY), false, 'the refusal leaked a node id')
+  assert.equal(refused.reason.includes(SPRINT), false, 'the refusal leaked a node id')
+
+  // 5. and the same record still restores against the graph it was captured
+  //    against — the repair refuses drift, not everything.
+  const restored = [0, 1, 2].map(() => restoreSavedView(vm, parsed, VIEWPORT))
+  assert.equal(restored[0].ok, true, restored[0].reason)
+  assert.equal(restored[0].view.mode, 'neighbourhood')
+  assert.equal(restored[0].view.anchorId, DELIVERY)
+  assert.equal(restored[0].focusId, SPRINT)
+  assert.deepEqual(restored[0].transform, { scale: 1.75, tx: -412, ty: -88 })
+  // 6. and repeating it is idempotent, not merely successful twice.
+  assert.deepEqual(restored[1], restored[0])
+  assert.deepEqual(restored[2], restored[0])
 })

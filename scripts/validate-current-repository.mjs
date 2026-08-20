@@ -116,6 +116,9 @@ const REQUIRED_FILES = [
   'test/atlas40-saved-view.test.mjs',
   'test/atlas40-legend.test.mjs',
   'test/atlas40-gesture.test.mjs',
+  // Slice-2 repair: the graph fingerprint the saved-view identity binds.
+  'viewer/atlas39/core/graph-fingerprint.mjs',
+  'test/atlas40-graph-fingerprint.test.mjs',
   // Not a suite, and required anyway. `npm test` globs test/**/*.test.mjs, so
   // this file is only ever imported — but five suites import it
   // (atlas40-view-state, atlas40-saved-view, atlas40-legend, atlas40-gesture,
@@ -696,6 +699,20 @@ check(
 // `atlas40.saved-view.v1` and that anything but version 1 is refused — both now
 // false. Every place the runbook writes the number is derived from the module
 // here, so a bump that misses one of them is red.
+// The version bump alone does not prove the repair is still wired in: a later
+// change could drop the fingerprint out of the identity and leave the number at
+// 2, and every version-parity check above would stay green while the saved-view
+// identity quietly went back to six cardinal fields that a moved page does not
+// change. So the binding itself is checked, not just the number next to it.
+const savedViewSource = await readFile('viewer/atlas39/core/saved-view.mjs', 'utf8').catch(() => '')
+check(
+  'the saved-view identity binds the graph fingerprint, not only the cardinal fields',
+  savedViewSource.includes("from './graph-fingerprint.mjs'") &&
+    savedViewSource.includes("'graph_fingerprint'") &&
+    savedViewSource.includes('graph_fingerprint: graphFingerprint(viewModel)'),
+  'viewer/atlas39/core/saved-view.mjs no longer binds graph_fingerprint into the snapshot identity'
+)
+
 const savedViewModuleVersion =
   (await readFile('viewer/atlas39/core/saved-view.mjs', 'utf8').catch(() => ''))
     .match(/export const SAVED_VIEW_VERSION = (\d+)/)?.[1] ?? null

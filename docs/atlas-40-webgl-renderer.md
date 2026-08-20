@@ -242,14 +242,15 @@ announces it. A selection the user cannot see is the same defect as losing the
 graph.
 
 **Saved views (AC5).** One deterministic slot in `localStorage`, keyed
-`atlas40.saved-view.v1`, carrying UI state and the snapshot identity it must
+`atlas40.saved-view.v2`, carrying UI state and the snapshot identity it must
 match — never node or edge payload:
 
 ```json
 {
-  "saved_view_version": 1,
+  "saved_view_version": 2,
   "snapshot": { "project_id": "…", "source_id": "…", "contract_version": "…",
-                "id_scheme": "…", "node_count": 5, "edge_count": 4 },
+                "id_scheme": "…", "node_count": 5, "edge_count": 4,
+                "graph_fingerprint": "fnv1a128/1:…" },
   "view":      { "mode": "neighbourhood", "anchor_id": "…" },
   "focus_id":  "…",
   "transform": { "scale": 1.75, "tx": -412, "ty": -88 },
@@ -257,7 +258,7 @@ match — never node or edge payload:
 }
 ```
 
-The contract version is `saved_view_version`: `1`.
+The contract version is `saved_view_version`: `2`.
 
 Restoring is fail-closed, and the refusal is always a coded refusal that changes
 nothing on the stage:
@@ -265,14 +266,39 @@ nothing on the stage:
 | Code | Cause |
 | --- | --- |
 | `E_SAVED_VIEW_INVALID` | absent, not JSON, not an object, or an unusable field |
-| `E_SAVED_VIEW_VERSION` | not version 1 — checked before any field is interpreted |
+| `E_SAVED_VIEW_VERSION` | not version 2 — checked before any field is interpreted |
 | `E_SAVED_VIEW_MODE` | a view mode this build does not support |
-| `E_SAVED_VIEW_SNAPSHOT` | any of the six identity fields differs from the loaded graph |
+| `E_SAVED_VIEW_SNAPSHOT` | any of the seven identity fields differs from the loaded graph |
 | `E_SAVED_VIEW_STALE_NODE` | the saved anchor or focus is not a node of this graph |
 | `E_SAVED_VIEW_STORAGE` | the browser refused to store or read |
 
-The six identity fields are `project_id`, `source_id`, `contract_version`,
-`id_scheme`, `node_count` and `edge_count`.
+The seven identity fields are `project_id`, `source_id`, `contract_version`,
+`id_scheme`, `node_count`, `edge_count` and `graph_fingerprint`.
+
+**Why the seventh exists (version 2).** The first six are cardinal facts, and
+all six can hold across a re-scan that *moved* a page: same project, same
+source, same contract, same scheme, same node and edge counts — and a different
+graph. Both saved ids can still resolve too, so the stale-node check stays
+silent as well. The workspace would then recompute a **different** direct
+neighbourhood from the saved anchor and announce a successful restore, which is
+exactly the silent retargeting this contract exists to prevent.
+
+`graph_fingerprint` closes that by binding graph **content**: the complete
+node-id membership, every edge's endpoints, and every edge's `relation_type`
+and `origin`. It is computed by `viewer/atlas39/core/graph-fingerprint.mjs`,
+sorted by code unit so it never depends on insertion order or on a locale, and
+carries its own algorithm tag so a future construction can never be mistaken for
+a match. It is a drift detector between two graphs this workspace produced — it
+is **not** a cryptographic digest and must not be described as one.
+
+Labels, depth, degree, provenance and `edge_id` are deliberately **not**
+inputs: a retitled page is the same graph for the purpose of resolving a view,
+and refusing a restore over an edited title would train a reader to ignore the
+refusal. A permutation of the same edges is likewise the same graph.
+
+A version-1 record is refused as `E_SAVED_VIEW_VERSION` rather than being read
+under version-2 rules, and the storage key is derived from the version, so an
+older record is not even looked at.
 
 A stale node is **refused, never resolved to a substitute**. `node_count` and
 `edge_count` are part of the identity on purpose: a re-scanned Confluence tree

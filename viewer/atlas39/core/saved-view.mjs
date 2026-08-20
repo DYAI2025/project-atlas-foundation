@@ -20,8 +20,9 @@
 // storage, because storage can fail and a pure module has nowhere to say so.
 
 import { normalizeView, E_VIEW_MODE } from './view-state.mjs'
+import { graphFingerprint } from './graph-fingerprint.mjs'
 
-export const SAVED_VIEW_VERSION = 1
+export const SAVED_VIEW_VERSION = 2
 
 export const E_SAVED_VIEW_INVALID = 'E_SAVED_VIEW_INVALID'
 export const E_SAVED_VIEW_VERSION = 'E_SAVED_VIEW_VERSION'
@@ -56,7 +57,14 @@ export const IDENTITY_FIELDS = Object.freeze([
   'contract_version',
   'id_scheme',
   'node_count',
-  'edge_count'
+  'edge_count',
+  // Version 2. The six above are cardinal facts, and all six can hold across a
+  // re-scan that moved a page: same project, same source, same contract, same
+  // scheme, same counts — and a different graph. This one binds the CONTENT
+  // (node membership, edge endpoints, relation type, origin), so a saved
+  // neighbourhood can no longer be recomputed from a graph it was not captured
+  // against while the restore announces success. See core/graph-fingerprint.mjs.
+  'graph_fingerprint'
 ])
 
 const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -71,7 +79,8 @@ function snapshotIdentity(viewModel) {
     contract_version: viewModel.contract_version,
     id_scheme: viewModel.id_scheme,
     node_count: viewModel.counts.nodes,
-    edge_count: viewModel.counts.edges
+    edge_count: viewModel.counts.edges,
+    graph_fingerprint: graphFingerprint(viewModel)
   }
 }
 
@@ -147,7 +156,13 @@ export function validateSavedView(raw) {
     !isText(snapshot.contract_version) ||
     !isText(snapshot.id_scheme) ||
     !Number.isInteger(snapshot.node_count) ||
-    !Number.isInteger(snapshot.edge_count)
+    !Number.isInteger(snapshot.edge_count) ||
+    // A version-2 record without a fingerprint is malformed, not merely old:
+    // the version gate above already refused everything that is not 2, so a
+    // record that reaches here and carries no fingerprint cannot be read as a
+    // v1 record with v2 semantics. Failing closed here is what stops the
+    // weaker v1 identity from being silently accepted under the v2 contract.
+    !isText(snapshot.graph_fingerprint)
   ) {
     return refusal(E_SAVED_VIEW_INVALID, 'the saved view carries no usable snapshot identity')
   }
@@ -250,7 +265,18 @@ export function restoreSavedView(viewModel, parsed, viewport) {
     if (parsed.snapshot[key] !== identity[key]) {
       return refusal(
         E_SAVED_VIEW_SNAPSHOT,
-        `the saved view was captured against a different graph (${key} was ${JSON.stringify(parsed.snapshot[key])}, this graph has ${JSON.stringify(identity[key])})`
+        // The fingerprint is the one identity field whose VALUES tell a user
+        // nothing, so it names the field — every refusal in this module names
+        // exactly one, and a reason that named none would be the only one a
+        // reader could not place — and then says what the difference MEANS
+        // instead of printing two 43-character hashes. Every other field is
+        // reported with both values, because "node_count was 6, this graph has
+        // 5" is a fact the user can act on. That asymmetry is deliberate and is
+        // pinned by its own assertion in the drift test, not left to be
+        // discovered.
+        key === 'graph_fingerprint'
+          ? 'the saved view was captured against a different graph (graph_fingerprint differs: the pages, or the relations between them, have changed since this view was saved)'
+          : `the saved view was captured against a different graph (${key} was ${JSON.stringify(parsed.snapshot[key])}, this graph has ${JSON.stringify(identity[key])})`
       )
     }
   }
