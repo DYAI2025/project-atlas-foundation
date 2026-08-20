@@ -33,6 +33,17 @@ import { sceneViolation } from './core/scene-guard.mjs'
 import { createWebglStage, E_WEBGL_UNAVAILABLE, E_WEBGL_CONTEXT_LOST } from './core/render-webgl.mjs'
 import { matchNodes, searchAnnouncement } from './core/search.mjs'
 import { clampTransform, resetTransform, zoomAt, panBy, centerOn, isDefaultView } from './core/transform.mjs'
+import { DEFAULT_VIEW, applyView, isInView, viewCaption } from './core/view-state.mjs'
+import {
+  SAVED_VIEW_VERSION,
+  captureSavedView,
+  serializeSavedView,
+  parseSavedView,
+  restoreSavedView,
+  E_SAVED_VIEW_STORAGE
+} from './core/saved-view.mjs'
+import { buildEdgeLegend, edgeLegendNote, buildDepthLegend, depthCaption } from './core/legend.mjs'
+import { createDragGesture } from './core/gesture.mjs'
 
 const el = (id) => document.getElementById(id)
 
@@ -57,7 +68,18 @@ const dom = {
   statScheme: el('stat-scheme'),
   statRenderer: el('stat-renderer'),
   statProvenance: el('stat-provenance'),
-  statGenerated: el('stat-generated')
+  statGenerated: el('stat-generated'),
+  viewOverview: el('view-overview'),
+  viewNeighbourhood: el('view-neighbourhood'),
+  viewReadout: el('view-readout'),
+  saveViewBtn: el('save-view'),
+  restoreViewBtn: el('restore-view'),
+  clearSavedViewBtn: el('clear-saved-view'),
+  savedViewState: el('saved-view-state'),
+  legendEdges: el('legend-edges'),
+  legendNote: el('legend-note'),
+  legendDepth: el('legend-depth'),
+  legendDepthNote: el('legend-depth-note')
 }
 
 const state = {
@@ -72,7 +94,17 @@ const state = {
   canvas: null,
   overlay: null,
   palette: null,
-  failed: false
+  failed: false,
+  // Which projection of the loaded graph is on the stage, and the applied
+  // result of it. `displayed` is derived — resolveDisplayed() is the only
+  // writer — so nothing else may set it and nothing may read `view` to decide
+  // what is drawn.
+  view: { ...DEFAULT_VIEW },
+  displayed: null,
+  // localStorage only once it has been proved writable; null when the browser
+  // refused. The saved-view controls read this, not `window.localStorage`.
+  store: null,
+  savedViewPresent: false
 }
 
 /** Live DOM handles for the overlay buttons, keyed by node id. */
@@ -127,9 +159,19 @@ function showFailure(headline, detail, code) {
     className: 'a39-placeholder',
     textContent: 'No snapshot loaded.'
   }))
-  for (const control of [dom.clearFocus, dom.filter, dom.zoomIn, dom.zoomOut, dom.resetView]) {
+  for (const control of [
+    dom.clearFocus, dom.filter, dom.zoomIn, dom.zoomOut, dom.resetView,
+    dom.viewOverview, dom.viewNeighbourhood, dom.saveViewBtn, dom.restoreViewBtn, dom.clearSavedViewBtn
+  ]) {
     if (control) control.disabled = true
   }
+  // A legend explains what is drawn. Nothing is drawn, so it must not keep
+  // explaining the graph that was there a moment ago.
+  dom.legendEdges?.replaceChildren()
+  dom.legendDepth?.replaceChildren()
+  if (dom.legendNote) dom.legendNote.textContent = 'No graph is drawn, so there is nothing to explain.'
+  if (dom.legendDepthNote) dom.legendDepthNote.textContent = ''
+  if (dom.viewReadout) dom.viewReadout.textContent = '—'
   dom.body.dataset.stage = 'failed'
   announce(`${headline} ${detail}`)
 }
@@ -149,11 +191,6 @@ function paintStatus() {
 }
 
 /* ---------- navigator ---------- */
-
-function levelCaption(depth) {
-  if (depth === null) return 'No hierarchy path'
-  return depth === 0 ? 'Root' : `Level ${depth}`
-}
 
 function paintNavigator() {
   const vm = state.viewModel
@@ -175,7 +212,7 @@ function paintNavigator() {
       lastDepth = node.depth
       const group = document.createElement('li')
       group.className = 'a39-group a39-label'
-      group.textContent = levelCaption(node.depth)
+      group.textContent = depthCaption(node.depth)
       dom.nodelist.append(group)
     }
     const item = document.createElement('li')
@@ -227,7 +264,7 @@ function paintInspector() {
   const facts = document.createElement('dl')
   facts.className = 'a39-facts'
   fact(facts, 'Confluence page id', node.source_ref)
-  fact(facts, 'Hierarchy', levelCaption(node.depth))
+  fact(facts, 'Hierarchy', depthCaption(node.depth))
 
   if (node.provenance) {
     fact(facts, 'Revision', `v${node.provenance.version}`)
@@ -401,14 +438,21 @@ function paintZoomReadout() {
 }
 
 function paintStage() {
-  const vm = state.viewModel
+  // The DISPLAYED model, not the whole graph: a view restricts which nodes and
+  // edges reach the layout and the scene, and nothing else about them.
+  const model = state.displayed.model
   const viewport = stageViewport()
-  const layout = computeLayout(vm, viewport)
+  const layout = computeLayout(model, viewport)
   state.layout = layout
   state.world = { width: layout.width, height: layout.height }
   state.transform = clampTransform(state.transform, state.world)
 
-  const scene = buildScene(vm, layout, selectFocus(vm, state.focusId))
+  // selectFocus is given the SAME model buildScene is given. Handing it the
+  // full view model instead would report a focus on a node this view does not
+  // draw, and buildScene would then mark every node `dim` with nothing in the
+  // tab order — a stage no keyboard user could reach. leavesView() below is
+  // what keeps state.focusId inside state.view so this call cannot do that.
+  const scene = buildScene(model, layout, selectFocus(model, state.focusId))
   const projected = projectScene(scene, state.transform)
 
   const violation = sceneViolation(projected)
@@ -451,14 +495,256 @@ function paintStage() {
   return true
 }
 
+/* ---------- views, saved view and legend ---------- */
+
+const SAVED_VIEW_KEY = `atlas40.saved-view.v${SAVED_VIEW_VERSION}`
+/** Only tokens this build defines may reach a style property. */
+const DEPTH_TOKEN = /^--depth-(?:0|1|2|n|none)$/
+
+/**
+ * localStorage that has been proved writable. Merely reading `window.
+ * localStorage` is not enough — several engines expose the object and throw on
+ * write, and a save that silently does nothing is exactly the failure mode this
+ * slice exists to remove.
+ */
+function openStore() {
+  try {
+    const store = window.localStorage
+    const probe = `${SAVED_VIEW_KEY}.probe`
+    store.setItem(probe, '1')
+    store.removeItem(probe)
+    return store
+  } catch {
+    return null
+  }
+}
+
+function anchorLabel() {
+  const id = state.view.anchorId
+  if (id === null) return null
+  return state.viewModel.nodes.find((n) => n.node_id === id)?.label ?? null
+}
+
+/**
+ * True when `view` would not draw `nodeId` — the one predicate that keeps a
+ * focus and the view it is shown in consistent, and therefore the one thing
+ * standing between this shell and the scene `paintStage` describes: a focus
+ * outside the displayed model makes `selectFocus` report `hasFocus: true`
+ * (applyView keeps the FULL-graph adjacency by design, view-state.mjs), which
+ * makes `buildScene` mark every node `dim` with nothing in the tab order, which
+ * `core/scene-guard.mjs` then refuses as E_STAGE_SCENE_REFUSED — tearing the
+ * stage down over a UI state, which is exactly what a saved view must never do.
+ *
+ * Both writers of `state.focusId` go through it: setFocus and onRestoreView.
+ * An unresolvable view answers `true`, because isInView() answers false for a
+ * refusal — so an anchor this graph does not contain widens to Overview rather
+ * than silently keeping a focus nothing draws.
+ */
+function leavesView(view, nodeId) {
+  if (nodeId === null || view.mode === 'overview') return false
+  return !isInView(applyView(state.viewModel, view), nodeId)
+}
+
+function resolveDisplayed() {
+  const applied = applyView(state.viewModel, state.view)
+  if (applied.ok) {
+    state.displayed = applied
+    return
+  }
+  // Unreachable while every assignment to state.view goes through a validated
+  // path — which is exactly why it must be visible if it ever happens, rather
+  // than a quiet return to overview that looks like the user's own choice.
+  state.view = { ...DEFAULT_VIEW }
+  state.displayed = applyView(state.viewModel, state.view)
+  announce(`That view could not be shown: ${applied.reason}. Showing the whole graph instead.`)
+}
+
+function paintLegend() {
+  const model = state.displayed.model
+
+  const edgeLegend = buildEdgeLegend(model)
+  const edgeRows = document.createDocumentFragment()
+  for (const entry of edgeLegend.entries) {
+    const row = document.createElement('div')
+    row.className = 'a39-legend-row'
+    const swatch = document.createElement('span')
+    swatch.className = 'a39-edge-swatch'
+    const text = document.createElement('span')
+    // relation_type and origin are echoed exactly as the snapshot spells them,
+    // through textContent — so a relation type can never become markup.
+    text.textContent = `${entry.relationType} · ${entry.origin} (${entry.count})`
+    row.append(swatch, text)
+    edgeRows.append(row)
+  }
+  if (edgeLegend.empty) {
+    edgeRows.append(Object.assign(document.createElement('div'), {
+      className: 'a39-legend-row',
+      textContent: 'No relations in this view.'
+    }))
+  }
+  dom.legendEdges.replaceChildren(edgeRows)
+  dom.legendNote.textContent = edgeLegendNote(edgeLegend)
+
+  const depthLegend = buildDepthLegend(model)
+  const depthRows = document.createDocumentFragment()
+  for (const entry of depthLegend.entries) {
+    const row = document.createElement('div')
+    row.className = 'a39-legend-row'
+    const swatch = document.createElement('span')
+    swatch.className = 'a39-swatch'
+    // The swatch is painted from the same token the renderer strokes the disc
+    // with. The allowlist keeps that assignment mechanically safe.
+    if (DEPTH_TOKEN.test(entry.token)) swatch.style.borderColor = `var(${entry.token})`
+    const text = document.createElement('span')
+    text.textContent = `${depthCaption(entry.depth)} (${entry.count})`
+    row.append(swatch, text)
+    depthRows.append(row)
+  }
+  dom.legendDepth.replaceChildren(depthRows)
+  // What the Hierarchy group does NOT distinguish, said by the shell because D7
+  // assigns the sentence here: depthTokenName collapses every depth from 3
+  // onward onto `--depth-n`, so on a deeper graph differently-labelled rows
+  // carry an identical swatch. Derived from the rows themselves rather than from
+  // a flag, so it can only appear when it is true — on the accepted three-level
+  // snapshot every row has its own token and this stays empty.
+  const sharedSwatch =
+    new Set(depthLegend.entries.map((e) => e.token)).size < depthLegend.entries.length
+  dom.legendDepthNote.textContent = sharedSwatch ? 'Level 3 and deeper share one colour.' : ''
+}
+
+function paintViewControls() {
+  const scope = state.displayed.scope
+  dom.viewOverview.setAttribute('aria-pressed', String(scope.mode === 'overview'))
+  dom.viewNeighbourhood.setAttribute('aria-pressed', String(scope.mode === 'neighbourhood'))
+  dom.viewNeighbourhood.disabled = state.focusId === null
+  dom.viewReadout.textContent = viewCaption(scope, anchorLabel())
+  dom.saveViewBtn.disabled = state.store === null
+  dom.restoreViewBtn.disabled = state.store === null || !state.savedViewPresent
+  dom.clearSavedViewBtn.disabled = state.store === null || !state.savedViewPresent
+}
+
+function setView(next) {
+  const applied = applyView(state.viewModel, next)
+  if (!applied.ok) {
+    announce(`That view could not be shown: ${applied.reason}.`)
+    return
+  }
+  state.view = applied.view
+  render()
+  announce(viewCaption(state.displayed.scope, anchorLabel()))
+}
+
+/**
+ * A saved view that does not apply is NOT a stage failure: the loaded graph is
+ * still real and still drawn. It is refused loudly and locally instead. Nothing
+ * has been assigned by the time this runs, so a refusal cannot leave a
+ * half-restored view behind.
+ */
+function refuseSavedView(code, reason) {
+  dom.body.dataset.savedView = 'refused'
+  dom.savedViewState.textContent = `${reason} (${code})`
+  announce(`Saved view refused. ${reason}. ${code}. Nothing on the stage was changed.`)
+}
+
+function onSaveView() {
+  if (state.store === null) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, 'This browser did not allow the workspace to store a saved view')
+    return
+  }
+  const record = captureSavedView({
+    viewModel: state.viewModel,
+    view: state.view,
+    focusId: state.focusId,
+    transform: state.transform,
+    viewport: stageViewport()
+  })
+  try {
+    state.store.setItem(SAVED_VIEW_KEY, serializeSavedView(record))
+  } catch (error) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, `The saved view could not be stored: ${error.message}`)
+    return
+  }
+  state.savedViewPresent = true
+  dom.body.dataset.savedView = 'saved'
+  const caption = viewCaption(state.displayed.scope, anchorLabel())
+  dom.savedViewState.textContent = `Saved: ${caption}`
+  paintViewControls()
+  announce(`View saved. ${caption}`)
+}
+
+function onRestoreView() {
+  if (state.store === null) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, 'This browser did not allow the workspace to read a saved view')
+    return
+  }
+  let stored = null
+  try {
+    stored = state.store.getItem(SAVED_VIEW_KEY)
+  } catch (error) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, `The saved view could not be read: ${error.message}`)
+    return
+  }
+  const parsed = parseSavedView(stored)
+  if (!parsed.ok) {
+    refuseSavedView(parsed.code, parsed.reason)
+    return
+  }
+  const bound = restoreSavedView(state.viewModel, parsed.value, stageViewport())
+  if (!bound.ok) {
+    refuseSavedView(bound.code, bound.reason)
+    return
+  }
+  // The saved-view contract checks that anchor and focus are BOTH nodes of this
+  // graph; it does not check that the focus is one the saved view draws, and it
+  // cannot, because that is a fact about the projection rather than about the
+  // record. Stored text is untrusted — validating it is why parseSavedView
+  // exists — so the same guard setFocus uses runs here too.
+  const leftView = leavesView(bound.view, bound.focusId)
+
+  state.view = leftView ? { ...DEFAULT_VIEW } : bound.view
+  state.focusId = bound.focusId
+  state.restoreStageFocus = false
+  state.transform = clampTransform(bound.transform, state.world)
+  dom.body.dataset.savedView = 'restored'
+  dom.savedViewState.textContent = 'Restored.'
+  render()
+  announce(
+    `Saved view restored. ${viewCaption(state.displayed.scope, anchorLabel())}` +
+      (leftView
+        ? ' The saved focus is not drawn by the saved view, so the whole graph is shown instead.'
+        : '') +
+      (bound.viewportChanged
+        ? ' The stage is a different size than when this view was saved, so the zoom and position were re-fitted.'
+        : '')
+  )
+}
+
+function onClearSavedView() {
+  if (state.store === null) return
+  try {
+    state.store.removeItem(SAVED_VIEW_KEY)
+  } catch (error) {
+    refuseSavedView(E_SAVED_VIEW_STORAGE, `The saved view could not be cleared: ${error.message}`)
+    return
+  }
+  state.savedViewPresent = false
+  dom.body.dataset.savedView = 'none'
+  dom.savedViewState.textContent = 'No saved view.'
+  paintViewControls()
+  announce('Saved view cleared.')
+}
+
 function render() {
   if (state.failed) return
+  resolveDisplayed()
   // A refused stage has already painted the failure state over every region;
   // repainting the navigator and inspector on top of it would re-introduce
   // exactly the "there is a graph here" impression the refusal exists to deny.
   if (!paintStage()) return
   paintNavigator()
   paintInspector()
+  paintLegend()
+  paintViewControls()
   dom.clearFocus.disabled = state.focusId === null
 }
 
@@ -478,6 +764,12 @@ function isOffStage(placement) {
 function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false } = {}) {
   const vm = state.viewModel
   const known = vm.nodes.some((n) => n.node_id === nodeId)
+  // Focusing a node the current view does not draw would leave the user with a
+  // selection they cannot see — the same defect as losing the graph — and it
+  // would hand paintStage a focus outside its model, which is the 0-tabbable
+  // scene described there. The view returns to the whole graph, and says so.
+  const leftView = known && leavesView(state.view, nodeId)
+  if (leftView) state.view = { ...DEFAULT_VIEW }
   state.focusId = known ? nodeId : null
   state.restoreStageFocus = known && moveStageFocus
 
@@ -498,7 +790,10 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
     return
   }
   const node = vm.nodes.find((n) => n.node_id === nodeId)
-  announce(`${node.label} focused. ${levelCaption(node.depth)}. ${node.degree} direct ${node.degree === 1 ? 'relation' : 'relations'}.`)
+  announce(
+    `${leftView ? 'Left the focused view. ' : ''}${node.label} focused. ` +
+    `${depthCaption(node.depth)}. ${node.degree} direct ${node.degree === 1 ? 'relation' : 'relations'}.`
+  )
 }
 
 /* ---------- zoom and pan ---------- */
@@ -527,8 +822,10 @@ function stagePoint(event) {
 /* ---------- events ---------- */
 
 function stepFocus(delta) {
-  const vm = state.viewModel
-  const order = vm.nodes.map((n) => n.node_id)
+  // The order that is DRAWN. Walking the full graph here would step onto a node
+  // the current view hides and kick the view back to Overview on every second
+  // arrow press.
+  const order = state.displayed.model.nodes.map((n) => n.node_id)
   const current = order.indexOf(state.focusId)
   const next = current === -1
     ? (delta > 0 ? 0 : order.length - 1)
@@ -638,45 +935,40 @@ function wirePointer() {
   // starts on one. The click that focuses a node is protected by a movement
   // threshold instead: below it the gesture is a click, above it it is a pan and
   // the click is swallowed.
-  const DRAG_THRESHOLD = 4
-  let gesture = null
-  let suppressClick = false
+  //
+  // The state machine itself lives in core/gesture.mjs, where a `node --test`
+  // suite can drive it. Kept here it could only ever be asserted as source text,
+  // which is what let a stale click suppression survive a pointercancel.
+  const gesture = createDragGesture()
 
   // Capture phase, so this runs before the node button's own click handler.
   dom.stageHost.addEventListener('click', (event) => {
-    if (!suppressClick) return
-    suppressClick = false
+    if (!gesture.consumeClick()) return
     event.stopPropagation()
     event.preventDefault()
   }, true)
 
+  // The DOM event is forwarded as-is: the module reads `buttons` to refuse a
+  // step with no button held, and a synthetic record without it would be
+  // refused rather than trusted.
   dom.stageHost.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return
-    if (event.target.closest?.('.a39-stage-controls')) return
-    suppressClick = false
-    gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, panning: false }
+    gesture.start(event)
   })
 
   dom.stageHost.addEventListener('pointermove', (event) => {
-    if (!gesture || event.pointerId !== gesture.id) return
-    const dx = event.clientX - gesture.x
-    const dy = event.clientY - gesture.y
-    if (!gesture.panning) {
-      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return
-      gesture.panning = true
-      suppressClick = true
+    const step = gesture.move(event)
+    if (!step.panning) return
+    if (step.began) {
       dom.stageHost.setPointerCapture?.(event.pointerId)
       dom.body.dataset.panning = 'true'
     }
-    gesture.x = event.clientX
-    gesture.y = event.clientY
-    applyTransform(panBy(state.transform, dx, dy, state.world))
+    applyTransform(panBy(state.transform, step.dx, step.dy, state.world))
   })
 
   const endPan = (event) => {
-    if (!gesture || event.pointerId !== gesture.id) return
-    if (gesture.panning) dom.stageHost.releasePointerCapture?.(gesture.id)
-    gesture = null
+    const done = gesture.end(event)
+    if (!done.ended) return
+    if (done.wasPanning) dom.stageHost.releasePointerCapture?.(done.pointerId)
     delete dom.body.dataset.panning
   }
   dom.stageHost.addEventListener('pointerup', endPan)
@@ -699,6 +991,15 @@ function wireEvents() {
   dom.resetView.addEventListener('click', () => {
     applyTransform(resetTransform(state.world), 'View reset to the default zoom and position.')
   })
+
+  dom.viewOverview.addEventListener('click', () => setView({ ...DEFAULT_VIEW }))
+  dom.viewNeighbourhood.addEventListener('click', () => {
+    if (state.focusId === null) return
+    setView({ mode: 'neighbourhood', anchorId: state.focusId })
+  })
+  dom.saveViewBtn.addEventListener('click', onSaveView)
+  dom.restoreViewBtn.addEventListener('click', onRestoreView)
+  dom.clearSavedViewBtn.addEventListener('click', onClearSavedView)
 
   dom.filter.addEventListener('input', syncSearchState)
   // The native clear affordance of <input type="search"> fires `search`, not
@@ -801,6 +1102,18 @@ async function boot() {
 
   state.transform = resetTransform(state.world)
   paintStatus()
+
+  // Whether a saved view can be stored at all is a property of the browser, not
+  // of the graph, so it is settled once here and reported as it is. A workspace
+  // that offered "Save view" and then did nothing would be the quiet failure
+  // this slice exists to remove.
+  state.store = openStore()
+  state.savedViewPresent = state.store !== null && typeof state.store.getItem(SAVED_VIEW_KEY) === 'string'
+  dom.body.dataset.savedView = state.savedViewPresent ? 'saved' : 'none'
+  dom.savedViewState.textContent = state.store === null
+    ? 'This browser did not allow the workspace to store a saved view.'
+    : state.savedViewPresent ? 'A saved view is stored.' : 'No saved view.'
+
   wireEvents()
   render()
   if (state.failed) return

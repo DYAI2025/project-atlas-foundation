@@ -65,11 +65,24 @@
     <button type="button" class="a39-button" id="clear-focus" disabled>Clear focus</button>
   </div>
 
-  <div class="a39-legend" aria-hidden="true">
-    <div class="a39-legend-row"><span class="a39-swatch" data-depth="0"></span>Root</div>
-    <div class="a39-legend-row"><span class="a39-swatch" data-depth="1"></span>Level 1</div>
-    <div class="a39-legend-row"><span class="a39-swatch" data-depth="2"></span>Level 2</div>
+  <div class="a39-stage-controls a39-view-controls" role="group" aria-label="Graph views">
+    <button type="button" class="a39-button" id="view-overview" aria-pressed="true">Overview</button>
+    <button type="button" class="a39-button" id="view-neighbourhood" aria-pressed="false" disabled>Neighbourhood</button>
+    <span class="a39-view-readout" id="view-readout">—</span>
+    <button type="button" class="a39-button" id="save-view">Save view</button>
+    <button type="button" class="a39-button" id="restore-view" disabled>Restore view</button>
+    <button type="button" class="a39-button" id="clear-saved-view" disabled>Clear saved view</button>
+    <span class="a39-saved-view-state" id="saved-view-state"></span>
   </div>
+
+  <section class="a39-legend" id="legend" aria-labelledby="legend-title">
+    <h2 class="a39-legend-title" id="legend-title">Edge legend</h2>
+    <div class="a39-legend-group" id="legend-edges"></div>
+    <p class="a39-legend-note" id="legend-note"></p>
+    <h3 class="a39-legend-title" id="legend-depth-title">Hierarchy</h3>
+    <div class="a39-legend-group" id="legend-depth" aria-labelledby="legend-depth-title"></div>
+    <p class="a39-legend-note" id="legend-depth-note"></p>
+  </section>
 </main>
 
 <aside class="a39-inspector" id="inspector" aria-label="Evidence inspector">

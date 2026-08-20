@@ -483,18 +483,6 @@ body[data-panning="true"] .a39-stage-host {
   flex: none;
 }
 
-.a39-swatch[data-depth="0"] {
-  border-color: var(--depth-0);
-}
-
-.a39-swatch[data-depth="1"] {
-  border-color: var(--depth-1);
-}
-
-.a39-swatch[data-depth="2"] {
-  border-color: var(--depth-2);
-}
-
 /* Failure state: a refused snapshot must be loudly visible, never an empty
  * stage that reads as "this project has no graph". */
 .a39-failure {
@@ -716,7 +704,29 @@ body[data-panning="true"] .a39-stage-host {
   }
 
   .a39-legend {
-    display: none;
+    /* Laid out compactly instead of hidden: a legend that disappears at the
+     * countercheck viewport cannot satisfy AC7 there.
+     *
+     * It stays POSITIONED rather than returning to normal flow. Two measured
+     * repository facts decide that: the `.a39-stage-host` rule above is
+     * `position: absolute; inset: 0`, and `paintStage` sizes the canvas inside
+     * it to the whole stage viewport — while the legend's only `z-index` is the
+     * one in its base rule, which per CSS 2.1 section 9.9.1 applies to
+     * positioned elements only. An in-flow legend would therefore paint in
+     * CSS 2.1 Appendix E step 4/7 and the positioned, opaque canvas over it in
+     * step 8: invisible again, by a different mechanism. Spanning the stage
+     * width and wrapping its rows is what makes it compact instead. */
+    left: var(--s4);
+    right: var(--s4);
+    bottom: var(--s4);
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+  }
+
+  .a39-legend-note {
+    flex-basis: 100%;
   }
 
   .a39-header .a39-chips {
@@ -733,4 +743,58 @@ body[data-panning="true"] .a39-stage-host {
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Slice 2: the view + saved-view controls. They sit opposite the zoom controls
+ * so neither group covers the other, and they share .a39-stage-controls so the
+ * stage keydown handler treats them as controls, not as graph. */
+.a39-view-controls {
+  right: auto;
+  left: var(--s4);
+  max-width: calc(100% - 2 * var(--s4));
+  flex-wrap: wrap;
+}
+
+.a39-view-readout,
+.a39-saved-view-state {
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.a39-saved-view-state {
+  max-width: 34ch;
+}
+
+body[data-saved-view="refused"] .a39-saved-view-state {
+  color: var(--accent);
+}
+
+.a39-legend-title {
+  margin: 0;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.a39-legend-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.a39-legend-note {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+/* An edge is drawn as a stroke, so the legend shows a stroke. */
+.a39-edge-swatch {
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line-strong);
+  flex: none;
 }

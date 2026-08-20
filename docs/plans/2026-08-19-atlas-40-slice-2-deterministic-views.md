@@ -4735,18 +4735,36 @@ Change the `@media (max-width: 960px)` rule (currently `:718-720`) from hiding t
 
 ```css
   .a39-legend {
-    position: static;
+    left: var(--s4);
+    right: var(--s4);
+    bottom: var(--s4);
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--s2) var(--s3);
-    margin: var(--s3) var(--s4) 0;
   }
 
   .a39-legend-note {
     flex-basis: 100%;
   }
 ```
+
+**Corrected 2026-08-20 (review of Task 6).** The first draft of this rule opened with
+`position: static`, and that would have hidden the legend again by a second mechanism
+instead of fixing the first. Three facts measured in this worktree decide it:
+`.a39-stage-host` is `position: absolute; inset: 0` inside `.a39-main` (`shell.css`,
+the `.a39-stage-host` rule); `paintStage` sizes the canvas inside it to the whole
+stage viewport (`app.mjs`, `state.canvas.style.width/height`); and the legend's only
+`z-index` is the `z-index: 5` in its base rule — `grep -n 'z-index' viewer/atlas39/shell.css`
+returns five lines, one of them that base rule and none of them inside this media query.
+Per CSS 2.1 §9.9.1 `z-index` applies to positioned elements only, so an in-flow legend
+loses it, and per CSS 2.1 Appendix E an in-flow, non-positioned box paints in steps 4/7
+while a positioned sibling with `z-index: auto` paints in step 8 — the opaque canvas
+lands on top of the legend. This is derived from the specification plus those measured
+facts, not from a rendered measurement; Task 9 measures the rendered result headed at
+the 960px countercheck viewport and reports either way. The shipped rule keeps the
+legend positioned and turns it into a full-width strip along the bottom of the stage,
+which is compact under either reading and hidden under neither.
 
 Append (colours by token only — `shell.css` may contain no colour literal):
 
@@ -4882,6 +4900,18 @@ function anchorLabel() {
   const id = state.view.anchorId
   if (id === null) return null
   return state.viewModel.nodes.find((n) => n.node_id === id)?.label ?? null
+}
+
+/**
+ * True when `view` would not draw `nodeId`. The one predicate that keeps a
+ * focus and the view it is shown in consistent; both writers of
+ * `state.focusId` — setFocus and onRestoreView — go through it. An
+ * unresolvable view answers `true`, because isInView() answers false for a
+ * refusal.
+ */
+function leavesView(view, nodeId) {
+  if (nodeId === null || view.mode === 'overview') return false
+  return !isInView(applyView(state.viewModel, view), nodeId)
 }
 
 function resolveDisplayed() {
@@ -5033,8 +5063,14 @@ function onRestoreView() {
     refuseSavedView(bound.code, bound.reason)
     return
   }
+  // The saved-view contract checks that anchor and focus are BOTH nodes of this
+  // graph; it does not check that the focus is one the saved view DRAWS, and it
+  // cannot, because that is a fact about the projection rather than about the
+  // record. Stored text is untrusted — validating it is why parseSavedView
+  // exists — so the same guard setFocus uses runs here too.
+  const leftView = leavesView(bound.view, bound.focusId)
 
-  state.view = bound.view
+  state.view = leftView ? { ...DEFAULT_VIEW } : bound.view
   state.focusId = bound.focusId
   state.restoreStageFocus = false
   state.transform = clampTransform(bound.transform, state.world)
@@ -5043,6 +5079,9 @@ function onRestoreView() {
   render()
   announce(
     `Saved view restored. ${viewCaption(state.displayed.scope, anchorLabel())}` +
+      (leftView
+        ? ' The saved focus is not drawn by the saved view, so the whole graph is shown instead.'
+        : '') +
       (bound.viewportChanged
         ? ' The stage is a different size than when this view was saved, so the zoom and position were re-fitted.'
         : '')
@@ -5101,7 +5140,7 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
   // Focusing a node the current view does not draw would leave the user with a
   // selection they cannot see — the same defect as losing the graph. The view
   // returns to the whole graph, and says so.
-  const leftView = known && state.view.mode !== 'overview' && !isInView(state.displayed, nodeId)
+  const leftView = known && leavesView(state.view, nodeId)
   if (leftView) state.view = { ...DEFAULT_VIEW }
   state.focusId = known ? nodeId : null
   state.restoreStageFocus = known && moveStageFocus
@@ -5116,6 +5155,34 @@ function setFocus(nodeId, { moveStageFocus = true, quiet = false, center = false
   )
 }
 ```
+
+**Corrected 2026-08-20 (review of Task 6).** The first draft put the "a focus must
+never land where it cannot be seen" guard in `setFocus` alone and let `onRestoreView`
+assign `state.view` and `state.focusId` straight from `restoreSavedView`. That leaves
+the exact hole D3 and D5 exist to close, and it is reachable, because the stored text
+is untrusted by construction — validating it is what `parseSavedView` is for.
+**Measured against the shipped modules and the accepted snapshot**, for a stored record
+carrying this graph's six identity values with
+`view.mode = "neighbourhood"`, `anchor_id = ATLAS:confluence:14778372:14778372` and
+`focus_id = ATLAS:confluence:14778372:22478849` (a real node the anchor's neighbourhood
+does not contain):
+
+```
+parseSavedView.ok: true
+restoreSavedView.ok: true
+applyView.ok: true shownNodes: 4
+isInView(applied, focus): false
+selectFocus(model, focus).hasFocus: true
+projected tabbable: 0
+sceneViolation(projected): "0 nodes are in the tab order, expected exactly 1"
+```
+
+So the plan's own code turned an unusable saved view into `E_STAGE_SCENE_REFUSED` — a
+torn-down stage — which is precisely what D5 forbids. The predicate is therefore named
+(`leavesView`) and **both** writers of `state.focusId` go through it; a restore whose
+focus its own view does not draw widens to Overview and the announcement says so, rather
+than the record being refused (no `E_SAVED_VIEW_*` code describes this, and inventing one
+would mean changing `core/saved-view.mjs`, which Task 4 owns and this task must not touch).
 
 `stepFocus` — traverse the view that is drawn:
 
@@ -5308,8 +5375,26 @@ test('both view modes are reachable, labelled and reflected in the controls', ()
 test('a focus that the current view does not draw returns to the whole graph, and says so', () => {
   const setFocus = /function setFocus\([\s\S]*?\n\}/.exec(app)?.[0]
   assert.ok(setFocus, 'setFocus is missing')
-  assert.match(setFocus, /isInView\(state\.displayed, nodeId\)/)
+  assert.match(setFocus, /leavesView\(state\.view, nodeId\)/)
   assert.match(setFocus, /Left the focused view/)
+  // The predicate itself, and the fact that it is the ONE place the invariant
+  // lives: a second, re-spelled copy is how the two could drift apart.
+  assert.match(app, /function leavesView\(view, nodeId\)/)
+  assert.match(app, /return !isInView\(applyView\(state\.viewModel, view\), nodeId\)/)
+})
+
+test('a restored saved view can never focus a node its own view does not draw', () => {
+  // restoreSavedView proves anchor and focus are nodes of THIS graph; it cannot
+  // prove the focus is one the saved view draws, because that is a fact about
+  // the projection. Feeding such a pair to buildScene produces a scene with
+  // nothing in the tab order, which core/scene-guard.mjs refuses as
+  // E_STAGE_SCENE_REFUSED — a torn-down stage over a saved view, which D5
+  // forbids. Stored text is untrusted, so the guard is not optional.
+  const restore = /function onRestoreView\([\s\S]*?\n\}\n/.exec(app)?.[0]
+  assert.ok(restore, 'onRestoreView is missing')
+  assert.match(restore, /const leftView = leavesView\(bound\.view, bound\.focusId\)/)
+  assert.match(restore, /state\.view = leftView \? \{ \.\.\.DEFAULT_VIEW \} : bound\.view/)
+  assert.match(restore, /The saved focus is not drawn by the saved view/)
 })
 
 test('keyboard traversal walks the view that is actually drawn', () => {
@@ -5337,7 +5422,9 @@ test('the saved view is versioned, probed storage, and refuses without touching 
 test('a restore assigns nothing until every check has passed', () => {
   const restore = /function onRestoreView\([\s\S]*?\n\}\n/.exec(app)?.[0]
   assert.ok(restore, 'onRestoreView is missing')
-  const firstAssignment = restore.indexOf('state.view = bound.view')
+  // Matched on the assignment TARGET, not on the whole expression: the applied
+  // value is `leftView ? { ...DEFAULT_VIEW } : bound.view` (see the guard above).
+  const firstAssignment = restore.indexOf('state.view =')
   assert.ok(firstAssignment > -1, 'the restore never applies the view')
   const head = restore.slice(0, firstAssignment)
   for (const guard of ['parsed.ok', 'bound.ok']) {
@@ -5387,7 +5474,14 @@ test('the legend survives the responsive countercheck instead of disappearing', 
   const small = /@media \(max-width: 960px\)[\s\S]*?\n\}\n/.exec(shellCss)?.[0]
   assert.ok(small, 'the 960px breakpoint is missing')
   assert.equal(/\.a39-legend \{[^}]*display:\s*none/.test(small), false, 'the legend is hidden at 960px')
-  assert.match(small, /\.a39-legend \{[\s\S]*?position: static/)
+  // And it stays POSITIONED. `.a39-stage-host` is `position: absolute; inset: 0`
+  // with the opaque canvas inside it, and `z-index` applies to positioned
+  // elements only, so an in-flow legend would paint underneath the canvas —
+  // hidden again, by a second mechanism. See the Task 6 correction of
+  // 2026-08-20.
+  assert.equal(/\.a39-legend \{[^}]*position:\s*static/.test(small), false, 'an in-flow legend paints under the canvas')
+  assert.match(small, /\.a39-legend \{[\s\S]*?bottom: var\(--s4\)/)
+  assert.match(small, /\.a39-legend \{[\s\S]*?flex-direction: row/)
 })
 
 test('a failed stage offers no view, no saved view and no legend', () => {
